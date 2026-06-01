@@ -1421,4 +1421,3 @@ async function excluirFicha(fichaId) {
   ftFichasCache = [];
   carregarFichas();
 }
-}
