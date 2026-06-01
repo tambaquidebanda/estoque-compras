@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão de Compras — Tambaqui de Banda</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════ CONFIGURAÇÃO -->
+<div id="tela-config" class="tela-auth">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span style="font-size:2.5rem">🐟</span>
+      <h2 class="mt-2">Configuração Inicial</h2>
+      <p class="text-muted small">Conecte ao banco de dados Supabase</p>
+    </div>
+    <div class="mb-3">
+      <label class="form-label fw-semibold">URL do Supabase</label>
+      <input type="text" class="form-control" id="cfg-url" placeholder="https://xxx.supabase.co"
+        onkeydown="if(event.key==='Enter') document.getElementById('cfg-key').focus()">
+    </div>
+    <div class="mb-4">
+      <label class="form-label fw-semibold">Chave (anon key)</label>
+      <input type="text" class="form-control" id="cfg-key" placeholder="eyJ..."
+        onkeydown="if(event.key==='Enter') salvarConfig()">
+    </div>
+    <button class="btn btn-primary w-100" onclick="salvarConfig()">Salvar e Continuar</button>
+    <div id="cfg-erro" class="alert alert-danger mt-3 d-none small"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ LOGIN -->
+<div id="tela-login" class="tela-auth d-none">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span style="font-size:2.5rem">🐟</span>
+      <h2 class="mt-2">Tambaqui de Banda</h2>
+      <p class="text-muted small">Sistema de Gestão de Compras</p>
+    </div>
+    <div class="mb-3">
+      <label class="form-label fw-semibold">E-mail</label>
+      <input type="email" class="form-control" id="login-email" placeholder="seu@email.com"
+        onkeydown="if(event.key==='Enter') document.getElementById('login-senha').focus()">
+    </div>
+    <div class="mb-4">
+      <label class="form-label fw-semibold">Senha</label>
+      <input type="password" class="form-control" id="login-senha" placeholder="••••••••"
+        onkeydown="if(event.key==='Enter') fazerLogin()">
+    </div>
+    <button class="btn btn-primary w-100" onclick="fazerLogin()">Entrar</button>
+    <div id="login-erro" class="alert alert-danger mt-3 d-none small"></div>
+    <div class="text-center mt-3">
+      <a href="#" class="text-muted small" onclick="mostrarConfig()">⚙️ Reconfigurar conexão</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ PRINCIPAL -->
+<div id="tela-principal" class="d-none">
+
+  <!-- ─── SIDEBAR ─── -->
+  <div id="sidebar">
+    <div class="sb-brand">
+      <div class="sb-logo">🐟</div>
+      <div>
+        <div class="sb-nome">Tambaqui de Banda</div>
+        <div class="sb-sub">Gestão de Compras</div>
+      </div>
+    </div>
+
+    <nav class="nav-sb">
+      <a href="#" onclick="ir('dashboard',this)" class="ativo">
+        <i class="bi bi-bar-chart-fill"></i> Dashboard
+      </a>
+      <a href="#" onclick="ir('compra',this)">
+        <i class="bi bi-cart-plus-fill"></i> Lançar Compra
+      </a>
+      <a href="#" onclick="ir('faturamento',this)">
+        <i class="bi bi-cash-coin"></i> Faturamento
+      </a>
+      <a href="#" onclick="ir('cmv',this)">
+        <i class="bi bi-graph-up-arrow"></i> CMV
+      </a>
+      <a href="#" onclick="ir('historico',this)">
+        <i class="bi bi-clock-history"></i> Histórico
+      </a>
+      <a href="#" onclick="ir('cadastros',this)">
+        <i class="bi bi-gear-fill"></i> Cadastros
+      </a>
+      <a href="#" class="nav-em-breve" title="Em breve">
+        <i class="bi bi-clipboard-check-fill"></i> Inventários
+        <span class="badge-breve">em breve</span>
+      </a>
+      <a href="#" class="nav-em-breve" title="Em breve">
+        <i class="bi bi-cart-check-fill"></i> Planejamento
+        <span class="badge-breve">em breve</span>
+      </a>
+    </nav>
+
+    <div class="sb-footer">
+      <div id="sb-usuario" class="sb-usuario"></div>
+      <button class="btn-sair" onclick="sair()">
+        <i class="bi bi-box-arrow-right"></i> Sair
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── MAIN ─── -->
+  <div id="main">
+
+    <!-- ══════ DASHBOARD ══════ -->
+    <section id="pg-dashboard" class="pagina ativa">
+      <h1>📊 Dashboard de Compras</h1>
+
+      <div class="row g-3 mb-4">
+        <div class="col-md-3 col-6">
+          <div class="card-kpi">
+            <div class="kpi-label">🗓️ Compras esta semana</div>
+            <div class="kpi-val" id="kpi-sem">—</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi kpi-verde">
+            <div class="kpi-label">📅 Compras este mês</div>
+            <div class="kpi-val" id="kpi-mes">—</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi kpi-roxo">
+            <div class="kpi-label">💰 Faturamento este mês</div>
+            <div class="kpi-val" id="kpi-fat-mes">—</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi" id="kpi-cmv-card">
+            <div class="kpi-label">📈 CMV este mês</div>
+            <div class="kpi-val" id="kpi-cmv-val">—</div>
+            <div class="kpi-meta" id="kpi-cmv-meta"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-6">
+          <div class="card-grafico">
+            <h5>Compras por Mês</h5>
+            <canvas id="ch-mensal" style="max-height:220px"></canvas>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card-grafico">
+            <h5>CMV % por Mês <small class="text-muted fw-normal">🟢 ≤27% meta | 🔴 acima</small></h5>
+            <canvas id="ch-cmv-mensal" style="max-height:220px"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card-grafico">
+            <h5>Top Fornecedores</h5>
+            <canvas id="ch-forn-dash" style="max-height:220px"></canvas>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card-grafico">
+            <h5>Compras por Categoria</h5>
+            <canvas id="ch-cat-dash" style="max-height:220px"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ LANÇAR COMPRA ══════ -->
+    <section id="pg-compra" class="pagina">
+      <h1>🛒 Lançar Compra</h1>
+      <div id="aviso-cad" class="alert alert-warning d-none mb-3"></div>
+
+      <div class="card-form">
+        <form id="form-compra" onsubmit="salvarCompra(event)" autocomplete="off">
+          <div class="sec-titulo">Informações do produto</div>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label class="form-label">📅 Data</label>
+              <input type="date" class="form-control" id="c-data" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">🏪 Fornecedor</label>
+              <div class="ac-wrapper">
+                <input type="text" class="form-control" id="c-forn"
+                  placeholder="Digite o fornecedor..." required
+                  oninput="acForn(this.value)"
+                  onblur="setTimeout(()=>fechaAC('ac-forn'),180)">
+                <div class="ac-list" id="ac-forn"></div>
+              </div>
+              <input type="hidden" id="c-forn-id">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">📦 Produto</label>
+              <div class="ac-wrapper">
+                <input type="text" class="form-control" id="c-prod"
+                  placeholder="Digite o produto..." required
+                  oninput="acProd(this.value)"
+                  onblur="setTimeout(()=>fechaAC('ac-prod'),180)">
+                <div class="ac-list" id="ac-prod"></div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">📂 Categoria</label>
+              <select class="form-select" id="c-cat" required></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">🏷️ Destino do Produto</label>
+              <select class="form-select" id="c-tipo" required></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">⚖️ Unidade de Medida</label>
+              <select class="form-select" id="c-un">
+                <option>KG</option><option>UN</option><option>CX</option>
+                <option>LT</option><option>FD</option><option>PC</option>
+                <option>MT</option><option>DZ</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">💵 Custo Unitário (R$)</label>
+              <input type="number" class="form-control" id="c-custo"
+                step="0.01" min="0" placeholder="0,00" required oninput="calcTot()">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">🔢 Quantidade</label>
+              <input type="number" class="form-control" id="c-qtd"
+                step="0.001" min="0" value="1" required oninput="calcTot()">
+            </div>
+            <div class="col-md-3 d-flex flex-column">
+              <label class="form-label">🧮 Total</label>
+              <div class="form-control bg-light fw-bold text-success fs-5" id="c-total-show">R$ 0,00</div>
+            </div>
+          </div>
+
+          <div class="sec-titulo">Destino e responsável</div>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label class="form-label">👤 Comprador</label>
+              <select class="form-select" id="c-comp" required></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">🏬 Unidade de Uso</label>
+              <select class="form-select" id="c-uso">
+                <option>Loja</option><option>Delivery</option><option>Produção</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">📝 Observação (opcional)</label>
+              <input type="text" class="form-control" id="c-obs">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-lg w-100">
+            <i class="bi bi-check-circle-fill"></i> Salvar Compra
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ══════ FATURAMENTO ══════ -->
+    <section id="pg-faturamento" class="pagina">
+      <h1>💰 Faturamento</h1>
+      <div class="row g-4">
+        <div class="col-md-4">
+          <div class="card-form">
+            <h5>Novo Lançamento</h5>
+            <div class="mb-3">
+              <label class="form-label">📅 Data</label>
+              <input type="date" class="form-control" id="f-data">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">💰 Valor do dia (R$)</label>
+              <input type="number" class="form-control" id="f-valor"
+                step="0.01" min="0" placeholder="0,00"
+                onkeydown="if(event.key==='Enter') salvarFaturamento()">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">📍 Canal</label>
+              <select class="form-select" id="f-canal">
+                <option>Geral</option><option>Loja</option>
+                <option>Delivery</option><option>Produção</option>
+              </select>
+            </div>
+            <div class="mb-4">
+              <label class="form-label">📝 Observação (opcional)</label>
+              <input type="text" class="form-control" id="f-obs">
+            </div>
+            <button class="btn btn-primary w-100" onclick="salvarFaturamento()">
+              <i class="bi bi-check-circle-fill"></i> Salvar
+            </button>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card-form">
+            <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+              <h5 class="mb-0">Histórico de Faturamento</h5>
+              <input type="month" class="form-control form-control-sm" id="f-filtro-mes"
+                onchange="carregarFaturamento()" style="width:150px">
+            </div>
+            <div class="table-responsive">
+              <table class="table table-hover table-sm">
+                <thead>
+                  <tr><th>Data</th><th>Canal</th><th>Valor</th><th>Obs.</th><th></th></tr>
+                </thead>
+                <tbody id="tb-faturamento">
+                  <tr><td colspan="5" class="text-center text-muted py-3">Carregando...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="text-end fw-bold text-success small mt-1" id="fat-total-mes"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ CMV ══════ -->
+    <section id="pg-cmv" class="pagina">
+      <h1>📈 CMV — Custo da Mercadoria Vendida</h1>
+      <p class="text-muted small mb-4">Fórmula: CMV % = Compras ÷ Faturamento × 100 &nbsp;|&nbsp; Meta: <strong>27%</strong></p>
+
+      <div class="row g-3 mb-4 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">Agrupar por</label>
+          <select class="form-select" id="cmv-periodo" onchange="carregarCMV()">
+            <option value="mes">Mês</option>
+            <option value="sem">Semana</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-4" id="cmv-kpis">
+        <div class="col-md-3 col-6">
+          <div class="card-kpi" id="kpi-cmv-periodo-card">
+            <div class="kpi-label">CMV — período atual</div>
+            <div class="kpi-val" id="cmv-pct-atual">—</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi kpi-cinza">
+            <div class="kpi-label">Meta CMV</div>
+            <div class="kpi-val">27%</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi kpi-verde">
+            <div class="kpi-label">Compras no período</div>
+            <div class="kpi-val" id="cmv-comp-atual">—</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi kpi-roxo">
+            <div class="kpi-label">Faturamento no período</div>
+            <div class="kpi-val" id="cmv-fat-atual">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cmv-alerta" class="alert d-none mb-4"></div>
+
+      <div class="card-grafico mb-4">
+        <h5>Evolução do CMV</h5>
+        <canvas id="ch-cmv-evolucao" style="max-height:260px"></canvas>
+      </div>
+
+      <div class="card-grafico">
+        <h5>Tabela Completa</h5>
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+              <tr><th>Período</th><th>Compras</th><th>Faturamento</th><th>CMV %</th><th>Status</th></tr>
+            </thead>
+            <tbody id="tb-cmv">
+              <tr><td colspan="5" class="text-center text-muted py-3">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ HISTÓRICO ══════ -->
+    <section id="pg-historico" class="pagina">
+      <h1>📋 Histórico de Compras</h1>
+
+      <div class="card-grafico mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-2">
+            <label class="form-label fw-semibold small">Mês</label>
+            <input type="month" class="form-control form-control-sm" id="hist-mes"
+              onchange="carregarHistorico()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">Fornecedor</label>
+            <select class="form-select form-select-sm" id="hist-forn" onchange="carregarHistorico()">
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold small">Categoria</label>
+            <select class="form-select form-select-sm" id="hist-cat" onchange="carregarHistorico()">
+              <option value="">Todas</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold small">Comprador</label>
+            <select class="form-select form-select-sm" id="hist-comp" onchange="carregarHistorico()">
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold small">Destino</label>
+            <select class="form-select form-select-sm" id="hist-tipo" onchange="carregarHistorico()">
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div class="col-md-1 d-flex align-items-end">
+            <button class="btn btn-sm btn-outline-secondary w-100" onclick="limparFiltrosHist()" title="Limpar">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Importar Excel -->
+      <div class="card-grafico mb-3">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <h6 class="mb-0 fw-semibold">📥 Importar histórico do Excel</h6>
+          <span class="text-muted small">Colunas: Fornecedor, Produto, Categoria, Tipo, Data, Unidade, Custo Unitário, Quantidade, Comprador, Unidade Uso</span>
+          <label class="btn btn-sm btn-outline-primary ms-auto mb-0">
+            <i class="bi bi-file-earmark-arrow-up"></i> Importar .xlsx / .csv
+            <input type="file" id="hist-import-file" accept=".xlsx,.xls,.csv"
+              onchange="importarComprasExcel(event)" style="display:none">
+          </label>
+        </div>
+        <div id="msg-import" class="mt-2"></div>
+      </div>
+
+      <div class="card-grafico">
+        <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+          <span id="hist-count" class="text-muted small"></span>
+          <span class="fw-bold text-success" id="hist-total"></span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover table-sm">
+            <thead>
+              <tr>
+                <th>Data</th><th>Fornecedor</th><th>Produto</th>
+                <th>Categoria</th><th>Tipo</th><th>Un.</th>
+                <th>Qtd</th><th>Custo Unit.</th><th>Total</th>
+                <th>Comprador</th><th>Uso</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="tb-historico">
+              <tr><td colspan="12" class="text-center text-muted py-4">Selecione um período ou carregue os dados.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ CADASTROS ══════ -->
+    <section id="pg-cadastros" class="pagina">
+      <h1>⚙️ Cadastros</h1>
+
+      <ul class="nav nav-tabs mb-4" id="tabs-cad">
+        <li class="nav-item">
+          <a class="nav-link active" href="#" onclick="irCad('fornecedores',this)">🏪 Fornecedores</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('categorias',this)">📂 Categorias</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('tipos',this)">🏷️ Destinos</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('compradores',this)">👤 Compradores</a>
+        </li>
+      </ul>
+
+      <!-- Fornecedores -->
+      <div id="cad-fornecedores" class="tab-cad ativa">
+        <div class="row g-4">
+          <div class="col-md-4">
+            <div class="card-form">
+              <h5>Novo Fornecedor</h5>
+              <p class="text-muted small">Compartilhado com o sistema financeiro.</p>
+              <input type="text" class="form-control mb-3" id="n-forn" placeholder="Nome do fornecedor"
+                onkeydown="if(event.key==='Enter') addFornecedor()">
+              <button class="btn btn-primary w-100" onclick="addFornecedor()">➕ Adicionar</button>
+              <div id="msg-cad-forn" class="mt-2 small"></div>
+            </div>
+          </div>
+          <div class="col-md-8">
+            <div class="card-form">
+              <h5>Cadastrados</h5>
+              <div id="lst-fornecedores" class="lista-cad">Carregando...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Categorias -->
+      <div id="cad-categorias" class="tab-cad">
+        <div class="row g-4">
+          <div class="col-md-4">
+            <div class="card-form">
+              <h5>Nova Categoria</h5>
+              <input type="text" class="form-control mb-2" id="n-cat" placeholder="Nome da categoria"
+                onkeydown="if(event.key==='Enter') addCategoria()">
+              <input type="text" class="form-control mb-3" id="n-plano"
+                placeholder="Plano de conta (opcional)">
+              <button class="btn btn-primary w-100" onclick="addCategoria()">➕ Adicionar</button>
+              <div id="msg-cad-cat" class="mt-2 small"></div>
+            </div>
+          </div>
+          <div class="col-md-8">
+            <div class="card-form">
+              <h5>Cadastradas</h5>
+              <div id="lst-categorias" class="lista-cad">Carregando...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tipos / Destinos -->
+      <div id="cad-tipos" class="tab-cad">
+        <div class="row g-4">
+          <div class="col-md-4">
+            <div class="card-form">
+              <h5>Novo Destino</h5>
+              <input type="text" class="form-control mb-3" id="n-tipo" placeholder="Ex: Temperos"
+                onkeydown="if(event.key==='Enter') addTipo()">
+              <button class="btn btn-primary w-100" onclick="addTipo()">➕ Adicionar</button>
+              <div id="msg-cad-tipo" class="mt-2 small"></div>
+            </div>
+          </div>
+          <div class="col-md-8">
+            <div class="card-form">
+              <h5>Cadastrados</h5>
+              <p class="text-muted small">Padrão: Estivas, Hortifrut, Proteínas, Bebidas, Descartáveis, Limpeza, Outros.</p>
+              <div id="lst-tipos" class="lista-cad">Carregando...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compradores -->
+      <div id="cad-compradores" class="tab-cad">
+        <div class="row g-4">
+          <div class="col-md-4">
+            <div class="card-form">
+              <h5>Novo Comprador</h5>
+              <input type="text" class="form-control mb-3" id="n-comp" placeholder="Nome do comprador"
+                onkeydown="if(event.key==='Enter') addComprador()">
+              <button class="btn btn-primary w-100" onclick="addComprador()">➕ Adicionar</button>
+              <div id="msg-cad-comp" class="mt-2 small"></div>
+            </div>
+          </div>
+          <div class="col-md-8">
+            <div class="card-form">
+              <h5>Cadastrados</h5>
+              <div id="lst-compradores" class="lista-cad">Carregando...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /main -->
+</div><!-- /tela-principal -->
+
+<!-- Toast container -->
+<div id="toast-box" style="position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;min-width:260px"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
