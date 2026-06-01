@@ -345,6 +345,23 @@ h1 {
   to   { transform: translateY(0); opacity: 1; }
 }
 
+/* ─── BADGES DE TIPO ───────────────────────────────────────── */
+.badge-tipo {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.badge-mp   { background: #e0f2fe; color: #0369a1; }
+.badge-sa   { background: #fef9c3; color: #854d0e; }
+.badge-mc   { background: #f3f4f6; color: #4b5563; }
+.badge-ppb  { background: #fce7f3; color: #9d174d; }
+.badge-ppc  { background: #dcfce7; color: #166534; }
+.badge-ppp  { background: #ede9fe; color: #5b21b6; }
+.badge-venda { background: #fff7ed; color: #c2410c; }
+
 /* ─── RESPONSIVE ───────────────────────────────────────────── */
 @media (max-width: 768px) {
   #sidebar { width: 100%; min-height: auto; position: relative; }

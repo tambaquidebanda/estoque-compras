@@ -16,6 +16,11 @@ let cProd = [];    // product names learned from past purchases
 // chart instances (destroyed before re-render)
 let chMensal, chCmvMensal, chFornDash, chCatDash, chCmvEvolucao;
 
+// fichas técnicas
+let cProdutosFT  = [];   // all est_produtos for autocomplete
+let ftIngredientes = []; // ingredientes da ficha em edição
+let ftFichasCache  = []; // fichas carregadas
+
 
 // ═══════════════════════════════════════════════════════════════
 // INIT
@@ -135,6 +140,7 @@ function ir(nome, el) {
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
   if (nome === 'cadastros')   { irCad('fornecedores', document.querySelector('#tabs-cad .nav-link')); }
+  if (nome === 'fichas')      carregarFichas();
 }
 
 function irCad(tab, el) {
@@ -1061,4 +1067,358 @@ async function excluirCad(tabela, id, tipo) {
   toast('Excluído.', 'ok');
   await carregarCaches();
   renderListaCad(tipo);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// FICHAS TÉCNICAS
+// ═══════════════════════════════════════════════════════════════
+
+async function carregarProdutosFT() {
+  if (cProdutosFT.length) return;
+  const { data } = await sb.from('est_produtos')
+    .select('id,nome,tipo,categoria,unidade_uso,custo_uso,preco_venda')
+    .eq('ativo', true)
+    .order('nome');
+  cProdutosFT = data || [];
+}
+
+async function carregarFichas() {
+  await carregarProdutosFT();
+
+  const busca  = (document.getElementById('ft-busca')?.value  || '').toLowerCase();
+  const tipo   = document.getElementById('ft-tipo')?.value   || '';
+  const status = document.getElementById('ft-status')?.value || 'com';
+
+  // Load fichas with product info
+  const { data: fichas } = await sb.from('est_fichas_tecnicas')
+    .select('id,produto_id,rendimento,unidade_rendimento,custo_total,custo_por_porcao,ativo')
+    .eq('ativo', true);
+
+  ftFichasCache = fichas || [];
+  const fichaByProd = {};
+  ftFichasCache.forEach(f => { fichaByProd[f.produto_id] = f; });
+
+  // Filter products
+  let prods = cProdutosFT.filter(p =>
+    ['VENDA','PPB','PPC','PPP','SA'].includes(p.tipo)
+  );
+
+  if (tipo)   prods = prods.filter(p => p.tipo === tipo);
+  if (busca)  prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
+
+  if (status === 'com') prods = prods.filter(p => fichaByProd[p.id]);
+  if (status === 'sem') prods = prods.filter(p => !fichaByProd[p.id]);
+
+  document.getElementById('ft-count').textContent =
+    `${prods.length} produto(s) encontrado(s)`;
+
+  const tbody = document.getElementById('tb-fichas');
+
+  if (!prods.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = prods.map(p => {
+    const f      = fichaByProd[p.id];
+    const margem = f && p.preco_venda > 0
+      ? ((p.preco_venda - f.custo_por_porcao) / p.preco_venda * 100)
+      : null;
+
+    return `<tr>
+      <td class="fw-semibold">${esc(p.nome)}</td>
+      <td><span class="badge-tipo badge-${p.tipo.toLowerCase()}">${p.tipo}</span></td>
+      <td class="text-muted small">${esc(p.categoria || '')}</td>
+      <td>${f ? `${Number(f.rendimento).toLocaleString('pt-BR')} ${esc(f.unidade_rendimento)}` : '—'}</td>
+      <td>${f ? brl(f.custo_total) : '—'}</td>
+      <td>${f ? brl(f.custo_por_porcao) : '—'}</td>
+      <td>${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}</td>
+      <td class="${margem !== null ? (margem >= 60 ? 'text-success fw-bold' : margem >= 40 ? 'text-warning fw-bold' : 'text-danger fw-bold') : ''}">
+        ${margem !== null ? pct(margem) : '—'}
+      </td>
+      <td>
+        <button class="btn btn-sm btn-primary py-0 px-2"
+          onclick="abrirModalFicha('${p.id}','${f ? f.id : ''}')">
+          ${f ? '<i class="bi bi-pencil"></i> Editar' : '<i class="bi bi-plus"></i> Criar'}
+        </button>
+        ${f ? `<button class="btn-del ms-1" onclick="excluirFicha('${f.id}')" title="Excluir ficha"><i class="bi bi-trash"></i></button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function filtrarFichas() { carregarFichas(); }
+
+async function abrirModalFicha(prodId = '', fichaId = '') {
+  await carregarProdutosFT();
+  ftIngredientes = [];
+
+  document.getElementById('ft-ficha-id').value       = fichaId;
+  document.getElementById('ft-produto-id').value     = prodId;
+  document.getElementById('ft-produto-nome').value   = '';
+  document.getElementById('ft-produto-info').textContent = '';
+  document.getElementById('ft-rendimento').value     = '1';
+  document.getElementById('ft-unidade-rend').value   = 'porção';
+  document.getElementById('ft-custo-total').textContent = 'R$ 0,00';
+  document.getElementById('ft-custo-porcao').textContent = '';
+  document.getElementById('ft-ing-nome').value = '';
+  document.getElementById('ft-ing-id').value   = '';
+  document.getElementById('ft-ing-qtd').value  = '1';
+  document.getElementById('ft-ing-un').value   = 'UN';
+  document.getElementById('ft-ing-info').textContent = '';
+
+  if (prodId) {
+    const p = cProdutosFT.find(x => x.id === prodId);
+    if (p) {
+      document.getElementById('ft-produto-nome').value = p.nome;
+      document.getElementById('ft-produto-info').textContent =
+        `Tipo: ${p.tipo} | Preço venda: ${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}`;
+    }
+  }
+
+  if (fichaId) {
+    document.getElementById('modal-ficha-titulo').textContent = 'Editar Ficha Técnica';
+    // Load existing ingredients
+    const { data: ings } = await sb.from('est_ficha_ingredientes')
+      .select('id,ingrediente_id,quantidade,unidade')
+      .eq('ficha_id', fichaId);
+
+    if (ings) {
+      for (const ing of ings) {
+        const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
+        if (prod) {
+          ftIngredientes.push({
+            id:        ing.id,
+            prod_id:   ing.ingrediente_id,
+            nome:      prod.nome,
+            tipo:      prod.tipo,
+            quantidade: ing.quantidade,
+            unidade:   ing.unidade,
+            custo_uso: prod.custo_uso || 0,
+          });
+        }
+      }
+    }
+
+    const ficha = ftFichasCache.find(f => f.id === fichaId);
+    if (ficha) {
+      document.getElementById('ft-rendimento').value     = ficha.rendimento;
+      document.getElementById('ft-unidade-rend').value   = ficha.unidade_rendimento;
+    }
+  } else {
+    document.getElementById('modal-ficha-titulo').textContent = 'Nova Ficha Técnica';
+  }
+
+  renderIngredientes();
+
+  const modal = new bootstrap.Modal(document.getElementById('modal-ficha'));
+  modal.show();
+}
+
+// Autocomplete produto (para o campo "Produto" da ficha)
+function acFichaProduto(val) {
+  const lista = document.getElementById('ac-ft-produto');
+  if (!val) { lista.classList.remove('aberta'); return; }
+
+  const hits = cProdutosFT.filter(p =>
+    ['VENDA','PPB','PPC','PPP','SA'].includes(p.tipo) &&
+    p.nome.toLowerCase().includes(val.toLowerCase())
+  ).slice(0, 8);
+
+  if (!hits.length) { lista.classList.remove('aberta'); return; }
+
+  lista.innerHTML = hits.map(p =>
+    `<div class="ac-item" onmousedown="selecionarFichaProduto('${p.id}')">
+      ${esc(p.nome)} <small class="text-muted ms-1">${p.tipo}</small>
+    </div>`
+  ).join('');
+  lista.classList.add('aberta');
+}
+
+function selecionarFichaProduto(id) {
+  const p = cProdutosFT.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('ft-produto-id').value   = id;
+  document.getElementById('ft-produto-nome').value = p.nome;
+  document.getElementById('ft-produto-info').textContent =
+    `Tipo: ${p.tipo} | Preço venda: ${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}`;
+  fechaAC('ac-ft-produto');
+}
+
+// Autocomplete ingrediente
+function acIngrediente(val) {
+  const lista = document.getElementById('ac-ft-ing');
+  if (!val) { lista.classList.remove('aberta'); return; }
+
+  // Ingredients can be MP, SA, PPB, PPC, PPP (not VENDA, not MC)
+  const hits = cProdutosFT.filter(p =>
+    ['MP','SA','PPB','PPC','PPP'].includes(p.tipo) &&
+    p.nome.toLowerCase().includes(val.toLowerCase())
+  ).slice(0, 10);
+
+  if (!hits.length) { lista.classList.remove('aberta'); return; }
+
+  lista.innerHTML = hits.map(p =>
+    `<div class="ac-item" onmousedown="selecionarIngrediente('${p.id}')">
+      ${esc(p.nome)}
+      <small class="text-muted ms-1">${p.tipo} | ${esc(p.unidade_uso||'UN')} | ${brl(p.custo_uso)}</small>
+    </div>`
+  ).join('');
+  lista.classList.add('aberta');
+}
+
+function selecionarIngrediente(id) {
+  const p = cProdutosFT.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('ft-ing-id').value   = id;
+  document.getElementById('ft-ing-nome').value = p.nome;
+  document.getElementById('ft-ing-un').value   = p.unidade_uso || 'UN';
+  document.getElementById('ft-ing-info').textContent =
+    `Custo: ${brl(p.custo_uso)} / ${p.unidade_uso || 'UN'}`;
+  fechaAC('ac-ft-ing');
+  document.getElementById('ft-ing-qtd').focus();
+}
+
+function addIngrediente() {
+  const id  = document.getElementById('ft-ing-id').value;
+  const qtd = parseFloat(document.getElementById('ft-ing-qtd').value);
+  const un  = document.getElementById('ft-ing-un').value.trim();
+
+  if (!id || !qtd || qtd <= 0) {
+    toast('Selecione um ingrediente e informe a quantidade.', 'erro'); return;
+  }
+
+  const prod = cProdutosFT.find(x => x.id === id);
+  if (!prod) return;
+
+  // Remove if already exists
+  ftIngredientes = ftIngredientes.filter(i => i.prod_id !== id);
+
+  ftIngredientes.push({
+    id:        null,
+    prod_id:   id,
+    nome:      prod.nome,
+    tipo:      prod.tipo,
+    quantidade: qtd,
+    unidade:   un,
+    custo_uso: prod.custo_uso || 0,
+  });
+
+  // Reset fields
+  document.getElementById('ft-ing-nome').value = '';
+  document.getElementById('ft-ing-id').value   = '';
+  document.getElementById('ft-ing-qtd').value  = '1';
+  document.getElementById('ft-ing-info').textContent = '';
+  document.getElementById('ft-ing-nome').focus();
+
+  renderIngredientes();
+}
+
+function removerIngrediente(idx) {
+  ftIngredientes.splice(idx, 1);
+  renderIngredientes();
+}
+
+function renderIngredientes() {
+  const tbody = document.getElementById('tb-ing-body');
+  const vazio = document.getElementById('tr-ing-vazio');
+
+  if (!ftIngredientes.length) {
+    tbody.innerHTML = '';
+    tbody.appendChild(vazio);
+    recalcularCustoFicha();
+    return;
+  }
+
+  tbody.innerHTML = ftIngredientes.map((ing, idx) => {
+    const subtotal = ing.quantidade * ing.custo_uso;
+    return `<tr>
+      <td class="fw-semibold">${esc(ing.nome)}</td>
+      <td><span class="badge-tipo badge-${ing.tipo.toLowerCase()}">${ing.tipo}</span></td>
+      <td>${Number(ing.quantidade).toLocaleString('pt-BR', {maximumFractionDigits:4})}</td>
+      <td>${esc(ing.unidade)}</td>
+      <td class="text-muted">${brl(ing.custo_uso)}</td>
+      <td class="fw-semibold">${brl(subtotal)}</td>
+      <td>
+        <button class="btn-del" onclick="removerIngrediente(${idx})" title="Remover">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  recalcularCustoFicha();
+}
+
+function recalcularCustoFicha() {
+  const custoTotal  = ftIngredientes.reduce((s, i) => s + (i.quantidade * i.custo_uso), 0);
+  const rendimento  = parseFloat(document.getElementById('ft-rendimento')?.value) || 1;
+  const custoPorcao = custoTotal / rendimento;
+  const unRend      = document.getElementById('ft-unidade-rend')?.value || 'porção';
+
+  document.getElementById('ft-custo-total').textContent = brl(custoTotal);
+  document.getElementById('ft-custo-porcao').textContent =
+    `${brl(custoPorcao)} / ${unRend}`;
+}
+
+async function salvarFicha() {
+  const prodId  = document.getElementById('ft-produto-id').value;
+  const fichaId = document.getElementById('ft-ficha-id').value;
+  const rend    = parseFloat(document.getElementById('ft-rendimento').value) || 1;
+  const unRend  = document.getElementById('ft-unidade-rend').value.trim() || 'porção';
+
+  if (!prodId) { toast('Selecione o produto da ficha.', 'erro'); return; }
+  if (!ftIngredientes.length) { toast('Adicione pelo menos 1 ingrediente.', 'erro'); return; }
+
+  const custoTotal  = ftIngredientes.reduce((s, i) => s + (i.quantidade * i.custo_uso), 0);
+  const custoPorcao = custoTotal / rend;
+
+  let targetFichaId = fichaId;
+
+  if (fichaId) {
+    // Update ficha header
+    await sb.from('est_fichas_tecnicas').update({
+      rendimento: rend, unidade_rendimento: unRend,
+      custo_total: custoTotal, custo_por_porcao: custoPorcao,
+    }).eq('id', fichaId);
+
+    // Delete existing ingredients and re-insert
+    await sb.from('est_ficha_ingredientes').delete().eq('ficha_id', fichaId);
+  } else {
+    // Create new ficha
+    const { data, error } = await sb.from('est_fichas_tecnicas').insert([{
+      produto_id: prodId, rendimento: rend,
+      unidade_rendimento: unRend, custo_total: custoTotal,
+      custo_por_porcao: custoPorcao, ativo: true,
+    }]).select().single();
+
+    if (error) { toast('Erro ao salvar ficha: ' + error.message, 'erro'); return; }
+    targetFichaId = data.id;
+  }
+
+  // Insert ingredients
+  const ings = ftIngredientes.map(i => ({
+    ficha_id:       targetFichaId,
+    ingrediente_id: i.prod_id,
+    quantidade:     i.quantidade,
+    unidade:        i.unidade,
+  }));
+
+  const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
+  if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); return; }
+
+  toast('Ficha técnica salva!', 'ok');
+  bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
+  ftFichasCache = [];
+  carregarFichas();
+}
+
+async function excluirFicha(fichaId) {
+  if (!confirm('Excluir esta ficha técnica?')) return;
+  await sb.from('est_fichas_tecnicas').delete().eq('id', fichaId);
+  toast('Ficha excluída.', 'ok');
+  ftFichasCache = [];
+  carregarFichas();
+}
 }

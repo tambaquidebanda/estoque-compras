@@ -94,6 +94,9 @@
       <a href="#" onclick="ir('cadastros',this)">
         <i class="bi bi-gear-fill"></i> Cadastros
       </a>
+      <a href="#" onclick="ir('fichas',this)">
+        <i class="bi bi-journal-text"></i> Fichas Técnicas
+      </a>
       <a href="#" class="nav-em-breve" title="Em breve">
         <i class="bi bi-clipboard-check-fill"></i> Inventários
         <span class="badge-breve">em breve</span>
@@ -575,8 +578,169 @@
       </div>
     </section>
 
+    <!-- ══════ FICHAS TÉCNICAS ══════ -->
+    <section id="pg-fichas" class="pagina">
+      <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+        <h1 class="mb-0">📋 Fichas Técnicas</h1>
+        <button class="btn btn-primary" onclick="abrirModalFicha()">
+          <i class="bi bi-plus-circle"></i> Nova Ficha
+        </button>
+      </div>
+
+      <!-- Filtros -->
+      <div class="card-grafico mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold small">Buscar produto</label>
+            <input type="text" class="form-control form-control-sm" id="ft-busca"
+              placeholder="Digite o nome..." oninput="filtrarFichas()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">Tipo</label>
+            <select class="form-select form-select-sm" id="ft-tipo" onchange="filtrarFichas()">
+              <option value="">Todos</option>
+              <option value="VENDA">Cardápio (Venda)</option>
+              <option value="PPB">PPB — Bar</option>
+              <option value="PPC">PPC — Cozinha</option>
+              <option value="PPP">PPP — Produção</option>
+              <option value="SA">SA — Semi-Acabado</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">Status</label>
+            <select class="form-select form-select-sm" id="ft-status" onchange="filtrarFichas()">
+              <option value="com">Com ficha técnica</option>
+              <option value="sem">Sem ficha técnica</option>
+              <option value="">Todos os produtos</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lista -->
+      <div class="card-grafico">
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+              <tr>
+                <th>Produto</th><th>Tipo</th><th>Categoria</th>
+                <th>Rendimento</th><th>Custo Total</th><th>Custo/Porção</th>
+                <th>Preço Venda</th><th>Margem</th><th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tb-fichas">
+              <tr><td colspan="9" class="text-center text-muted py-4">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="text-muted small mt-2" id="ft-count"></div>
+      </div>
+    </section>
+
   </div><!-- /main -->
 </div><!-- /tela-principal -->
+
+<!-- ══════ MODAL FICHA TÉCNICA ══════ -->
+<div id="modal-ficha" class="modal fade" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modal-ficha-titulo">Nova Ficha Técnica</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ft-ficha-id">
+
+        <!-- Produto -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Produto *</label>
+            <div class="ac-wrapper">
+              <input type="text" class="form-control" id="ft-produto-nome"
+                placeholder="Digite para buscar..." autocomplete="off"
+                oninput="acFichaProduto(this.value)"
+                onblur="setTimeout(()=>fechaAC('ac-ft-produto'),180)">
+              <div class="ac-list" id="ac-ft-produto"></div>
+            </div>
+            <input type="hidden" id="ft-produto-id">
+            <div class="mt-1 small text-muted" id="ft-produto-info"></div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">Rendimento</label>
+            <div class="input-group">
+              <input type="number" class="form-control" id="ft-rendimento"
+                value="1" min="0.001" step="0.001" oninput="recalcularCustoFicha()">
+              <input type="text" class="form-control" id="ft-unidade-rend"
+                value="porção" style="max-width:90px">
+            </div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">Custo Total Calculado</label>
+            <div class="form-control bg-light fw-bold text-success" id="ft-custo-total">R$ 0,00</div>
+            <div class="small text-muted mt-1" id="ft-custo-porcao"></div>
+          </div>
+        </div>
+
+        <!-- Ingredientes -->
+        <div class="sec-titulo">Ingredientes</div>
+
+        <div class="row g-2 mb-3 align-items-end">
+          <div class="col-md-5">
+            <label class="form-label small fw-semibold">Ingrediente (MP, SA, PP...)</label>
+            <div class="ac-wrapper">
+              <input type="text" class="form-control form-control-sm" id="ft-ing-nome"
+                placeholder="Digite para buscar ingrediente..." autocomplete="off"
+                oninput="acIngrediente(this.value)"
+                onblur="setTimeout(()=>fechaAC('ac-ft-ing'),180)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();addIngrediente()}">
+              <div class="ac-list" id="ac-ft-ing"></div>
+            </div>
+            <input type="hidden" id="ft-ing-id">
+            <div class="small text-muted" id="ft-ing-info"></div>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small fw-semibold">Quantidade</label>
+            <input type="number" class="form-control form-control-sm" id="ft-ing-qtd"
+              value="1" min="0" step="0.001"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();addIngrediente()}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small fw-semibold">Unidade</label>
+            <input type="text" class="form-control form-control-sm" id="ft-ing-un" value="UN">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-primary w-100" onclick="addIngrediente()">
+              <i class="bi bi-plus"></i> Adicionar
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabela de ingredientes -->
+        <div class="table-responsive">
+          <table class="table table-sm table-hover" id="tb-ingredientes">
+            <thead>
+              <tr>
+                <th>Ingrediente</th><th>Tipo</th><th>Quantidade</th>
+                <th>Un.</th><th>Custo Unit.</th><th>Subtotal</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="tb-ing-body">
+              <tr id="tr-ing-vazio"><td colspan="7" class="text-center text-muted py-3">
+                Nenhum ingrediente adicionado.
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="salvarFicha()">
+          <i class="bi bi-check-circle"></i> Salvar Ficha
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Toast container -->
 <div id="toast-box" style="position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;min-width:260px"></div>
