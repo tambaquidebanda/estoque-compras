@@ -1852,7 +1852,7 @@ async function carregarPlanejamento() {
   // Carrega produtos com médias (catálogo de fallback)
   const [{ data: prods }, { data: compras }] = await Promise.all([
     sb.from('est_produtos')
-      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,estoque_min,ativo')
+      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,estoque_min,vendas_medias,ativo')
       .eq('ativo', true)
       .in('tipo', ['MP','SA','MC'])
       .order('categoria').order('nome'),
@@ -1877,7 +1877,9 @@ async function carregarPlanejamento() {
 
   _planProdutos = (prods || []).map(p => {
     const h   = histMap[p.nome.trim().toUpperCase()] || {};
-    const med = h.semanas?.size ? Math.round((h.qtd / h.semanas.size) * 10) / 10 : 0;
+    const medHist = h.semanas?.size ? Math.round((h.qtd / h.semanas.size) * 10) / 10 : 0;
+    // Usa demanda semanal salva quando disponível; cai no histórico calculado se não
+    const med = parseFloat(p.vendas_medias) > 0 ? parseFloat(p.vendas_medias) : medHist;
     return {
       id: p.id, nome: p.nome, tipo: p.tipo,
       categoria: p.categoria || '', unidade: p.unidade_uso || 'UN',
@@ -1982,7 +1984,7 @@ function _processarWbPlan(wb) {
 
   const col = {
     nome:       ci('produto','product','nome','item','descriç'),
-    vendas:     ci('venda','médias','media','demanda','consumo'),
+    vendas:     ci('dem. semanal','dem.semanal','dem_semanal','venda','médias','media','demanda','consumo','semanal'),
     estmin:     ci('mínimo','minimo','est. min','estoque min','est.min'),
     estoque:    -1,
     cb:         ci('cozinha','bar'),
@@ -2038,6 +2040,91 @@ function limparDadosPlan() {
   _planDados = [];
   renderPlanejamento();
 }
+
+
+// ─── IMPORTAR DEMANDA SEMANAL ───────────────────────────────────
+function handleDropDem(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarDemanda(f); }
+function importarDemandaSemanal(e) { const f = e.target.files[0]; if (f) _processarDemanda(f); }
+
+async function _processarDemanda(file) {
+  const msgEl = document.getElementById('msg-dem-semanal');
+  msgEl.innerHTML = '<span class="text-muted">Lendo arquivo...</span>';
+
+  try {
+    const buf  = await file.arrayBuffer();
+    const wb   = XLSX.read(new Uint8Array(buf), { type: 'array' });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+
+    // Planilha tem 3 linhas de cabeçalho; linha 3 (índice 2) contém "Produto" e "Dem. Semanal"
+    const rows = XLSX.utils.sheet_to_json(ws, { range: 2, defval: '' });
+
+    if (!rows.length) {
+      msgEl.innerHTML = '<div class="alert alert-warning small">Planilha vazia ou formato não reconhecido.</div>';
+      return;
+    }
+
+    const allKeys = Object.keys(rows[0]);
+    const prodKey = allKeys.find(k => k.toLowerCase().includes('produto') || k.toLowerCase().includes('product'));
+    const demKey  = allKeys.find(k => k.toLowerCase().includes('dem') || k.toLowerCase().includes('semanal'));
+
+    if (!prodKey || !demKey) {
+      msgEl.innerHTML = `<div class="alert alert-danger small">Colunas "Produto" e "Dem. Semanal" não encontradas. Detectadas: ${allKeys.slice(0, 8).join(', ')}</div>`;
+      return;
+    }
+
+    const parseNum = v => {
+      if (typeof v === 'number') return v;
+      return parseFloat(String(v || '0').replace(/\./g, '').replace(',', '.')) || 0;
+    };
+
+    const linhas = rows
+      .map(r => ({ nome: String(r[prodKey] || '').trim(), dem: parseNum(r[demKey]) }))
+      .filter(r => r.nome && r.dem > 0);
+
+    if (!linhas.length) {
+      msgEl.innerHTML = '<div class="alert alert-warning small">Nenhum produto válido encontrado na planilha.</div>';
+      return;
+    }
+
+    msgEl.innerHTML = `<span class="text-muted">Carregando catálogo e atualizando ${linhas.length} produtos...</span>`;
+    await carregarProdutosFT(true);
+
+    const naoEncontrados = [];
+    const matched = linhas.map(u => {
+      const prod = cProdutosFT.find(p => p.nome.trim().toLowerCase() === u.nome.toLowerCase());
+      if (!prod) { naoEncontrados.push(u.nome); return null; }
+      return { id: prod.id, vendas_medias: u.dem };
+    }).filter(Boolean);
+
+    // Atualiza em lotes de 20 chamadas paralelas
+    const BATCH = 20;
+    let atualizados = 0;
+    for (let i = 0; i < matched.length; i += BATCH) {
+      await Promise.all(
+        matched.slice(i, i + BATCH).map(u =>
+          sb.from('est_produtos').update({ vendas_medias: u.vendas_medias }).eq('id', u.id)
+        )
+      );
+      atualizados += Math.min(BATCH, matched.length - i);
+    }
+
+    document.getElementById('imp-dem-file').value = '';
+
+    let html = `<div class="alert alert-success small">✅ <strong>${atualizados}</strong> produto(s) atualizados com a Demanda Semanal.`;
+    if (naoEncontrados.length) {
+      html += ` <strong>${naoEncontrados.length}</strong> não encontrado(s) no cadastro: ${naoEncontrados.slice(0, 5).map(n => `<em>${n}</em>`).join(', ')}${naoEncontrados.length > 5 ? '...' : ''}.`;
+    }
+    html += '</div>';
+    msgEl.innerHTML = html;
+
+    // Recarrega o planejamento com os novos valores
+    await carregarPlanejamento();
+
+  } catch (err) {
+    msgEl.innerHTML = `<div class="alert alert-danger small">Erro ao processar arquivo: ${err.message}</div>`;
+  }
+}
+
 
 function _planDataAtras(n) {
   const d = new Date();
@@ -2367,7 +2454,7 @@ function imprimirPlanejamento() {
   <p><strong>Semana:</strong> ${dataBR} &nbsp;|&nbsp; Fórmula: Comprar = Vendas Médias + Est. Mínimo − Total Inventário</p>
   <table><thead><tr>
     <th>Produto</th><th>Fornecedor</th><th>Categoria</th><th>Tipo</th>
-    <th style="text-align:center">Vendas Méd.</th><th style="text-align:center">Est. Mín.</th>
+    <th style="text-align:center">Dem. Semanal</th><th style="text-align:center">Est. Mín.</th>
     <th style="text-align:center">∑ Inventário</th><th style="text-align:center">Comprar</th>
     <th style="text-align:center">Valor Unit.</th><th style="text-align:center">Total Est.</th>
   </tr></thead>
