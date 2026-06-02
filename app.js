@@ -585,12 +585,24 @@ function selecionarForn(nome, id) {
 function acProd(val) {
   const lista = document.getElementById('ac-prod');
   if (!val) { lista.classList.remove('aberta'); return; }
+  const q = val.toLowerCase();
 
-  const hits = cProd.filter(p => p.nome.toLowerCase().includes(val.toLowerCase())).slice(0, 8);
+  // Busca no catálogo de produtos (est_produtos) + histórico de compras
+  const doCatalogo = cProdutosFT.filter(p => p.nome.toLowerCase().includes(q));
+  const doHistorico = cProd.filter(p =>
+    p.nome.toLowerCase().includes(q) &&
+    !doCatalogo.some(c => c.nome.toLowerCase() === p.nome.toLowerCase())
+  );
+
+  const hits = [
+    ...doCatalogo.map(p => ({ nome: p.nome, un: p.unidade_uso || '', cat: p.categoria || '' })),
+    ...doHistorico.map(p => ({ nome: p.nome, un: p.unidade_med || '', cat: p.categoria || '' })),
+  ].slice(0, 10);
+
   if (!hits.length) { lista.classList.remove('aberta'); return; }
 
   lista.innerHTML = hits.map(p =>
-    `<div class="ac-item" onmousedown="selecionarProd('${esc(p.nome)}','${esc(p.unidade_med||'')}','${esc(p.categoria||'')}')">${esc(p.nome)} <small class="text-muted">${esc(p.unidade_med||'')}</small></div>`
+    `<div class="ac-item" onmousedown="selecionarProd('${esc(p.nome)}','${esc(p.un)}','${esc(p.cat)}')">${esc(p.nome)} <small class="text-muted">${esc(p.un)}</small></div>`
   ).join('');
   lista.classList.add('aberta');
 }
