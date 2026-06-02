@@ -97,9 +97,8 @@
       <a href="#" onclick="ir('inventario',this)">
         <i class="bi bi-clipboard-check-fill"></i> Inventários
       </a>
-      <a href="#" class="nav-em-breve" title="Em breve">
+      <a href="#" onclick="ir('planejamento',this)">
         <i class="bi bi-cart-check-fill"></i> Planejamento
-        <span class="badge-breve">em breve</span>
       </a>
     </nav>
 
@@ -726,6 +725,80 @@
           </select>
         </div>
         <div id="lst-historico-inv"><p class="text-muted">Nenhum inventário salvo ainda.</p></div>
+      </div>
+    </section>
+
+    <!-- ══════ PLANEJAMENTO ══════ -->
+    <section id="pg-planejamento" class="pagina">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <h1 class="mb-0">🛒 Lista de Compra Sugerida</h1>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-outline-secondary btn-sm" onclick="imprimirListaPlano(false)">
+            <i class="bi bi-printer"></i> Imprimir Lista
+          </button>
+          <button class="btn btn-outline-success btn-sm" onclick="imprimirListaPlano(true)">
+            <i class="bi bi-check2-square"></i> Imprimir Itens OK
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="salvarLimparLista()">
+            <i class="bi bi-floppy-fill"></i> Salvar e Limpar Lista
+          </button>
+        </div>
+      </div>
+
+      <!-- Filtros e confirmar -->
+      <div class="card-grafico mb-3">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏪 Filtrar por Fornecedor</label>
+            <select class="form-select" id="plan-fil-forn" onchange="renderPlanejamento()">
+              <option value="">— Todos os fornecedores —</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">👤 Comprador</label>
+            <select class="form-select" id="plan-comp">
+              <option value="">— selecione —</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data de Entrega</label>
+            <input type="date" class="form-control" id="plan-data">
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-success w-100" onclick="confirmarPlanejamento()">
+              <i class="bi bi-check-circle-fill"></i> Confirmar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="card-grafico">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm align-middle mb-0">
+            <thead style="background:#1a1a2e;color:#fff;font-size:.78rem">
+              <tr>
+                <th style="min-width:160px">PRODUTO</th>
+                <th style="min-width:140px">FORNECEDOR</th>
+                <th style="min-width:120px">CATEGORIA</th>
+                <th style="min-width:110px">TIPO/DESTINO</th>
+                <th class="text-center" style="min-width:90px">VENDAS MÉD.</th>
+                <th class="text-center" style="min-width:75px">EST. MÍN.</th>
+                <th class="text-center" style="min-width:75px">ESTOQUE</th>
+                <th class="text-center" style="min-width:75px">COZ.&amp;BAR</th>
+                <th class="text-center" style="min-width:75px">OUTROS</th>
+                <th class="text-center" style="min-width:90px">QTD PEDIDO</th>
+              </tr>
+            </thead>
+            <tbody id="lst-planejamento">
+              <tr><td colspan="10" class="text-center text-muted py-4">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-muted small mt-2 mb-0">
+          <span style="background:#fff3cd;padding:2px 6px;border-radius:4px">■</span>
+          Produto abaixo do estoque mínimo
+        </p>
       </div>
     </section>
 

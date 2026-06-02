@@ -140,7 +140,8 @@ function ir(nome, el) {
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
   if (nome === 'cadastros')   { irCad('fornecedores', document.querySelector('#tabs-cad .nav-link')); }
-  if (nome === 'inventario')  { setHoje('inv-data'); carregarInventario(); }
+  if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
+  if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
 }
 
 function irCad(tab, el) {
@@ -1636,4 +1637,231 @@ async function excluirInventario(id) {
   await sb.from('est_inventarios').delete().eq('id', id);
   toast('Inventário excluído.', 'ok');
   carregarHistoricoInv();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// PLANEJAMENTO
+// ═══════════════════════════════════════════════════════════════
+let _planProdutos = [];
+
+async function carregarPlanejamento() {
+  // Populate selects
+  const compSel = document.getElementById('plan-comp');
+  if (compSel) {
+    compSel.innerHTML = '<option value="">— selecione —</option>' +
+      cComp.map(c => `<option>${esc(c.nome)}</option>`).join('');
+  }
+  const fornFil = document.getElementById('plan-fil-forn');
+  if (fornFil) {
+    fornFil.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
+      cForn.map(f => `<option>${esc(f.nome)}</option>`).join('');
+  }
+
+  const [{ data: prods }, { data: invCab }, { data: compras }] = await Promise.all([
+    sb.from('est_produtos')
+      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,estoque_min,ativo')
+      .eq('ativo', true)
+      .in('tipo', ['MP','SA','MC'])
+      .order('categoria').order('nome'),
+    sb.from('est_inventarios')
+      .select('id').order('criado_em', { ascending: false }).limit(1),
+    sb.from('cmp_compras')
+      .select('produto,quantidade,data,fornecedor_nome,categoria,tipo_produto,unidade_med')
+      .gte('data', _dataNSemanasAtras(12)),
+  ]);
+
+  // Mapa do último inventário por produto_id
+  let invMap = {};
+  if (invCab?.[0]) {
+    const { data: itens } = await sb.from('est_inventario_itens')
+      .select('produto_id,estoque,cozinha_bar,outros')
+      .eq('inventario_id', invCab[0].id);
+    (itens || []).forEach(it => { invMap[it.produto_id] = it; });
+  }
+
+  // Média semanal por produto (últimas 12 semanas)
+  const histMap = {};
+  (compras || []).forEach(c => {
+    const key = (c.produto || '').trim().toUpperCase();
+    if (!histMap[key]) histMap[key] = { qtd: 0, semanas: new Set(), forn: '', cat: '', tipo: '', un: '' };
+    const diasAtras = Math.floor((Date.now() - new Date(c.data).getTime()) / 86400000);
+    histMap[key].semanas.add(Math.floor(diasAtras / 7));
+    histMap[key].qtd += parseFloat(c.quantidade) || 0;
+    if (c.fornecedor_nome) histMap[key].forn = c.fornecedor_nome;
+    if (c.categoria)       histMap[key].cat  = c.categoria;
+    if (c.tipo_produto)    histMap[key].tipo = c.tipo_produto;
+    if (c.unidade_med)     histMap[key].un   = c.unidade_med;
+  });
+
+  _planProdutos = (prods || []).map(p => {
+    const inv  = invMap[p.id] || {};
+    const hist = histMap[p.nome.trim().toUpperCase()] || {};
+    const nSem = hist.semanas?.size || 1;
+    const med  = hist.semanas?.size ? Math.round((hist.qtd / nSem) * 10) / 10 : 0;
+    return {
+      ...p,
+      est_atual: parseFloat(inv.estoque)     || 0,
+      coz_bar:   parseFloat(inv.cozinha_bar) || 0,
+      outros:    parseFloat(inv.outros)      || 0,
+      vendas_med: med,
+      forn_pad:   hist.forn || '',
+      cat_pad:    hist.cat  || p.categoria || '',
+      tipo_pad:   hist.tipo || '',
+      un_pad:     hist.un   || p.unidade_uso || 'UN',
+    };
+  });
+
+  renderPlanejamento();
+}
+
+function _dataNSemanasAtras(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n * 7);
+  return d.toISOString().split('T')[0];
+}
+
+function renderPlanejamento() {
+  const filtForn = document.getElementById('plan-fil-forn')?.value || '';
+  let prods = _planProdutos;
+  if (filtForn) prods = prods.filter(p => p.forn_pad === filtForn);
+
+  const tbody = document.getElementById('lst-planejamento');
+  if (!tbody) return;
+
+  if (!prods.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = prods.map(p => {
+    const totalEst  = p.est_atual + p.coz_bar + p.outros;
+    const qtdSug    = Math.max(0, Math.round((p.vendas_med - totalEst) * 10) / 10);
+    const abaixoMin = p.estoque_min > 0 && totalEst < p.estoque_min;
+    const rowCls    = abaixoMin ? 'table-warning' : '';
+
+    const fornOpts = cForn.map(f => `<option${f.nome === p.forn_pad ? ' selected' : ''}>${esc(f.nome)}</option>`).join('');
+    const catOpts  = cCat.map(c  => `<option${c.nome === p.cat_pad  ? ' selected' : ''}>${esc(c.nome)}</option>`).join('');
+    const tipoOpts = cTipo.map(t => `<option${t.nome === p.tipo_pad ? ' selected' : ''}>${esc(t.nome)}</option>`).join('');
+
+    return `<tr class="${rowCls}">
+      <td><strong>${esc(p.nome)}</strong><br><small class="text-muted">${p.tipo}</small></td>
+      <td><select class="form-select form-select-sm" id="plan-forn-${p.id}">
+        <option value="">—</option>${fornOpts}</select></td>
+      <td><select class="form-select form-select-sm" id="plan-cat-${p.id}">
+        <option value="">—</option>${catOpts}</select></td>
+      <td><select class="form-select form-select-sm" id="plan-tipo-${p.id}">
+        <option value="">—</option>${tipoOpts}</select></td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center"
+          id="plan-med-${p.id}" value="${p.vendas_med}" min="0" step="0.1" style="width:80px;margin:auto">
+      </td>
+      <td class="text-center text-muted">${p.estoque_min || 0}</td>
+      <td class="text-center">${p.est_atual}</td>
+      <td class="text-center">${p.coz_bar}</td>
+      <td class="text-center">${p.outros}</td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center"
+          id="plan-qtd-${p.id}" value="${qtdSug}" min="0" step="0.1" style="width:80px;margin:auto">
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function confirmarPlanejamento() {
+  const data = document.getElementById('plan-data')?.value;
+  const comp = document.getElementById('plan-comp')?.value;
+  if (!data) { toast('Selecione a data de entrega.', 'erro'); return; }
+  if (!comp) { toast('Selecione o comprador.', 'erro'); return; }
+
+  const registros = [];
+  _planProdutos.forEach(p => {
+    const qtd = parseFloat(document.getElementById(`plan-qtd-${p.id}`)?.value) || 0;
+    if (qtd <= 0) return;
+    const fornNome = document.getElementById(`plan-forn-${p.id}`)?.value || '';
+    const cat      = document.getElementById(`plan-cat-${p.id}`)?.value  || p.categoria || '';
+    const tipo     = document.getElementById(`plan-tipo-${p.id}`)?.value || '';
+    const fornObj  = cForn.find(f => f.nome === fornNome);
+    const catObj   = cCat.find(c => c.nome === cat);
+    registros.push({
+      data,
+      fornecedor_id:   fornObj?.id || null,
+      fornecedor_nome: fornNome,
+      produto:         p.nome,
+      categoria:       cat,
+      plano_conta:     catObj?.plano_conta || '',
+      tipo_produto:    tipo,
+      unidade_med:     p.un_pad || p.unidade_uso || 'UN',
+      custo_unit:      p.custo_uso || 0,
+      quantidade:      qtd,
+      comprador:       comp,
+      unidade_uso:     p.unidade_uso || 'UN',
+      criado_por:      user.id,
+    });
+  });
+
+  if (!registros.length) { toast('Nenhuma linha com quantidade preenchida.', 'erro'); return; }
+
+  const { error } = await sb.from('cmp_compras').insert(registros);
+  if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
+
+  toast(`✅ ${registros.length} compras registradas no histórico!`, 'ok');
+  _planProdutos.forEach(p => {
+    const el = document.getElementById(`plan-qtd-${p.id}`);
+    if (el) el.value = '0';
+  });
+}
+
+function salvarLimparLista() {
+  _planProdutos.forEach(p => {
+    const totalEst = p.est_atual + p.coz_bar + p.outros;
+    const qtdSug   = Math.max(0, Math.round((p.vendas_med - totalEst) * 10) / 10);
+    const el = document.getElementById(`plan-qtd-${p.id}`);
+    if (el) el.value = qtdSug;
+  });
+  toast('Quantidades restauradas para o sugerido.', 'ok');
+}
+
+function imprimirListaPlano(soItensOK) {
+  const prods = soItensOK
+    ? _planProdutos.filter(p => (parseFloat(document.getElementById(`plan-qtd-${p.id}`)?.value) || 0) > 0)
+    : _planProdutos;
+
+  if (!prods.length) { toast('Nenhum item para imprimir.', 'erro'); return; }
+
+  const linhas = prods.map(p => {
+    const qtd  = document.getElementById(`plan-qtd-${p.id}`)?.value  || '0';
+    const forn = document.getElementById(`plan-forn-${p.id}`)?.value || '—';
+    const cat  = document.getElementById(`plan-cat-${p.id}`)?.value  || '—';
+    const tipo = document.getElementById(`plan-tipo-${p.id}`)?.value || '—';
+    const med  = document.getElementById(`plan-med-${p.id}`)?.value  || p.vendas_med;
+    const abx  = p.estoque_min > 0 && (p.est_atual + p.coz_bar + p.outros) < p.estoque_min;
+    return `<tr style="${abx ? 'background:#fff3cd' : ''}">
+      <td>${esc(p.nome)}</td><td>${esc(forn)}</td><td>${esc(cat)}</td><td>${esc(tipo)}</td>
+      <td style="text-align:center">${med}</td>
+      <td style="text-align:center">${p.estoque_min || 0}</td>
+      <td style="text-align:center">${p.est_atual}</td>
+      <td style="text-align:center">${p.coz_bar}</td>
+      <td style="text-align:center">${p.outros}</td>
+      <td style="text-align:center"><strong>${qtd}</strong></td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Lista de Compra Sugerida</title>
+    <style>body{font-family:Arial,sans-serif;font-size:11px}h2{text-align:center}
+    table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:3px 5px}
+    th{background:#1a1a2e;color:#fff}</style></head><body>
+    <h2>Lista de Compra Sugerida — Tambaqui de Banda</h2>
+    <p style="text-align:center">Emitida em: ${new Date().toLocaleDateString('pt-BR')}</p>
+    <table><thead><tr>
+      <th>Produto</th><th>Fornecedor</th><th>Categoria</th><th>Tipo/Destino</th>
+      <th>Vendas Méd.</th><th>Est.Mín.</th><th>Estoque</th><th>Coz.&Bar</th>
+      <th>Outros</th><th>Qtd Pedido</th>
+    </tr></thead><tbody>${linhas}</tbody></table>
+    </body></html>`;
+
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+  w.print();
 }
