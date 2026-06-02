@@ -418,6 +418,96 @@ async function carregarDashboard() {
       },
     });
   }
+  renderInsights();
+}
+
+async function renderInsights() {
+  const container = document.getElementById('insights-container');
+  if (!container) return;
+
+  const mesAtual = new Date().toISOString().slice(0, 7);
+  const { data: compras } = await sb.from('cmp_compras')
+    .select('data,fornecedor_nome,categoria,unidade_uso,custo_unit,quantidade')
+    .order('data', { ascending: false })
+    .limit(500);
+
+  if (!compras?.length) {
+    container.innerHTML = '<p class="text-muted">Lance compras para ver os insights automáticos.</p>';
+    return;
+  }
+
+  const soma = c => (c.quantidade || 0) * (c.custo_unit || 0);
+  const total = compras.reduce((s, c) => s + soma(c), 0);
+
+  const _grp = (arr, keyFn) => {
+    const out = {};
+    arr.forEach(c => { const k = typeof keyFn === 'function' ? keyFn(c) : c[keyFn]; if (k) out[k] = (out[k] || 0) + soma(c); });
+    return out;
+  };
+
+  const byForn = _grp(compras, 'fornecedor_nome');
+  const byCat  = _grp(compras, 'categoria');
+  const byUso  = _grp(compras, 'unidade_uso');
+
+  const fornLider = Object.entries(byForn).sort((a,b) => b[1]-a[1])[0] || ['—', 0];
+  const catLider  = Object.entries(byCat).sort((a,b)  => b[1]-a[1])[0] || ['—', 0];
+  const usoLider  = Object.entries(byUso).sort((a,b)  => b[1]-a[1])[0] || ['—', 0];
+  const fornPct   = total > 0 ? (fornLider[1]/total*100).toFixed(1) : '0.0';
+  const catPct    = total > 0 ? (catLider[1]/total*100).toFixed(1)  : '0.0';
+  const usoPct    = total > 0 ? (usoLider[1]/total*100).toFixed(1)  : '0.0';
+
+  const comprasMes    = compras.filter(c => c.data?.startsWith(mesAtual));
+  const totalMes      = comprasMes.reduce((s,c) => s + soma(c), 0);
+  const diasComCompra = new Set(comprasMes.map(c => c.data)).size;
+  const diaAtual      = new Date().getDate();
+  const taxaAtiv      = diaAtual > 0 ? ((diasComCompra/diaAtual)*100).toFixed(0) : 0;
+
+  const _semanaStr = d => { const dt = new Date(d + 'T12:00:00'); dt.setDate(dt.getDate() - dt.getDay()); return dt.toISOString().slice(0,10); };
+  const semAtual = _semanaStr(new Date().toISOString().slice(0,10));
+  const bySem = _grp(compras, c => _semanaStr(c.data));
+  const sems  = [...new Set(compras.map(c => _semanaStr(c.data)))].sort();
+  const idxA  = sems.indexOf(semAtual);
+  const gastoAtual    = bySem[semAtual] || 0;
+  const gastoAnterior = idxA > 0 ? (bySem[sems[idxA-1]] || 0) : null;
+  let varSem = null;
+  if (gastoAnterior > 0) varSem = ((gastoAtual - gastoAnterior) / gastoAnterior * 100).toFixed(1);
+
+  let resumo = '';
+  if (comprasMes.length) {
+    resumo = `No mês corrente, o restaurante realizou <strong>${comprasMes.length} lançamento${comprasMes.length>1?'s':''}</strong>, totalizando <strong>${brl(totalMes)}</strong>. `;
+    resumo += `A categoria <strong>${catLider[0]}</strong> lidera com ${catPct}% do volume, e o fornecedor <strong>${fornLider[0]}</strong> representa ${fornPct}% das compras. `;
+    if (parseFloat(fornPct) > 50) resumo += `⚠️ Concentração alta em um único fornecedor — considere diversificar. `;
+    if (varSem !== null) {
+      const dir = parseFloat(varSem) >= 0 ? 'alta' : 'queda';
+      resumo += `Esta semana apresenta <strong>${dir} de ${Math.abs(varSem)}%</strong> em relação à semana anterior.`;
+    }
+  } else {
+    resumo = 'Não há lançamentos no mês atual. Lance compras para gerar o resumo executivo.';
+  }
+
+  const corVar = varSem !== null ? (parseFloat(varSem) <= 0 ? '#2EC4B6' : '#E71D36') : '#6c757d';
+  const bullets = [
+    { icon:'🏪', label:'Fornecedor Líder',      value: fornLider[0], detail:`${brl(fornLider[1])} — ${fornPct}% das compras`, cor:'#FF6B35' },
+    { icon:'📂', label:'Categoria Líder',        value: catLider[0],  detail:`${brl(catLider[1])} — ${catPct}% das compras`,  cor:'#2EC4B6' },
+    { icon:'🏬', label:'Canal com Mais Gastos',  value: usoLider[0],  detail:`${brl(usoLider[1])} — ${usoPct}% do volume`,   cor:'#8338EC' },
+    { icon:'📅', label:'Atividade no Mês',        value:`${diasComCompra} dia${diasComCompra!==1?'s':''} com compras`, detail:`${taxaAtiv}% dos dias — ${comprasMes.length} lançamento${comprasMes.length!==1?'s':''}`, cor:'#06D6A0' },
+    { icon:'📈', label:'Tendência Semanal',       value: varSem!==null?`${parseFloat(varSem)>=0?'▲':'▼'} ${Math.abs(varSem)}% vs sem. anterior`:(gastoAtual>0?'1ª semana registrada':'Sem dados'), detail: gastoAtual>0?`Gasto atual: ${brl(gastoAtual)}`:'—', cor:corVar },
+  ];
+
+  container.innerHTML = `
+    <div class="row g-3 mb-3">
+      ${bullets.map(b => `<div class="col-md-4 col-6">
+        <div style="background:#f8f9fa;border-radius:10px;padding:1rem;border-left:4px solid ${b.cor}">
+          <div style="font-size:.7rem;text-transform:uppercase;color:#6c757d;letter-spacing:.05em">${b.icon} ${b.label}</div>
+          <div style="font-weight:700;font-size:.95rem;color:#1a1a2e;margin:.3rem 0">${esc(b.value)}</div>
+          <div style="font-size:.78rem;color:#6c757d">${b.detail}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+    <div style="background:#fff7ed;border-radius:10px;padding:1rem 1.3rem;border-left:4px solid #FF6B35">
+      <div style="font-size:.7rem;text-transform:uppercase;color:#FF6B35;font-weight:700;margin-bottom:.4rem">📋 Resumo Executivo</div>
+      <p style="margin:0;color:#1a1a2e;font-size:.9rem;line-height:1.7">${resumo}</p>
+    </div>`;
 }
 
 const CORES_GRAFICO = [
