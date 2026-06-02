@@ -1088,7 +1088,7 @@ async function carregarFichas() {
 
   const busca  = (document.getElementById('ft-busca')?.value  || '').toLowerCase();
   const tipo   = document.getElementById('ft-tipo')?.value   || '';
-  const status = document.getElementById('ft-status')?.value || 'com';
+  const status = document.getElementById('ft-status')?.value ?? '';
 
   // Load fichas with product info
   const { data: fichas } = await sb.from('est_fichas_tecnicas')
@@ -1099,10 +1099,7 @@ async function carregarFichas() {
   const fichaByProd = {};
   ftFichasCache.forEach(f => { fichaByProd[f.produto_id] = f; });
 
-  // Filter products
-  let prods = cProdutosFT.filter(p =>
-    ['VENDA','PPB','PPC','PPP','SA'].includes(p.tipo)
-  );
+  let prods = [...cProdutosFT];
 
   if (tipo)   prods = prods.filter(p => p.tipo === tipo);
   if (busca)  prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
