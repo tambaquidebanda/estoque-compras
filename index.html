@@ -846,7 +846,32 @@
 
       <!-- Fórmula -->
       <div class="alert alert-primary py-2 mb-3 small">
-        <strong>Fórmula:</strong> &nbsp; 🛒 <strong>Comprar</strong> = Vendas Médias + Estoque Mínimo &minus; (Estoque + Coz.&amp;Bar + Outros)
+        <strong>Fórmula:</strong> &nbsp; 🛒 <strong>Comprar</strong> = Dem. Semanal + Estoque Mínimo &minus; (Estoque + Coz.&amp;Bar + Outros)
+      </div>
+
+      <!-- Importar Demanda Semanal -->
+      <div class="card-grafico mb-3">
+        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+          <span style="font-size:1.2rem">📊</span>
+          <h6 class="mb-0 fw-semibold">Importar Demanda Semanal</h6>
+          <span class="badge bg-primary ms-auto" style="font-size:.7rem">Demanda_Semanal_Projecao</span>
+        </div>
+        <p class="text-muted small mb-2">
+          Planilha com <strong>3 linhas de cabeçalho</strong> — colunas <strong>Produto</strong> e <strong>Dem. Semanal</strong>.
+          Os valores são salvos em cada produto e usados como base fixa de compra semanal (substituem o cálculo automático por histórico).
+        </p>
+        <div class="drop-zone" id="drop-dem"
+             onclick="document.getElementById('imp-dem-file').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="this.classList.remove('drag-over');handleDropDem(event)"
+             style="cursor:pointer;border:2px dashed #dee2e6;border-radius:10px;padding:1rem;text-align:center">
+          <input type="file" id="imp-dem-file" accept=".xlsx,.xls,.csv" style="display:none"
+            onchange="importarDemandaSemanal(event)">
+          <div style="font-size:1.8rem">📂</div>
+          <div class="small mt-1">Clique ou arraste o arquivo Excel / CSV</div>
+        </div>
+        <div id="msg-dem-semanal" class="mt-2"></div>
       </div>
 
       <!-- Origem do saldo -->
@@ -985,7 +1010,7 @@
                 <th style="min-width:130px">Fornecedor</th>
                 <th style="min-width:120px">Categoria</th>
                 <th style="min-width:110px">Tipo/Destino</th>
-                <th class="text-center" style="min-width:90px">📊 Vendas Méd.</th>
+                <th class="text-center" style="min-width:90px">📊 Dem. Semanal</th>
                 <th class="text-center" style="min-width:80px">📉 Est. Mín.</th>
                 <th class="text-center" style="min-width:80px">🏪 Estoque</th>
                 <th class="text-center" style="min-width:80px">🍳 Coz.&amp;Bar</th>
