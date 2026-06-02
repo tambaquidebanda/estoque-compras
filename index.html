@@ -100,6 +100,9 @@
       <a href="#" onclick="ir('planejamento',this)">
         <i class="bi bi-cart-check-fill"></i> Planejamento
       </a>
+      <a href="#" onclick="ir('recebimento',this)">
+        <i class="bi bi-box-seam-fill"></i> Recebimentos
+      </a>
     </nav>
 
     <div class="sb-footer">
@@ -902,8 +905,147 @@
       </div>
     </section>
 
+    <!-- ══════ RECEBIMENTOS ══════ -->
+    <section id="pg-recebimento" class="pagina">
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <h1 class="mb-0">📬 Recebimento de Pedidos</h1>
+      </div>
+
+      <ul class="nav nav-tabs mb-4" id="tabs-receb">
+        <li class="nav-item"><a class="nav-link active" href="#" onclick="abaReceb('pendentes',this)">📋 Pendentes</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" onclick="abaReceb('historico',this)">📦 Histórico</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" onclick="abaReceb('contaspagar',this)">💳 Contas a Pagar</a></li>
+      </ul>
+
+      <!-- ABA: PENDENTES -->
+      <div id="receb-pendentes">
+        <div class="row g-3 mb-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data inicial</label>
+            <input type="date" class="form-control" id="receb-ini" onchange="renderPendentes()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data final</label>
+            <input type="date" class="form-control" id="receb-fim" onchange="renderPendentes()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏭 Fornecedor</label>
+            <select class="form-select" id="receb-forn" onchange="renderPendentes()">
+              <option value="">Todos os fornecedores</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-outline-secondary w-100" onclick="document.getElementById('receb-ini').value='';document.getElementById('receb-fim').value='';document.getElementById('receb-forn').value='';renderPendentes()">↺ Limpar</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
+              <tr><th>Pedido</th><th>Data</th><th>Fornecedor</th><th>Comprador</th><th class="text-center">Itens</th><th class="text-center">Total</th><th class="text-center" colspan="2">Ação</th></tr>
+            </thead>
+            <tbody id="tb-receb-pendentes"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ABA: HISTÓRICO -->
+      <div id="receb-historico" style="display:none">
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
+              <tr><th>Recebimento</th><th>Pedido</th><th>Data</th><th>Fornecedor</th><th>Responsável</th><th class="text-center">Status</th><th class="text-center">Total Recebido</th><th></th></tr>
+            </thead>
+            <tbody id="tb-receb-hist"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ABA: CONTAS A PAGAR -->
+      <div id="receb-contaspagar" style="display:none">
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <div class="card-kpi"><div class="kpi-label">💳 Total Pendente</div><div class="kpi-val text-danger" id="cp-kpi-pend">R$ 0,00</div></div>
+          </div>
+          <div class="col-md-3">
+            <div class="card-kpi"><div class="kpi-label">✅ Total Pago</div><div class="kpi-val text-success" id="cp-kpi-pago">R$ 0,00</div></div>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
+              <tr><th>Pedido</th><th>Fornecedor</th><th>Data Receb.</th><th>Vencimento</th><th class="text-center">Valor</th><th class="text-center">Status</th><th class="text-center">Ação</th></tr>
+            </thead>
+            <tbody id="tb-contas-pagar"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </div><!-- /main -->
 </div><!-- /tela-principal -->
+
+<!-- ══════ MODAL RECEBER PEDIDO ══════ -->
+<div class="modal fade" id="modal-receber" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#1a1a2e;color:#fff">
+        <h5 class="modal-title">📬 Receber Pedido <span id="receb-ped-num" class="badge ms-2" style="background:#FF6B35"></span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">📅 Data do Recebimento</label>
+            <input type="date" class="form-control" id="receb-data-rec">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">👤 Responsável pelo Recebimento</label>
+            <input type="text" class="form-control" id="receb-responsavel" placeholder="Nome do estoquista">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">📅 Vencimento (Contas a Pagar)</label>
+            <input type="date" class="form-control" id="receb-vencimento">
+          </div>
+        </div>
+        <input type="hidden" id="receb-pedido-num-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle" id="tb-modal-receber">
+            <thead style="background:#f8f9fa;font-size:.82rem">
+              <tr>
+                <th>Produto</th><th>Categoria</th><th class="text-center">Qtd Pedida</th>
+                <th class="text-center" style="min-width:100px">Qtd Recebida</th>
+                <th class="text-center">Vlr Unit.</th><th class="text-center">Total</th>
+                <th class="text-center">Divergência</th><th style="min-width:160px">Observação</th>
+              </tr>
+            </thead>
+            <tbody id="tb-receber-itens"></tbody>
+          </table>
+        </div>
+        <div class="alert alert-warning small py-2 mt-2" id="alerta-diverg" style="display:none">
+          ⚠️ Há divergências marcadas. Elas serão registradas no histórico de recebimento.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="me-auto fw-bold">Total a pagar: <span id="receb-total-modal" class="text-success">R$ 0,00</span></div>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success" onclick="confirmarRecebimento()">✅ Confirmar Recebimento e Gerar Conta</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ MODAL DETALHE RECEBIMENTO ══════ -->
+<div class="modal fade" id="modal-detalhe-receb" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#1a1a2e;color:#fff">
+        <h5 class="modal-title">📦 Detalhe do Recebimento</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="detalhe-receb-body"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ══════ MODAL FICHA TÉCNICA ══════ -->
 <div id="modal-ficha" class="modal fade" tabindex="-1">

@@ -142,6 +142,7 @@ function ir(nome, el) {
   if (nome === 'cadastros')   { irCad('fornecedores', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
+  if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }
 }
 
 function irCad(tab, el) {
@@ -2248,4 +2249,338 @@ function imprimirItensOKPlan() {
   <script>setTimeout(()=>window.print(),400)<\/script>
   </body></html>`);
   w.document.close();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// RECEBIMENTOS
+// ═══════════════════════════════════════════════════════════════
+let _recebItensAbertos = [];  // itens do pedido aberto no modal
+
+function abaReceb(aba, el) {
+  document.querySelectorAll('#tabs-receb .nav-link').forEach(a => a.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('receb-pendentes').style.display   = aba === 'pendentes'   ? '' : 'none';
+  document.getElementById('receb-historico').style.display   = aba === 'historico'   ? '' : 'none';
+  document.getElementById('receb-contaspagar').style.display = aba === 'contaspagar' ? '' : 'none';
+  if (aba === 'pendentes')   renderPendentes();
+  if (aba === 'historico')   renderHistReceb();
+  if (aba === 'contaspagar') renderContasPagar();
+}
+
+async function renderPendentes() {
+  const ini     = document.getElementById('receb-ini')?.value || '';
+  const fim     = document.getElementById('receb-fim')?.value || '';
+  const fornSel = document.getElementById('receb-forn')?.value || '';
+
+  let query = sb.from('cmp_compras')
+    .select('id,pedido_num,data,data_entrega,fornecedor_nome,comprador,produto,categoria,tipo_produto,unidade_med,quantidade,custo_unit,status_receb')
+    .not('pedido_num', 'is', null)
+    .neq('status_receb', 'recebido')
+    .order('data', { ascending: false });
+
+  if (ini) query = query.gte('data', ini);
+  if (fim) query = query.lte('data', fim);
+
+  const { data: compras } = await query;
+
+  // Agrupa por pedido_num
+  const grupos = {};
+  (compras || []).forEach(c => {
+    const key = c.pedido_num;
+    if (!grupos[key]) grupos[key] = { pedido_num: key, data: c.data, forn: c.fornecedor_nome, comp: c.comprador, itens: [], total: 0 };
+    grupos[key].itens.push(c);
+    grupos[key].total += (c.quantidade || 0) * (c.custo_unit || 0);
+  });
+
+  let lista = Object.values(grupos).sort((a,b) => b.data.localeCompare(a.data));
+
+  // Popula filtro de fornecedor
+  const fornEl = document.getElementById('receb-forn');
+  if (fornEl) {
+    const forns = [...new Set(lista.map(g => g.forn).filter(Boolean))].sort();
+    const cur = fornEl.value;
+    fornEl.innerHTML = '<option value="">Todos os fornecedores</option>' +
+      forns.map(f => `<option value="${f}"${f === cur ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  }
+
+  if (fornSel) lista = lista.filter(g => g.forn === fornSel);
+
+  const tbody = document.getElementById('tb-receb-pendentes');
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Nenhum pedido pendente de recebimento.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = lista.map(g => `
+    <tr>
+      <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
+      <td>${(g.data||'').split('-').reverse().join('/')}</td>
+      <td><strong>${esc(g.forn||'—')}</strong></td>
+      <td>${esc(g.comp||'—')}</td>
+      <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span></td>
+      <td class="text-center"><strong>${brl(g.total)}</strong></td>
+      <td class="text-center">
+        <button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${esc(g.pedido_num)}')">
+          📬 Receber
+        </button>
+      </td>
+      <td class="text-center">
+        <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="excluirPedidoReceb('${esc(g.pedido_num)}')">
+          🗑️ Excluir
+        </button>
+      </td>
+    </tr>`).join('');
+}
+
+async function excluirPedidoReceb(pedido_num) {
+  if (!confirm(`Excluir o pedido ${pedido_num}? Esta ação não pode ser desfeita.`)) return;
+  await sb.from('cmp_compras').delete().eq('pedido_num', pedido_num);
+  toast('Pedido excluído.', 'ok');
+  renderPendentes();
+}
+
+async function abrirModalReceber(pedido_num) {
+  const { data: itens } = await sb.from('cmp_compras')
+    .select('id,produto,categoria,unidade_med,quantidade,custo_unit,fornecedor_nome,comprador')
+    .eq('pedido_num', pedido_num)
+    .neq('status_receb', 'recebido');
+
+  if (!itens?.length) { toast('Itens não encontrados.', 'erro'); return; }
+  _recebItensAbertos = itens;
+
+  document.getElementById('receb-pedido-num-hidden').value = pedido_num;
+  document.getElementById('receb-ped-num').textContent     = pedido_num;
+  document.getElementById('receb-data-rec').value          = new Date().toISOString().split('T')[0];
+  document.getElementById('receb-vencimento').value        = '';
+  document.getElementById('receb-responsavel').value       = '';
+  document.getElementById('alerta-diverg').style.display   = 'none';
+
+  document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
+    <tr id="row-rec-${x.id}">
+      <td><strong>${esc(x.produto)}</strong></td>
+      <td><small class="text-muted">${esc(x.categoria||'—')}</small></td>
+      <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center" style="width:90px;margin:auto"
+          id="qtd-rec-${x.id}" value="${x.quantidade||0}" min="0" step="0.001"
+          oninput="recalcReceb('${x.id}',${x.custo_unit||0},${x.quantidade||0})">
+      </td>
+      <td class="text-center">${brl(x.custo_unit||0)}</td>
+      <td class="text-center fw-bold" id="tot-rec-${x.id}">${brl((x.quantidade||0)*(x.custo_unit||0))}</td>
+      <td class="text-center">
+        <div class="form-check form-switch d-flex justify-content-center">
+          <input class="form-check-input" type="checkbox" id="div-rec-${x.id}" onchange="marcarDiverg('${x.id}')">
+        </div>
+      </td>
+      <td><input type="text" class="form-control form-control-sm" id="obs-rec-${x.id}"
+        placeholder="Observação..." style="display:none"></td>
+    </tr>`).join('');
+
+  calcTotalReceb();
+  new bootstrap.Modal(document.getElementById('modal-receber')).show();
+}
+
+function recalcReceb(id, vlrUnit, qtdPedida) {
+  const qtdRec = parseFloat(document.getElementById(`qtd-rec-${id}`)?.value) || 0;
+  const tot    = qtdRec * vlrUnit;
+  const totEl  = document.getElementById(`tot-rec-${id}`);
+  if (totEl) totEl.textContent = brl(tot);
+  const divEl = document.getElementById(`div-rec-${id}`);
+  if (divEl && qtdRec !== qtdPedida) { divEl.checked = true; marcarDiverg(id); }
+  calcTotalReceb();
+}
+
+function marcarDiverg(id) {
+  const checked = document.getElementById(`div-rec-${id}`)?.checked;
+  const obsEl   = document.getElementById(`obs-rec-${id}`);
+  const row     = document.getElementById(`row-rec-${id}`);
+  if (obsEl) obsEl.style.display = checked ? '' : 'none';
+  if (row)   row.style.background = checked ? '#fff8f0' : '';
+  const temDiv = document.querySelectorAll('[id^="div-rec-"]:checked').length > 0;
+  document.getElementById('alerta-diverg').style.display = temDiv ? '' : 'none';
+}
+
+function calcTotalReceb() {
+  let total = 0;
+  document.querySelectorAll('[id^="qtd-rec-"]').forEach(el => {
+    const id = el.id.replace('qtd-rec-', '');
+    const txt = (document.getElementById(`tot-rec-${id}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
+    total += parseFloat(txt) || 0;
+  });
+  const el = document.getElementById('receb-total-modal');
+  if (el) el.textContent = brl(total);
+}
+
+async function confirmarRecebimento() {
+  const pedido_num  = document.getElementById('receb-pedido-num-hidden').value;
+  const dataRec     = document.getElementById('receb-data-rec').value;
+  const responsavel = (document.getElementById('receb-responsavel').value || '').trim();
+  const vencimento  = document.getElementById('receb-vencimento').value;
+  if (!dataRec)     { toast('Informe a data do recebimento.', 'erro'); return; }
+  if (!responsavel) { toast('Informe o responsável.', 'erro'); return; }
+  if (!vencimento)  { toast('Informe a data de vencimento.', 'erro'); return; }
+
+  const ref = _recebItensAbertos[0];
+  const itensReceb = _recebItensAbertos.map(x => {
+    const qtdRec = parseFloat(document.getElementById(`qtd-rec-${x.id}`)?.value) || 0;
+    const diverg = document.getElementById(`div-rec-${x.id}`)?.checked || false;
+    const obs    = document.getElementById(`obs-rec-${x.id}`)?.value || '';
+    return {
+      compra_id: x.id, produto: x.produto, categoria: x.categoria || '',
+      unidade: x.unidade_med || '', qtd_pedida: x.quantidade || 0,
+      qtd_recebida: qtdRec, valor_unitario: x.custo_unit || 0,
+      total_recebido: qtdRec * (x.custo_unit || 0),
+      divergencia: diverg, obs_divergencia: obs,
+    };
+  });
+
+  const totalRecebido = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  const temDiverg     = itensReceb.some(i => i.divergencia);
+
+  // Salva recebimento cabeçalho
+  const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
+    pedido_num, data_receb: dataRec, responsavel,
+    fornecedor: ref?.fornecedor_nome || '', comprador: ref?.comprador || '',
+    total_recebido: totalRecebido,
+    status: temDiverg ? 'parcial' : 'confirmado',
+  }]).select().single();
+  if (errReceb) { toast('Erro ao salvar recebimento: ' + errReceb.message, 'erro'); return; }
+
+  // Salva itens
+  await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+
+  // Gera conta a pagar
+  await sb.from('cmp_contas_pagar').insert([{
+    pedido_num, recebimento_id: receb.id,
+    fornecedor: ref?.fornecedor_nome || '',
+    data_receb: dataRec, vencimento, valor: totalRecebido,
+    status: 'pendente',
+  }]);
+
+  // Marca itens como recebidos
+  await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('pedido_num', pedido_num);
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
+  toast(`✅ Recebimento confirmado! Conta gerada: ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
+  renderPendentes();
+}
+
+async function renderHistReceb() {
+  const { data: lista } = await sb.from('cmp_recebimentos')
+    .select('id,pedido_num,data_receb,responsavel,fornecedor,status,total_recebido')
+    .order('criado_em', { ascending: false });
+
+  const tbody = document.getElementById('tb-receb-hist');
+  if (!lista?.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Nenhum recebimento registrado.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = lista.map(r => {
+    const cor    = r.status === 'confirmado' ? '#2EC4B6' : '#FF6B35';
+    const label  = r.status === 'confirmado' ? '✅ Confirmado' : '⚠️ Divergência';
+    const dataBR = (r.data_receb||'').split('-').reverse().join('/');
+    return `<tr>
+      <td><span class="badge bg-secondary">R</span></td>
+      <td><span class="badge" style="background:#FF6B35">${esc(r.pedido_num)}</span></td>
+      <td>${dataBR}</td>
+      <td>${esc(r.fornecedor||'—')}</td>
+      <td>${esc(r.responsavel||'—')}</td>
+      <td class="text-center"><span class="badge" style="background:${cor}">${label}</span></td>
+      <td class="text-center fw-bold">${brl(r.total_recebido)}</td>
+      <td class="text-center">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="verDetalheReceb('${r.id}')">🔍 Ver</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function verDetalheReceb(id) {
+  const { data: r } = await sb.from('cmp_recebimentos').select('*').eq('id', id).single();
+  const { data: itens } = await sb.from('cmp_recebimento_itens').select('*').eq('recebimento_id', id);
+  if (!r) return;
+
+  const dataBR = (r.data_receb||'').split('-').reverse().join('/');
+  const linhas = (itens||[]).map((it, i) => `
+    <tr style="${it.divergencia ? 'background:#fff8f0' : ''}">
+      <td>${i+1}</td>
+      <td><strong>${esc(it.produto)}</strong></td>
+      <td class="text-center">${it.qtd_pedida} ${esc(it.unidade||'')}</td>
+      <td class="text-center ${it.qtd_recebida !== it.qtd_pedida ? 'text-danger fw-bold' : ''}">${it.qtd_recebida} ${esc(it.unidade||'')}</td>
+      <td class="text-center">${brl(it.total_recebido)}</td>
+      <td class="text-center">${it.divergencia ? '<span class="badge bg-warning text-dark">⚠️ Divergência</span>' : '<span class="badge bg-success">✅ OK</span>'}</td>
+      <td>${esc(it.obs_divergencia||'—')}</td>
+    </tr>`).join('');
+
+  document.getElementById('detalhe-receb-body').innerHTML = `
+    <div class="mb-3 p-3 rounded" style="background:#f8f9fa">
+      <div class="row g-2">
+        <div class="col-md-3"><small class="text-muted d-block">Pedido</small><strong>${esc(r.pedido_num)}</strong></div>
+        <div class="col-md-3"><small class="text-muted d-block">Data</small>${dataBR}</div>
+        <div class="col-md-3"><small class="text-muted d-block">Fornecedor</small>${esc(r.fornecedor||'—')}</div>
+        <div class="col-md-3"><small class="text-muted d-block">Responsável</small>${esc(r.responsavel||'—')}</div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm">
+        <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
+          <tr><th>#</th><th>Produto</th><th class="text-center">Qtd Pedida</th><th class="text-center">Qtd Recebida</th><th class="text-center">Total</th><th class="text-center">Status</th><th>Obs.</th></tr>
+        </thead>
+        <tbody>${linhas}</tbody>
+        <tfoot><tr style="background:#f0fdf4">
+          <td colspan="4" class="text-end fw-bold">TOTAL RECEBIDO</td>
+          <td class="text-center fw-bold text-success">${brl(r.total_recebido)}</td>
+          <td colspan="2"></td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  new bootstrap.Modal(document.getElementById('modal-detalhe-receb')).show();
+}
+
+async function renderContasPagar() {
+  const { data: contas } = await sb.from('cmp_contas_pagar')
+    .select('id,pedido_num,fornecedor,data_receb,vencimento,valor,status,data_pagamento')
+    .order('criado_em', { ascending: false });
+
+  const lista = contas || [];
+  const pendente = lista.filter(c => c.status === 'pendente').reduce((s,c) => s + (c.valor||0), 0);
+  const pago     = lista.filter(c => c.status === 'pago').reduce((s,c) => s + (c.valor||0), 0);
+  const e1 = document.getElementById('cp-kpi-pend');
+  const e2 = document.getElementById('cp-kpi-pago');
+  if (e1) e1.textContent = brl(pendente);
+  if (e2) e2.textContent = brl(pago);
+
+  const tbody = document.getElementById('tb-contas-pagar');
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">Nenhuma conta a pagar.</td></tr>';
+    return;
+  }
+  const hoje_ = new Date().toISOString().slice(0,10);
+  tbody.innerHTML = lista.map(c => {
+    const vencBR   = (c.vencimento||'').split('-').reverse().join('/');
+    const recBR    = (c.data_receb||'').split('-').reverse().join('/');
+    const vencido  = c.status === 'pendente' && c.vencimento && c.vencimento < hoje_;
+    const corBadge = c.status === 'pago' ? '#2EC4B6' : vencido ? '#dc3545' : '#FF6B35';
+    const label    = c.status === 'pago' ? '✅ Pago' : vencido ? '🔴 Vencido' : '⏳ Pendente';
+    return `<tr>
+      <td><span class="badge" style="background:#FF6B35">${esc(c.pedido_num||'—')}</span></td>
+      <td>${esc(c.fornecedor||'—')}</td>
+      <td>${recBR}</td>
+      <td>${vencBR}</td>
+      <td class="text-center fw-bold">${brl(c.valor)}</td>
+      <td class="text-center"><span class="badge" style="background:${corBadge}">${label}</span></td>
+      <td class="text-center">
+        ${c.status === 'pendente'
+          ? `<button class="btn btn-sm btn-success py-0 px-2" onclick="marcarPago('${c.id}')">✅ Marcar Pago</button>`
+          : `<small class="text-muted">${(c.data_pagamento||'').split('-').reverse().join('/')}</small>`}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function marcarPago(id) {
+  if (!confirm('Confirmar pagamento desta conta?')) return;
+  const hoje_ = new Date().toISOString().split('T')[0];
+  await sb.from('cmp_contas_pagar').update({ status: 'pago', data_pagamento: hoje_ }).eq('id', id);
+  toast('Pagamento registrado.', 'ok');
+  renderContasPagar();
 }
