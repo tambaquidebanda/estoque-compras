@@ -597,14 +597,20 @@ function acProd(val) {
 
 function selecionarProd(nome, un, cat) {
   document.getElementById('c-prod').value = nome;
-  if (un)  document.getElementById('c-un').value  = un;
-  if (cat) {
+
+  // Busca categoria e unidade do catálogo est_produtos (tem prioridade)
+  const prodCat = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  const catFinal = (prodCat?.categoria) || cat;
+  const unFinal  = (prodCat?.unidade_uso) || un;
+
+  if (unFinal) document.getElementById('c-un').value = unFinal;
+  if (catFinal) {
     const sel = document.getElementById('c-cat');
-    if ([...sel.options].some(o => o.value === cat)) sel.value = cat;
+    if ([...sel.options].some(o => o.value === catFinal)) sel.value = catFinal;
   }
   fechaAC('ac-prod');
   // Bloco de estoque mínimo
-  const prod = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  const prod = prodCat;
   const blocoEl = document.getElementById('bloco-estoque');
   if (prod && parseFloat(prod.estoque_min) > 0 && blocoEl) {
     document.getElementById('c-estmin-show').textContent = prod.estoque_min + ' ' + (prod.unidade_uso || '');
