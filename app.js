@@ -58,12 +58,12 @@ function mostrarConfig() { mostrarTela('config'); }
 // CONFIG
 // ═══════════════════════════════════════════════════════════════
 function salvarConfig() {
-  const url  = (document.getElementById('cfg-url').value  || '').trim();
-  const key  = (document.getElementById('cfg-key').value  || '').trim();
+  const url  = (document.getElementById('cfg-url').value  || '').replace(/\s/g, '').replace(/[^\x20-\x7E]/g, '');
+  const key  = (document.getElementById('cfg-key').value  || '').replace(/\s/g, '').replace(/[^\x20-\x7E]/g, '');
   const erro = document.getElementById('cfg-erro');
 
   if (!url.startsWith('https://')) {
-    erro.textContent = 'A URL deve começar com https://';
+    erro.textContent = `A URL deve começar com https:// — recebido: "${url.substring(0,30)}"`;
     erro.classList.remove('d-none'); return;
   }
   if (!key.startsWith('eyJ') && !key.startsWith('sb_publishable_')) {
