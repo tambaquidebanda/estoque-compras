@@ -730,29 +730,57 @@
 
     <!-- ══════ PLANEJAMENTO ══════ -->
     <section id="pg-planejamento" class="pagina">
-      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-        <h1 class="mb-0">🛒 Lista de Compra Sugerida</h1>
-        <div class="d-flex gap-2 flex-wrap">
-          <button class="btn btn-outline-secondary btn-sm" onclick="imprimirListaPlano(false)">
-            <i class="bi bi-printer"></i> Imprimir Lista
-          </button>
-          <button class="btn btn-outline-success btn-sm" onclick="imprimirListaPlano(true)">
-            <i class="bi bi-check2-square"></i> Imprimir Itens OK
-          </button>
-          <button class="btn btn-danger btn-sm" onclick="salvarLimparLista()">
-            <i class="bi bi-floppy-fill"></i> Salvar e Limpar Lista
-          </button>
+      <h1>🛒 Planejamento de Compra</h1>
+
+      <!-- Fórmula -->
+      <div class="alert alert-primary py-2 mb-3 small">
+        <strong>Fórmula:</strong> &nbsp; 🛒 <strong>Comprar</strong> = Vendas Médias + Estoque Mínimo &minus; (Estoque + Coz.&amp;Bar + Outros)
+      </div>
+
+      <!-- Origem do saldo -->
+      <div class="card-grafico mb-3">
+        <h6 class="fw-semibold mb-3">📊 Origem do Saldo de Estoque</h6>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="rounded-3 p-3 h-100" style="background:#f0fdf4;border:1px solid #bbf7d0">
+              <div class="fw-semibold mb-1">📦 Usar Inventário do Sistema</div>
+              <p class="text-muted small mb-2">Selecione a data da contagem salva em <strong>Inventários</strong> (Centro + P10).</p>
+              <select class="form-select form-select-sm mb-2" id="inv-plan-sel">
+                <option value="">— selecione —</option>
+              </select>
+              <div id="msg-inv-plan" class="small mb-2"></div>
+              <button class="btn btn-success w-100" onclick="carregarSaldoInventarioPlan()">
+                📦 Carregar Saldo do Inventário
+              </button>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-3 p-3 h-100" style="background:#fff7ed;border:1px solid #fed7aa">
+              <div class="fw-semibold mb-1">📥 Importar Planilha Excel</div>
+              <p class="text-muted small mb-2">Colunas: <strong>Produto, Vendas médias, Estoque Mínimo, Estoque, Coz.&amp;Bar, Outros, Unidade, Valor Unitário</strong></p>
+              <div class="drop-zone" id="drop-plan"
+                   onclick="document.getElementById('imp-plan-file').click()"
+                   ondragover="event.preventDefault();this.classList.add('drag-over')"
+                   ondragleave="this.classList.remove('drag-over')"
+                   ondrop="this.classList.remove('drag-over');handleDropPlan(event)"
+                   style="padding:.6rem;margin-bottom:.5rem;cursor:pointer;border:2px dashed #fed7aa;border-radius:8px;text-align:center">
+                <input type="file" id="imp-plan-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanExcel(event)">
+                <div style="font-size:1.2rem">📂</div>
+                <div class="small mt-1">Clique ou arraste o Excel / CSV</div>
+              </div>
+              <div id="msg-imp-plan" class="small mb-1"></div>
+              <button class="btn btn-sm btn-outline-danger" onclick="limparDadosPlan()">🗑️ Limpar planilha importada</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Filtros e confirmar -->
+      <!-- Controles -->
       <div class="card-grafico mb-3">
         <div class="row g-3 align-items-end">
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">🏪 Filtrar por Fornecedor</label>
-            <select class="form-select" id="plan-fil-forn" onchange="renderPlanejamento()">
-              <option value="">— Todos os fornecedores —</option>
-            </select>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">📅 Semana</label>
+            <input type="date" class="form-control" id="plan-data">
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold">👤 Comprador</label>
@@ -760,45 +788,117 @@
               <option value="">— selecione —</option>
             </select>
           </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">📅 Data de Entrega</label>
-            <input type="date" class="form-control" id="plan-data">
+          <div class="col-md-3 d-flex align-items-end gap-2">
+            <button class="btn btn-outline-secondary w-100" onclick="renderPlanejamento()">🔄 Recalcular</button>
+            <button class="btn btn-success w-100" onclick="gerarPedidosPlanejamento()">✅ Gerar Pedidos</button>
           </div>
-          <div class="col-md-3">
-            <button class="btn btn-success w-100" onclick="confirmarPlanejamento()">
-              <i class="bi bi-check-circle-fill"></i> Confirmar
-            </button>
+          <div class="col-md-4 d-flex align-items-end justify-content-end">
+            <label class="form-check-label small text-muted d-flex align-items-center gap-2">
+              <input type="checkbox" class="form-check-input" id="plan-so-repor" onchange="renderPlanejamento()">
+              Mostrar só quem precisa comprar
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="row g-3 mb-3">
+        <div class="col-md-3 col-6">
+          <div class="card-kpi">
+            <div class="kpi-label">📦 Produtos</div>
+            <div class="kpi-val" id="plan-kpi-prod">0</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi" style="border-color:#E71D36">
+            <div class="kpi-label">🚨 Precisam comprar</div>
+            <div class="kpi-val" id="plan-kpi-repor" style="color:#E71D36">0</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi" style="border-color:#2EC4B6">
+            <div class="kpi-label">✅ Estoque OK</div>
+            <div class="kpi-val" id="plan-kpi-ok" style="color:#2EC4B6">0</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card-kpi" style="border-color:var(--verde)">
+            <div class="kpi-label">💰 Total Estimado</div>
+            <div class="kpi-val" id="plan-kpi-total">R$ 0,00</div>
           </div>
         </div>
       </div>
 
       <!-- Tabela -->
       <div class="card-grafico">
+        <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+          <h5 class="mb-0">Lista de Compra Sugerida</h5>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-sm btn-outline-secondary" onclick="imprimirPlanejamento()">🖨️ Imprimir Lista</button>
+            <button class="btn btn-sm btn-outline-success" onclick="imprimirItensOKPlan()">✅ Imprimir Itens OK</button>
+            <button class="btn btn-sm btn-danger" onclick="salvarLimparLista()">💾 Salvar e Limpar Lista</button>
+          </div>
+        </div>
+
+        <!-- Filtro por fornecedor + confirmar pedido -->
+        <div class="row g-2 align-items-end mb-3 p-3 rounded-3" style="background:#f0f4ff;border:1px solid #c7d6fc">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold small mb-1">🏭 Filtrar por Fornecedor</label>
+            <select class="form-select form-select-sm" id="plan-filtro-forn" onchange="filtrarPlanFornecedor()">
+              <option value="">— Todos os fornecedores —</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small mb-1">👤 Comprador</label>
+            <select class="form-select form-select-sm" id="plan-comp-forn">
+              <option value="">— selecione —</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small mb-1">🚚 Data de Entrega</label>
+            <input type="date" class="form-control form-control-sm" id="plan-data-entrega">
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-success w-100" onclick="confirmarPedidoFornecedor()" id="btn-confirmar-forn" disabled>
+              ✅ Confirmar
+            </button>
+          </div>
+        </div>
+
         <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0">
+          <table class="table table-sm align-middle mb-0">
             <thead style="background:#1a1a2e;color:#fff;font-size:.78rem">
               <tr>
-                <th style="min-width:160px">PRODUTO</th>
-                <th style="min-width:140px">FORNECEDOR</th>
-                <th style="min-width:120px">CATEGORIA</th>
-                <th style="min-width:110px">TIPO/DESTINO</th>
-                <th class="text-center" style="min-width:90px">VENDAS MÉD.</th>
-                <th class="text-center" style="min-width:75px">EST. MÍN.</th>
-                <th class="text-center" style="min-width:75px">ESTOQUE</th>
-                <th class="text-center" style="min-width:75px">COZ.&amp;BAR</th>
-                <th class="text-center" style="min-width:75px">OUTROS</th>
-                <th class="text-center" style="min-width:90px">QTD PEDIDO</th>
+                <th style="min-width:170px">Produto</th>
+                <th style="min-width:130px">Fornecedor</th>
+                <th style="min-width:120px">Categoria</th>
+                <th style="min-width:110px">Tipo/Destino</th>
+                <th class="text-center" style="min-width:90px">📊 Vendas Méd.</th>
+                <th class="text-center" style="min-width:80px">📉 Est. Mín.</th>
+                <th class="text-center" style="min-width:80px">🏪 Estoque</th>
+                <th class="text-center" style="min-width:80px">🍳 Coz.&amp;Bar</th>
+                <th class="text-center" style="min-width:75px">📦 Outros</th>
+                <th class="text-center" style="min-width:65px">∑ Inv.</th>
+                <th class="text-center" style="min-width:60px">Un.</th>
+                <th class="text-center fw-bold" style="min-width:85px;color:#FF6B35">🛒 Comprar</th>
+                <th class="text-center" style="min-width:95px">Valor Unit.</th>
+                <th class="text-center" style="min-width:110px">Plano de Conta</th>
+                <th class="text-center fw-bold" style="min-width:105px;color:#06D6A0">Total Est.</th>
+                <th class="text-center" style="min-width:65px">Status</th>
               </tr>
             </thead>
             <tbody id="lst-planejamento">
-              <tr><td colspan="10" class="text-center text-muted py-4">Carregando...</td></tr>
+              <tr><td colspan="16" class="text-center text-muted py-4">Carregando...</td></tr>
             </tbody>
+            <tfoot>
+              <tr style="background:#1a1a2e;color:#fff">
+                <td colspan="14" class="text-end fw-bold pe-3">TOTAL ESTIMADO DE COMPRAS</td>
+                <td class="text-center fw-bold" style="color:#06D6A0" id="plan-rodape-total">R$ 0,00</td>
+                <td></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
-        <p class="text-muted small mt-2 mb-0">
-          <span style="background:#fff3cd;padding:2px 6px;border-radius:4px">■</span>
-          Produto abaixo do estoque mínimo
-        </p>
       </div>
     </section>
 

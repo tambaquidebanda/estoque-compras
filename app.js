@@ -1640,53 +1640,45 @@ async function excluirInventario(id) {
 }
 
 
+
 // ═══════════════════════════════════════════════════════════════
 // PLANEJAMENTO
 // ═══════════════════════════════════════════════════════════════
-let _planProdutos = [];
+let _planDados    = [];   // dados importados de Excel (vazio = usa catálogo)
+let _planProdutos = [];   // produtos do catálogo com médias calculadas
 
 async function carregarPlanejamento() {
-  // Populate selects
-  const compSel = document.getElementById('plan-comp');
-  if (compSel) {
-    compSel.innerHTML = '<option value="">— selecione —</option>' +
-      cComp.map(c => `<option>${esc(c.nome)}</option>`).join('');
-  }
-  const fornFil = document.getElementById('plan-fil-forn');
-  if (fornFil) {
-    fornFil.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
-      cForn.map(f => `<option>${esc(f.nome)}</option>`).join('');
-  }
+  setHoje('plan-data');
+  setHoje('plan-data-entrega');
 
-  const [{ data: prods }, { data: invCab }, { data: compras }] = await Promise.all([
+  const compHtml = '<option value="">— selecione —</option>' +
+    cComp.map(c => `<option>${esc(c.nome)}</option>`).join('');
+  const compEl     = document.getElementById('plan-comp');
+  const compFornEl = document.getElementById('plan-comp-forn');
+  if (compEl)     compEl.innerHTML     = compHtml;
+  if (compFornEl) compFornEl.innerHTML = compHtml;
+
+  await _popularSelectInvPlan();
+
+  // Carrega produtos com médias (catálogo de fallback)
+  const [{ data: prods }, { data: compras }] = await Promise.all([
     sb.from('est_produtos')
       .select('id,nome,tipo,categoria,unidade_uso,custo_uso,estoque_min,ativo')
       .eq('ativo', true)
       .in('tipo', ['MP','SA','MC'])
       .order('categoria').order('nome'),
-    sb.from('est_inventarios')
-      .select('id').order('criado_em', { ascending: false }).limit(1),
     sb.from('cmp_compras')
       .select('produto,quantidade,data,fornecedor_nome,categoria,tipo_produto,unidade_med')
-      .gte('data', _dataNSemanasAtras(12)),
+      .gte('data', _planDataAtras(12)),
   ]);
-
-  // Mapa do último inventário por produto_id
-  let invMap = {};
-  if (invCab?.[0]) {
-    const { data: itens } = await sb.from('est_inventario_itens')
-      .select('produto_id,estoque,cozinha_bar,outros')
-      .eq('inventario_id', invCab[0].id);
-    (itens || []).forEach(it => { invMap[it.produto_id] = it; });
-  }
 
   // Média semanal por produto (últimas 12 semanas)
   const histMap = {};
   (compras || []).forEach(c => {
     const key = (c.produto || '').trim().toUpperCase();
     if (!histMap[key]) histMap[key] = { qtd: 0, semanas: new Set(), forn: '', cat: '', tipo: '', un: '' };
-    const diasAtras = Math.floor((Date.now() - new Date(c.data).getTime()) / 86400000);
-    histMap[key].semanas.add(Math.floor(diasAtras / 7));
+    const dias = Math.floor((Date.now() - new Date(c.data).getTime()) / 86400000);
+    histMap[key].semanas.add(Math.floor(dias / 7));
     histMap[key].qtd += parseFloat(c.quantidade) || 0;
     if (c.fornecedor_nome) histMap[key].forn = c.fornecedor_nome;
     if (c.categoria)       histMap[key].cat  = c.categoria;
@@ -1695,173 +1687,565 @@ async function carregarPlanejamento() {
   });
 
   _planProdutos = (prods || []).map(p => {
-    const inv  = invMap[p.id] || {};
-    const hist = histMap[p.nome.trim().toUpperCase()] || {};
-    const nSem = hist.semanas?.size || 1;
-    const med  = hist.semanas?.size ? Math.round((hist.qtd / nSem) * 10) / 10 : 0;
+    const h   = histMap[p.nome.trim().toUpperCase()] || {};
+    const med = h.semanas?.size ? Math.round((h.qtd / h.semanas.size) * 10) / 10 : 0;
     return {
-      ...p,
-      est_atual: parseFloat(inv.estoque)     || 0,
-      coz_bar:   parseFloat(inv.cozinha_bar) || 0,
-      outros:    parseFloat(inv.outros)      || 0,
+      id: p.id, nome: p.nome, tipo: p.tipo,
+      categoria: p.categoria || '', unidade: p.unidade_uso || 'UN',
+      valor: p.custo_uso || 0, plano: '',
+      estoque_min: parseFloat(p.estoque_min) || 0,
+      est_atual: 0, coz_bar: 0, outros: 0,
       vendas_med: med,
-      forn_pad:   hist.forn || '',
-      cat_pad:    hist.cat  || p.categoria || '',
-      tipo_pad:   hist.tipo || '',
-      un_pad:     hist.un   || p.unidade_uso || 'UN',
+      forn_pad:  h.forn || '', cat_pad: h.cat || p.categoria || '',
+      tipo_pad:  h.tipo || '', un_pad:  h.un  || p.unidade_uso || 'UN',
     };
   });
 
   renderPlanejamento();
 }
 
-function _dataNSemanasAtras(n) {
+async function _popularSelectInvPlan() {
+  const { data: invs } = await sb.from('est_inventarios')
+    .select('id,num_inv,data,local,responsavel')
+    .order('criado_em', { ascending: false })
+    .limit(30);
+  const sel = document.getElementById('inv-plan-sel');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— selecione —</option>' +
+    (invs || []).map(inv => {
+      const dataBR = (inv.data || '').split('-').reverse().join('/');
+      const num    = inv.num_inv || String(inv.id).slice(0, 8);
+      const label  = `${num} — ${inv.local} — ${dataBR}${inv.responsavel ? ' (' + inv.responsavel + ')' : ''}`;
+      return `<option value="${inv.id}">${label}</option>`;
+    }).join('');
+}
+
+async function carregarSaldoInventarioPlan() {
+  const msgEl = document.getElementById('msg-inv-plan');
+  const selId = document.getElementById('inv-plan-sel')?.value;
+  if (!selId) {
+    if (msgEl) msgEl.innerHTML = '<span class="text-warning">⚠️ Selecione um inventário.</span>';
+    return;
+  }
+
+  const { data: itens } = await sb.from('est_inventario_itens')
+    .select('produto_id,nome,estoque,cozinha_bar,outros')
+    .eq('inventario_id', selId);
+
+  if (!itens?.length) {
+    if (msgEl) msgEl.innerHTML = '<span class="text-danger">Inventário sem itens.</span>';
+    return;
+  }
+
+  const saldoMap = {};
+  itens.forEach(it => {
+    if (it.produto_id) saldoMap[it.produto_id] = it;
+    if (it.nome) saldoMap[(it.nome || '').toLowerCase().trim()] = it;
+  });
+
+  let atualizados = 0;
+  if (_planDados.length) {
+    _planDados = _planDados.map(r => {
+      const s = saldoMap[r.produto_id] || saldoMap[(r.nome || '').toLowerCase().trim()];
+      if (!s) return r;
+      atualizados++;
+      const est = parseFloat(s.estoque) || 0, cb = parseFloat(s.cozinha_bar) || 0, out = parseFloat(s.outros) || 0;
+      return { ...r, estoque: est, cb, outros: out, total_inv: est + cb + out };
+    });
+  } else {
+    _planProdutos = _planProdutos.map(p => {
+      const s = saldoMap[p.id] || saldoMap[(p.nome || '').toLowerCase().trim()];
+      if (!s) return p;
+      atualizados++;
+      return { ...p, est_atual: parseFloat(s.estoque) || 0, coz_bar: parseFloat(s.cozinha_bar) || 0, outros: parseFloat(s.outros) || 0 };
+    });
+  }
+
+  const { data: invInfo } = await sb.from('est_inventarios').select('num_inv,data,local').eq('id', selId).single();
+  const dataBR = (invInfo?.data || '').split('-').reverse().join('/');
+  if (msgEl) msgEl.innerHTML = `<span class="text-success">✅ <strong>${invInfo?.num_inv || '—'}</strong> — ${dataBR} — <strong>${atualizados}</strong> produto(s) atualizados</span>`;
+  renderPlanejamento();
+}
+
+function handleDropPlan(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarArqPlan(f); }
+function importarPlanExcel(e) { const f = e.target.files[0]; if (f) _processarArqPlan(f); }
+
+function _processarArqPlan(file) {
+  const ext    = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    let wb;
+    if (ext === 'csv') wb = XLSX.read(e.target.result, { type: 'string' });
+    else               wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
+    _processarWbPlan(wb);
+  };
+  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else               reader.readAsArrayBuffer(file);
+}
+
+function _processarWbPlan(wb) {
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true, defval: '' });
+  const msgEl = document.getElementById('msg-imp-plan');
+  if (!rows.length) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-warning">Planilha vazia.</div>'; return; }
+
+  const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim());
+  const ci = (...ts) => { for (const t of ts) { const i = headers.findIndex(h => h.includes(t)); if (i >= 0) return i; } return -1; };
+
+  const col = {
+    nome:       ci('produto','product','nome','item','descriç'),
+    vendas:     ci('venda','médias','media','demanda','consumo'),
+    estmin:     ci('mínimo','minimo','est. min','estoque min','est.min'),
+    estoque:    -1,
+    cb:         ci('cozinha','bar'),
+    outros:     ci('outros','other'),
+    total:      ci('total'),
+    unidade:    ci('unidade','unit','un.','und'),
+    valor:      ci('valor','preço','preco','custo','unit'),
+    plano:      ci('plano','conta'),
+    fornecedor: ci('fornecedor','supplier','forn'),
+    categoria:  ci('categoria','category','categ'),
+    tipo:       ci('tipo','destino','type'),
+  };
+  col.estoque = headers.findIndex(h => h.includes('estoque') && !h.includes('mín') && !h.includes('min'));
+
+  if (col.nome < 0) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-danger">Coluna "Produto" não encontrada.</div>';
+    return;
+  }
+
+  _planDados = rows.map(r => {
+    const vals = Object.values(r);
+    const nome = String(vals[col.nome] || '').trim();
+    if (!nome) return null;
+    const est = col.estoque >= 0 ? (parseFloat(vals[col.estoque]) || 0) : 0;
+    const cb  = col.cb     >= 0 ? (parseFloat(vals[col.cb])      || 0) : 0;
+    const out = col.outros >= 0 ? (parseFloat(vals[col.outros])  || 0) : 0;
+    const totCol = col.total >= 0 ? (parseFloat(vals[col.total]) || 0) : 0;
+    const total_inv = totCol > 0 ? totCol : (est + cb + out);
+    const prod = _planProdutos.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+    return {
+      nome,
+      vendas_medias:  col.vendas  >= 0 ? (parseFloat(vals[col.vendas])  || 0) : (prod?.vendas_med || 0),
+      estoque_minimo: col.estmin  >= 0 ? (parseFloat(vals[col.estmin])  || 0) : (prod?.estoque_min || 0),
+      estoque: est, cb, outros: out, total_inv,
+      unidade:       col.unidade >= 0 ? String(vals[col.unidade] || '').trim() : (prod?.unidade || 'UN'),
+      valor_unitario: col.valor  >= 0 ? (parseFloat(String(vals[col.valor]).replace(/[R$\s.]/g,'').replace(',','.')) || 0) : (prod?.valor || 0),
+      plano_conta:   col.plano   >= 0 ? String(vals[col.plano]   || '').trim() : '',
+      fornecedor:    (col.fornecedor >= 0 ? String(vals[col.fornecedor] || '').trim() : '') || prod?.forn_pad || '',
+      categoria:     (col.categoria  >= 0 ? String(vals[col.categoria]  || '').trim() : '') || prod?.cat_pad  || '',
+      tipo:          (col.tipo       >= 0 ? String(vals[col.tipo]       || '').trim() : '') || prod?.tipo_pad || '',
+      produto_id:    prod?.id || null,
+    };
+  }).filter(Boolean);
+
+  document.getElementById('imp-plan-file').value = '';
+  if (msgEl) msgEl.innerHTML = `<div class="alert alert-success">✅ <strong>${_planDados.length}</strong> produto(s) importado(s). Clique em 🔄 Recalcular.</div>`;
+  setTimeout(() => { const m = document.getElementById('msg-imp-plan'); if (m) m.innerHTML = ''; }, 5000);
+  renderPlanejamento();
+}
+
+function limparDadosPlan() {
+  if (!confirm('Limpar a planilha importada? A tabela voltará a usar os dados do catálogo.')) return;
+  _planDados = [];
+  renderPlanejamento();
+}
+
+function _planDataAtras(n) {
   const d = new Date();
   d.setDate(d.getDate() - n * 7);
   return d.toISOString().split('T')[0];
 }
 
 function renderPlanejamento() {
-  const filtForn = document.getElementById('plan-fil-forn')?.value || '';
-  let prods = _planProdutos;
-  if (filtForn) prods = prods.filter(p => p.forn_pad === filtForn);
+  const soRepor = document.getElementById('plan-so-repor')?.checked;
 
-  const tbody = document.getElementById('lst-planejamento');
-  if (!tbody) return;
-
-  if (!prods.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
-    return;
+  // Monta linhas da fonte ativa
+  let linhas;
+  if (_planDados.length) {
+    linhas = _planDados.map((r, i) => {
+      const comprar  = Math.round(Math.max(0, r.vendas_medias + Math.abs(r.estoque_minimo || 0) - r.total_inv));
+      const totalEst = comprar * (r.valor_unitario || 0);
+      return { key: `imp_${i}`, nome: r.nome, forn: r.fornecedor, cat: r.categoria, tipo: r.tipo,
+               vendas: r.vendas_medias, estMin: Math.round(Math.abs(r.estoque_minimo || 0)),
+               estoque: r.estoque, cb: r.cb, outros: r.outros, total_inv: r.total_inv,
+               un: r.unidade, valor: r.valor_unitario, plano: r.plano_conta,
+               comprar, totalEst };
+    });
+  } else {
+    if (!_planProdutos.length) {
+      document.getElementById('lst-planejamento').innerHTML =
+        '<tr><td colspan="16" class="text-center text-muted py-4">Cadastre produtos ou importe uma planilha.</td></tr>';
+      _planKpis([]);
+      return;
+    }
+    linhas = _planProdutos.map(p => {
+      const total_inv = p.est_atual + p.coz_bar + p.outros;
+      const comprar   = Math.round(Math.max(0, p.vendas_med + p.estoque_min - total_inv));
+      const totalEst  = comprar * (p.valor || 0);
+      return { key: p.id, nome: p.nome, forn: p.forn_pad, cat: p.cat_pad, tipo: p.tipo_pad,
+               vendas: p.vendas_med, estMin: p.estoque_min,
+               estoque: p.est_atual, cb: p.coz_bar, outros: p.outros, total_inv,
+               un: p.unidade, valor: p.valor, plano: p.plano || '',
+               comprar, totalEst };
+    });
   }
 
-  tbody.innerHTML = prods.map(p => {
-    const totalEst  = p.est_atual + p.coz_bar + p.outros;
-    const qtdSug    = Math.max(0, Math.round((p.vendas_med - totalEst) * 10) / 10);
-    const abaixoMin = p.estoque_min > 0 && totalEst < p.estoque_min;
-    const rowCls    = abaixoMin ? 'table-warning' : '';
+  const filtradas = soRepor ? linhas.filter(l => l.comprar > 0) : linhas;
+  const fmt = v => v % 1 === 0 ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
 
-    const fornOpts = cForn.map(f => `<option${f.nome === p.forn_pad ? ' selected' : ''}>${esc(f.nome)}</option>`).join('');
-    const catOpts  = cCat.map(c  => `<option${c.nome === p.cat_pad  ? ' selected' : ''}>${esc(c.nome)}</option>`).join('');
-    const tipoOpts = cTipo.map(t => `<option${t.nome === p.tipo_pad ? ' selected' : ''}>${esc(t.nome)}</option>`).join('');
+  const buildOpts = (lista, cur, ph) => {
+    const opts = ['', ...lista.map(x => typeof x === 'string' ? x : x.nome)];
+    if (cur && !opts.includes(cur)) opts.push(cur);
+    return opts.map(v => `<option value="${v}"${v === cur ? ' selected' : ''}>${v || ph}</option>`).join('');
+  };
 
-    return `<tr class="${rowCls}">
-      <td><strong>${esc(p.nome)}</strong><br><small class="text-muted">${p.tipo}</small></td>
-      <td><select class="form-select form-select-sm" id="plan-forn-${p.id}">
-        <option value="">—</option>${fornOpts}</select></td>
-      <td><select class="form-select form-select-sm" id="plan-cat-${p.id}">
-        <option value="">—</option>${catOpts}</select></td>
-      <td><select class="form-select form-select-sm" id="plan-tipo-${p.id}">
-        <option value="">—</option>${tipoOpts}</select></td>
+  document.getElementById('lst-planejamento').innerHTML = filtradas.map(l => {
+    const cor    = l.comprar > 0 ? '#E71D36' : '#2EC4B6';
+    const status = l.comprar > 0 ? '🚨 Repor' : '✅ OK';
+    const bg     = l.comprar > 0 ? 'background:#fff5f5' : '';
+    return `<tr style="${bg}">
+      <td><strong>${esc(l.nome)}</strong></td>
+      <td><select class="form-select form-select-sm" id="plan-forn-${l.key}" style="min-width:130px" onchange="sincFiltroFornPlan()">${buildOpts(cForn, l.forn, '— Fornecedor —')}</select></td>
+      <td><select class="form-select form-select-sm" id="plan-cat-${l.key}"  style="min-width:120px">${buildOpts(cCat, l.cat, '— Categoria —')}</select></td>
+      <td><select class="form-select form-select-sm" id="plan-tipo-${l.key}" style="min-width:110px">${buildOpts(cTipo, l.tipo, '— Tipo/Destino —')}</select></td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center"
-          id="plan-med-${p.id}" value="${p.vendas_med}" min="0" step="0.1" style="width:80px;margin:auto">
+        <input type="number" class="form-control form-control-sm text-center" id="plan-vend-${l.key}"
+          min="0" step="0.001" value="${l.vendas}" style="width:80px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
       </td>
-      <td class="text-center text-muted">${p.estoque_min || 0}</td>
-      <td class="text-center">${p.est_atual}</td>
-      <td class="text-center">${p.coz_bar}</td>
-      <td class="text-center">${p.outros}</td>
+      <td class="text-center text-muted">${l.estMin}</td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center"
-          id="plan-qtd-${p.id}" value="${qtdSug}" min="0" step="0.1" style="width:80px;margin:auto">
+        <input type="number" class="form-control form-control-sm text-center" id="plan-est-${l.key}"
+          min="0" step="0.001" value="${l.estoque}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
       </td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center" id="plan-cb-${l.key}"
+          min="0" step="0.001" value="${l.cb}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
+      </td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center" id="plan-out-${l.key}"
+          min="0" step="0.001" value="${l.outros}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
+      </td>
+      <td class="text-center fw-semibold" id="plan-tinv-${l.key}">${fmt(l.total_inv)}</td>
+      <td class="text-center"><small>${esc(l.un)}</small></td>
+      <td class="text-center fw-bold fs-6" id="plan-comprar-${l.key}" style="color:${cor}">${fmt(l.comprar)}</td>
+      <td class="text-center text-muted small">${l.valor ? brl(l.valor) : '—'}</td>
+      <td><small class="text-muted">${esc(l.plano || '—')}</small></td>
+      <td class="text-center fw-bold" id="plan-total-${l.key}" style="color:#06D6A0">${l.totalEst > 0 ? brl(l.totalEst) : '—'}</td>
+      <td class="text-center"><span class="badge" style="background:${cor}">${status}</span></td>
     </tr>`;
-  }).join('');
+  }).join('') || '<tr><td colspan="16" class="text-center text-muted py-3">Nenhum item.</td></tr>';
+
+  document.getElementById('lst-planejamento').dataset.keys = JSON.stringify(filtradas.map(l => l.key));
+
+  // Popula filtro de fornecedor
+  const fornsFiltro = [...new Set(linhas.map(l => l.forn).filter(Boolean))].sort();
+  const filtFornEl  = document.getElementById('plan-filtro-forn');
+  const curFilt     = filtFornEl?.value || '';
+  if (filtFornEl) {
+    filtFornEl.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
+      fornsFiltro.map(f => `<option value="${f}"${f === curFilt ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  }
+
+  _planKpis(linhas);
+  _planAtualizarTotal();
 }
 
-async function confirmarPlanejamento() {
-  const data = document.getElementById('plan-data')?.value;
-  const comp = document.getElementById('plan-comp')?.value;
-  if (!data) { toast('Selecione a data de entrega.', 'erro'); return; }
-  if (!comp) { toast('Selecione o comprador.', 'erro'); return; }
+function recalcLinhaPlan(key) {
+  const vendas  = parseFloat(document.getElementById(`plan-vend-${key}`)?.value) || 0;
+  const estoque = parseFloat(document.getElementById(`plan-est-${key}`)?.value)  || 0;
+  const cb      = parseFloat(document.getElementById(`plan-cb-${key}`)?.value)   || 0;
+  const outros  = parseFloat(document.getElementById(`plan-out-${key}`)?.value)  || 0;
+  const total_inv = estoque + cb + outros;
+  const tInvEl  = document.getElementById(`plan-tinv-${key}`);
+  const fmt     = v => v % 1 === 0 ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
+  if (tInvEl) tInvEl.textContent = fmt(total_inv);
 
-  const registros = [];
-  _planProdutos.forEach(p => {
-    const qtd = parseFloat(document.getElementById(`plan-qtd-${p.id}`)?.value) || 0;
-    if (qtd <= 0) return;
-    const fornNome = document.getElementById(`plan-forn-${p.id}`)?.value || '';
-    const cat      = document.getElementById(`plan-cat-${p.id}`)?.value  || p.categoria || '';
-    const tipo     = document.getElementById(`plan-tipo-${p.id}`)?.value || '';
-    const fornObj  = cForn.find(f => f.nome === fornNome);
-    const catObj   = cCat.find(c => c.nome === cat);
-    registros.push({
-      data,
-      fornecedor_id:   fornObj?.id || null,
-      fornecedor_nome: fornNome,
-      produto:         p.nome,
-      categoria:       cat,
-      plano_conta:     catObj?.plano_conta || '',
-      tipo_produto:    tipo,
-      unidade_med:     p.un_pad || p.unidade_uso || 'UN',
-      custo_unit:      p.custo_uso || 0,
-      quantidade:      qtd,
-      comprador:       comp,
-      unidade_uso:     p.unidade_uso || 'UN',
-      criado_por:      user.id,
-    });
+  // Descobre estMin e valor
+  let estMin = 0, valor = 0;
+  if (key.startsWith('imp_')) {
+    const idx = parseInt(key.replace('imp_', ''));
+    const r = _planDados[idx];
+    if (r) {
+      estMin = Math.round(Math.abs(r.estoque_minimo || 0));
+      valor  = r.valor_unitario || 0;
+      r.vendas_medias = vendas; r.estoque = estoque; r.cb = cb; r.outros = outros; r.total_inv = total_inv;
+    }
+  } else {
+    const p = _planProdutos.find(x => x.id === key);
+    if (p) {
+      estMin = p.estoque_min; valor = p.valor || 0;
+      p.est_atual = estoque; p.coz_bar = cb; p.outros = outros; p.vendas_med = vendas;
+    }
+  }
+
+  const comprar = Math.round(Math.max(0, vendas + estMin - total_inv));
+  const cor = comprar > 0 ? '#E71D36' : '#2EC4B6';
+  const compEl = document.getElementById(`plan-comprar-${key}`);
+  const totEl  = document.getElementById(`plan-total-${key}`);
+  if (compEl) { compEl.textContent = fmt(comprar); compEl.style.color = cor; }
+  if (totEl)  totEl.textContent = comprar > 0 ? brl(comprar * valor) : '—';
+  _planAtualizarTotal();
+}
+
+function _planAtualizarTotal() {
+  let total = 0;
+  document.querySelectorAll('[id^="plan-total-"]').forEach(el => {
+    const v = (el.textContent || '').replace(/[R$\s.]/g,'').replace(',','.');
+    total += parseFloat(v) || 0;
   });
+  const fmt = brl(total);
+  const e1 = document.getElementById('plan-kpi-total');
+  const e2 = document.getElementById('plan-rodape-total');
+  if (e1) e1.textContent = fmt;
+  if (e2) e2.textContent = fmt;
+}
 
-  if (!registros.length) { toast('Nenhuma linha com quantidade preenchida.', 'erro'); return; }
+function _planKpis(linhas) {
+  const e1 = document.getElementById('plan-kpi-prod');
+  const e2 = document.getElementById('plan-kpi-repor');
+  const e3 = document.getElementById('plan-kpi-ok');
+  if (e1) e1.textContent = linhas.length;
+  if (e2) e2.textContent = linhas.filter(l => l.comprar > 0).length;
+  if (e3) e3.textContent = linhas.filter(l => l.comprar === 0).length;
+}
+
+function sincFiltroFornPlan() {
+  const tbody  = document.getElementById('lst-planejamento');
+  const keys   = JSON.parse(tbody.dataset.keys || '[]');
+  const filtEl = document.getElementById('plan-filtro-forn');
+  if (!filtEl) return;
+  const curFilt = filtEl.value;
+  const forns   = [...new Set(keys.map(k => document.getElementById(`plan-forn-${k}`)?.value || '').filter(Boolean))].sort();
+  filtEl.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
+    forns.map(f => `<option value="${f}"${f === curFilt ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  const btnConf = document.getElementById('btn-confirmar-forn');
+  if (btnConf) btnConf.disabled = !filtEl.value;
+}
+
+function filtrarPlanFornecedor() {
+  const forn    = document.getElementById('plan-filtro-forn')?.value || '';
+  const tbody   = document.getElementById('lst-planejamento');
+  const keys    = JSON.parse(tbody.dataset.keys || '[]');
+  const btnConf = document.getElementById('btn-confirmar-forn');
+
+  keys.forEach(key => {
+    const row     = document.getElementById(`plan-vend-${key}`)?.closest('tr');
+    if (!row) return;
+    const fornRow = document.getElementById(`plan-forn-${key}`)?.value || '';
+    row.style.display = (!forn || fornRow === forn) ? '' : 'none';
+  });
+  if (btnConf) btnConf.disabled = !forn;
+}
+
+async function _gerarNumeroPedido() {
+  const { data } = await sb.from('cmp_compras')
+    .select('pedido_num')
+    .not('pedido_num', 'is', null)
+    .order('pedido_num', { ascending: false })
+    .limit(1);
+  const ultimo = data?.[0]?.pedido_num || '#00000';
+  const num    = (parseInt(ultimo.replace(/\D/g, '')) || 0) + 1;
+  return '#' + String(num).padStart(5, '0');
+}
+
+function _planLinhasDados(keys) {
+  return keys.map(key => {
+    const comprar   = parseInt(document.getElementById(`plan-comprar-${key}`)?.textContent) || 0;
+    const forn      = document.getElementById(`plan-forn-${key}`)?.value  || '';
+    const cat       = document.getElementById(`plan-cat-${key}`)?.value   || '';
+    const tipo      = document.getElementById(`plan-tipo-${key}`)?.value  || '';
+    let nome, unidade, valor, plano;
+    if (key.startsWith('imp_')) {
+      const r = _planDados[parseInt(key.replace('imp_', ''))];
+      if (!r) return null;
+      nome = r.nome; unidade = r.unidade; valor = r.valor_unitario; plano = r.plano_conta;
+    } else {
+      const p = _planProdutos.find(x => x.id === key);
+      if (!p) return null;
+      nome = p.nome; unidade = p.unidade; valor = p.valor || 0;
+      const catObj = cCat.find(c => c.nome === cat);
+      plano = catObj?.plano_conta || '';
+    }
+    return { key, comprar, forn, cat, tipo, nome, unidade, valor, plano };
+  }).filter(Boolean);
+}
+
+async function confirmarPedidoFornecedor() {
+  const forn      = document.getElementById('plan-filtro-forn')?.value || '';
+  const comprador = document.getElementById('plan-comp-forn')?.value   || '';
+  const dataEntr  = document.getElementById('plan-data-entrega')?.value || '';
+  if (!forn)      { toast('Selecione um fornecedor no filtro.', 'erro'); return; }
+  if (!comprador) { toast('Selecione um comprador.', 'erro'); return; }
+
+  const tbody = document.getElementById('lst-planejamento');
+  const keys  = JSON.parse(tbody.dataset.keys || '[]');
+  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+
+  const linhasRepor = _planLinhasDados(keys).filter(l => l.forn === forn && l.comprar > 0);
+  if (!linhasRepor.length) { toast(`Nenhum produto de "${forn}" com status 🚨 Repor.`, 'erro'); return; }
+
+  const pedido_num = await _gerarNumeroPedido();
+  const registros  = linhasRepor.map(l => ({
+    data, pedido_num, data_entrega: dataEntr || null,
+    fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
+    fornecedor_nome: l.forn, produto: l.nome,
+    categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
+    unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
+    quantidade: l.comprar, comprador,
+    unidade_uso: 'Loja', observacao: 'Gerado pelo Planejamento de Compra',
+    status_receb: 'pendente', criado_por: user.id,
+  }));
 
   const { error } = await sb.from('cmp_compras').insert(registros);
   if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
+  toast(`✅ Pedido ${pedido_num} gerado com ${linhasRepor.length} produto(s) de "${forn}".`, 'ok');
+}
 
-  toast(`✅ ${registros.length} compras registradas no histórico!`, 'ok');
-  _planProdutos.forEach(p => {
-    const el = document.getElementById(`plan-qtd-${p.id}`);
-    if (el) el.value = '0';
-  });
+async function gerarPedidosPlanejamento() {
+  const comprador = document.getElementById('plan-comp')?.value || '';
+  if (!comprador) { toast('Selecione um comprador antes de gerar os pedidos.', 'erro'); return; }
+
+  const tbody = document.getElementById('lst-planejamento');
+  const keys  = JSON.parse(tbody.dataset.keys || '[]');
+  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+
+  const todasLinhas = _planLinhasDados(keys).filter(l => l.comprar > 0);
+  if (!todasLinhas.length) { toast('Nenhum produto com quantidade a comprar > 0.', 'erro'); return; }
+
+  const numPorForn = {};
+  const registros  = [];
+  for (const l of todasLinhas) {
+    if (!numPorForn[l.forn]) numPorForn[l.forn] = await _gerarNumeroPedido();
+    registros.push({
+      data, pedido_num: numPorForn[l.forn],
+      fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
+      fornecedor_nome: l.forn, produto: l.nome,
+      categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
+      unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
+      quantidade: l.comprar, comprador,
+      unidade_uso: 'Loja', observacao: 'Gerado pelo Planejamento de Compra',
+      status_receb: 'pendente', criado_por: user.id,
+    });
+  }
+
+  const { error } = await sb.from('cmp_compras').insert(registros);
+  if (error) { toast('Erro ao gerar pedidos: ' + error.message, 'erro'); return; }
+  const numForn = Object.keys(numPorForn).length;
+  toast(`✅ ${registros.length} produto(s) em ${numForn} pedido(s) — um por fornecedor.`, 'ok');
 }
 
 function salvarLimparLista() {
-  _planProdutos.forEach(p => {
-    const totalEst = p.est_atual + p.coz_bar + p.outros;
-    const qtdSug   = Math.max(0, Math.round((p.vendas_med - totalEst) * 10) / 10);
-    const el = document.getElementById(`plan-qtd-${p.id}`);
-    if (el) el.value = qtdSug;
-  });
-  toast('Quantidades restauradas para o sugerido.', 'ok');
+  _planDados = [];
+  _planProdutos.forEach(p => { p.est_atual = 0; p.coz_bar = 0; p.outros = 0; });
+  renderPlanejamento();
+  toast('Lista limpa. Use inventário ou importe planilha para carregar saldos.', 'ok');
 }
 
-function imprimirListaPlano(soItensOK) {
-  const prods = soItensOK
-    ? _planProdutos.filter(p => (parseFloat(document.getElementById(`plan-qtd-${p.id}`)?.value) || 0) > 0)
-    : _planProdutos;
+function imprimirPlanejamento() {
+  const data   = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const dataBR = data.split('-').reverse().join('/');
+  const tbody  = document.getElementById('lst-planejamento');
+  const keys   = JSON.parse(tbody.dataset.keys || '[]');
+  const total  = document.getElementById('plan-rodape-total')?.textContent || 'R$ 0,00';
 
-  if (!prods.length) { toast('Nenhum item para imprimir.', 'erro'); return; }
-
-  const linhas = prods.map(p => {
-    const qtd  = document.getElementById(`plan-qtd-${p.id}`)?.value  || '0';
-    const forn = document.getElementById(`plan-forn-${p.id}`)?.value || '—';
-    const cat  = document.getElementById(`plan-cat-${p.id}`)?.value  || '—';
-    const tipo = document.getElementById(`plan-tipo-${p.id}`)?.value || '—';
-    const med  = document.getElementById(`plan-med-${p.id}`)?.value  || p.vendas_med;
-    const abx  = p.estoque_min > 0 && (p.est_atual + p.coz_bar + p.outros) < p.estoque_min;
-    return `<tr style="${abx ? 'background:#fff3cd' : ''}">
-      <td>${esc(p.nome)}</td><td>${esc(forn)}</td><td>${esc(cat)}</td><td>${esc(tipo)}</td>
-      <td style="text-align:center">${med}</td>
-      <td style="text-align:center">${p.estoque_min || 0}</td>
-      <td style="text-align:center">${p.est_atual}</td>
-      <td style="text-align:center">${p.coz_bar}</td>
-      <td style="text-align:center">${p.outros}</td>
-      <td style="text-align:center"><strong>${qtd}</strong></td>
+  const rows = _planLinhasDados(keys).map(l => {
+    const comprar = l.comprar;
+    const tinv    = document.getElementById(`plan-tinv-${l.key}`)?.textContent || '0';
+    const estMin  = l.key.startsWith('imp_') ? (_planDados[parseInt(l.key.replace('imp_',''))]?.estoque_minimo || 0) : (_planProdutos.find(p => p.id === l.key)?.estoque_min || 0);
+    const cor     = comprar > 0 ? '#E71D36' : '#2EC4B6';
+    const totalEst = brl(comprar * (l.valor || 0));
+    return `<tr>
+      <td>${esc(l.nome)}</td><td>${esc(l.forn||'—')}</td><td>${esc(l.cat||'—')}</td><td>${esc(l.tipo||'—')}</td>
+      <td style="text-align:center">${document.getElementById(`plan-vend-${l.key}`)?.value || 0}</td>
+      <td style="text-align:center">${estMin}</td>
+      <td style="text-align:center">${tinv}</td>
+      <td style="text-align:center;font-weight:bold;color:${cor}">${comprar}</td>
+      <td style="text-align:center">${l.valor ? brl(l.valor) : '—'}</td>
+      <td style="text-align:center;font-weight:bold">${comprar > 0 ? totalEst : '—'}</td>
     </tr>`;
   }).join('');
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Lista de Compra Sugerida</title>
-    <style>body{font-family:Arial,sans-serif;font-size:11px}h2{text-align:center}
-    table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:3px 5px}
-    th{background:#1a1a2e;color:#fff}</style></head><body>
-    <h2>Lista de Compra Sugerida — Tambaqui de Banda</h2>
-    <p style="text-align:center">Emitida em: ${new Date().toLocaleDateString('pt-BR')}</p>
-    <table><thead><tr>
-      <th>Produto</th><th>Fornecedor</th><th>Categoria</th><th>Tipo/Destino</th>
-      <th>Vendas Méd.</th><th>Est.Mín.</th><th>Estoque</th><th>Coz.&Bar</th>
-      <th>Outros</th><th>Qtd Pedido</th>
-    </tr></thead><tbody>${linhas}</tbody></table>
-    </body></html>`;
-
-  const w = window.open('', '_blank');
-  w.document.write(html);
+  const w = window.open('', '_blank', 'width=1300,height=750');
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
+  <meta charset="UTF-8"><title>Planejamento — ${dataBR}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;padding:1cm}
+  h2{color:#FF6B35;font-size:1.2rem;margin-bottom:.3rem}p{color:#555;margin-bottom:.6rem}
+  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
+  th,td{padding:4px 6px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#fafafa}
+  .tot{background:#f0fdf4;font-weight:700}@media print{body{padding:.3cm}}</style></head>
+  <body>
+  <h2>Tambaqui de Banda — Planejamento de Compra</h2>
+  <p><strong>Semana:</strong> ${dataBR} &nbsp;|&nbsp; Fórmula: Comprar = Vendas Médias + Est. Mínimo − Total Inventário</p>
+  <table><thead><tr>
+    <th>Produto</th><th>Fornecedor</th><th>Categoria</th><th>Tipo</th>
+    <th style="text-align:center">Vendas Méd.</th><th style="text-align:center">Est. Mín.</th>
+    <th style="text-align:center">∑ Inventário</th><th style="text-align:center">Comprar</th>
+    <th style="text-align:center">Valor Unit.</th><th style="text-align:center">Total Est.</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr class="tot">
+    <td colspan="9" style="text-align:right;padding-right:6px">TOTAL ESTIMADO</td>
+    <td style="text-align:center">${total}</td>
+  </tr></tfoot>
+  </table>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+  </body></html>`);
   w.document.close();
-  w.print();
+}
+
+function imprimirItensOKPlan() {
+  const tbody = document.getElementById('lst-planejamento');
+  const keys  = JSON.parse(tbody.dataset.keys || '[]');
+  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const dataBR = data.split('-').reverse().join('/');
+
+  const itensOK = keys.filter(key => {
+    const comprar = parseInt(document.getElementById(`plan-comprar-${key}`)?.textContent) || 0;
+    const tr = document.getElementById(`plan-vend-${key}`)?.closest('tr');
+    return comprar === 0 && tr && tr.style.display !== 'none';
+  });
+
+  if (!itensOK.length) { toast('Nenhum item com status ✅ OK encontrado.', 'erro'); return; }
+
+  const rows = itensOK.map((key, i) => {
+    const tr     = document.getElementById(`plan-vend-${key}`)?.closest('tr');
+    const nome   = tr?.cells[0]?.querySelector('strong')?.textContent?.trim() || '—';
+    const forn   = document.getElementById(`plan-forn-${key}`)?.value || '—';
+    const cat    = document.getElementById(`plan-cat-${key}`)?.value  || '—';
+    const tinv   = document.getElementById(`plan-tinv-${key}`)?.textContent || '0';
+    const estMin = key.startsWith('imp_') ? (_planDados[parseInt(key.replace('imp_',''))]?.estoque_minimo||0) : (_planProdutos.find(p=>p.id===key)?.estoque_min||0);
+    const un     = tr?.cells[10]?.textContent?.trim() || '';
+    return `<tr>
+      <td>${i+1}</td><td><strong>${esc(nome)}</strong></td><td>${esc(forn)}</td><td>${esc(cat)}</td>
+      <td style="text-align:center">${estMin}</td>
+      <td style="text-align:center">${tinv}</td>
+      <td style="text-align:center">${un}</td>
+      <td style="text-align:center;color:#2EC4B6;font-weight:700">✅ OK</td>
+    </tr>`;
+  }).join('');
+
+  const w = window.open('', '_blank', 'width=1000,height=700');
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
+  <meta charset="UTF-8"><title>Itens OK — ${dataBR}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;padding:1.5cm}
+  h2{color:#2EC4B6;font-size:1.2rem;margin-bottom:.3rem}p{color:#555;margin-bottom:.8rem;font-size:.85rem}
+  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
+  th,td{padding:5px 8px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#f9fffe}
+  @media print{body{padding:.5cm}}</style></head>
+  <body>
+  <h2>✅ Tambaqui de Banda — Itens com Estoque OK</h2>
+  <p><strong>Data:</strong> ${dataBR} &nbsp;|&nbsp; <strong>Itens:</strong> ${itensOK.length} produto(s) sem necessidade de reposição</p>
+  <table><thead><tr>
+    <th>#</th><th>Produto</th><th>Fornecedor</th><th>Categoria</th>
+    <th style="text-align:center">Est. Mín.</th>
+    <th style="text-align:center">∑ Inventário</th>
+    <th style="text-align:center">Unidade</th>
+    <th style="text-align:center">Status</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+  </table>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+  </body></html>`);
+  w.document.close();
 }
