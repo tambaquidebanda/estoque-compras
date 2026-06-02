@@ -108,6 +108,49 @@ body {
   pointer-events: none;
 }
 
+/* ── Grupo de menu expansível ── */
+.nav-grupo-btn {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  color: rgba(255,255,255,.58);
+  padding: .65rem 1.2rem;
+  font-size: .87rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background .15s, color .15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.nav-grupo-btn:hover { color: #fff; background: rgba(255,107,53,.12); }
+.nav-grupo-btn.ativo  { color: #fff; background: rgba(255,107,53,.18); border-left-color: var(--laranja); }
+
+.nav-grupo-btn .seta {
+  margin-left: auto;
+  font-size: .65rem;
+  transition: transform .2s;
+}
+.nav-grupo-btn.aberto .seta { transform: rotate(90deg); }
+
+.nav-submenu {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height .25s ease;
+  background: rgba(0,0,0,.18);
+}
+.nav-submenu.aberto { max-height: 200px; }
+
+.nav-submenu a {
+  padding-left: 2.4rem !important;
+  font-size: .83rem !important;
+  border-left: 3px solid transparent;
+}
+.nav-submenu a::before {
+  content: '›';
+  margin-right: .3rem;
+  opacity: .5;
+}
+
 .badge-breve {
   font-size: .62rem;
   background: rgba(255,255,255,.12);

@@ -121,14 +121,28 @@ async function sair() {
 // ═══════════════════════════════════════════════════════════════
 // NAVEGAÇÃO
 // ═══════════════════════════════════════════════════════════════
+function toggleNavGrupo(grupo) {
+  const btn    = document.getElementById(`nav-grupo-${grupo}`);
+  const submenu = document.getElementById(`nav-submenu-${grupo}`);
+  const aberto = btn.classList.contains('aberto');
+  btn.classList.toggle('aberto', !aberto);
+  submenu.classList.toggle('aberto', !aberto);
+}
+
 function ir(nome, el) {
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
-  document.querySelectorAll('.nav-sb a:not(.nav-em-breve)').forEach(a => a.classList.remove('ativo'));
+  document.querySelectorAll('.nav-sb a:not(.nav-em-breve), .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-' + nome).classList.add('ativa');
   if (el) el.classList.add('ativo');
+  // Abre o grupo pai se o item for submenu de Compra
+  if (['pedido','compras'].includes(nome)) {
+    document.getElementById('nav-grupo-compra')?.classList.add('aberto', 'ativo');
+    document.getElementById('nav-submenu-compra')?.classList.add('aberto');
+  }
 
   if (nome === 'dashboard')   carregarDashboard();
-  if (nome === 'compra')      prepararFormCompra();
+  if (nome === 'pedido')      prepararFormCompra();
+  if (nome === 'compras')     carregarCompras();
   if (nome === 'faturamento') { setHoje('f-data'); carregarFaturamento(); }
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
@@ -3374,4 +3388,120 @@ async function imprimirTodosPedidosForn() {
   <body>${pagesHtml}
   <script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
   w.document.close();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// COMPRAS — LISTA DE PEDIDOS
+// ═══════════════════════════════════════════════════════════════
+async function carregarCompras() {
+  const ini     = document.getElementById('cps-ini')?.value || '';
+  const fim     = document.getElementById('cps-fim')?.value || '';
+  const fornSel = document.getElementById('cps-forn')?.value || '';
+
+  let query = sb.from('cmp_compras')
+    .select('id,pedido_num,data,data_entrega,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb')
+    .not('pedido_num','is',null)
+    .order('data', { ascending: false })
+    .order('pedido_num', { ascending: false });
+  if (ini) query = query.gte('data', ini);
+  if (fim) query = query.lte('data', fim);
+
+  const { data: rows } = await query;
+  if (!rows) return;
+
+  // Agrupa por pedido_num
+  const grupos = {};
+  rows.forEach(c => {
+    const key = c.pedido_num;
+    if (!grupos[key]) grupos[key] = {
+      pedido_num: key, data: c.data, data_entrega: c.data_entrega,
+      forn: c.fornecedor_nome, comp: c.comprador,
+      itens: [], total: 0, recebido: c.status_receb === 'recebido'
+    };
+    grupos[key].itens.push(c);
+    grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
+    if (c.status_receb !== 'recebido') grupos[key].recebido = false;
+  });
+
+  let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
+
+  // Popula filtro fornecedor
+  const fornEl = document.getElementById('cps-forn');
+  if (fornEl) {
+    const forns = [...new Set(lista.map(g => g.forn).filter(Boolean))].sort();
+    const cur = fornEl.value;
+    fornEl.innerHTML = '<option value="">Todos</option>' +
+      forns.map(f => `<option value="${f}"${f===cur?' selected':''}>${esc(f)}</option>`).join('');
+  }
+  if (fornSel) lista = lista.filter(g => g.forn === fornSel);
+
+  // KPIs
+  const totalGeral  = lista.reduce((s,g) => s+g.total, 0);
+  const qtdRecebido = lista.filter(g => g.recebido).length;
+  document.getElementById('cps-kpi-qtd').textContent   = lista.length;
+  document.getElementById('cps-kpi-total').textContent  = brl(totalGeral);
+  document.getElementById('cps-kpi-receb').textContent  = `${qtdRecebido} / ${lista.length}`;
+
+  const tbody = document.getElementById('tb-compras-lista');
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = lista.map(g => {
+    const dataBR  = (g.data||'').split('-').reverse().join('/');
+    const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : '—';
+    const cor     = g.recebido ? '#2EC4B6' : '#FF6B35';
+    const status  = g.recebido ? '✅ Recebido' : '⏳ Pendente';
+    return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
+      <td>${dataBR}</td>
+      <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
+      <td><strong>${esc(g.forn||'—')}</strong></td>
+      <td>${esc(g.comp||'—')}</td>
+      <td class="text-center"><span class="badge bg-secondary">${g.itens.length}</span></td>
+      <td class="text-center">${entregaBR}</td>
+      <td class="text-center fw-bold">${brl(g.total)}</td>
+      <td class="text-center"><span class="badge" style="background:${cor}">${status}</span></td>
+      <td class="text-center">
+        <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
+          ${!g.recebido ? `<button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${g.pedido_num}')" title="Receber">📬 Receber</button>` : ''}
+        </div>
+      </td>
+    </tr>
+    <tr id="detalhe-${g.pedido_num}" style="display:none;background:#f8f9fa">
+      <td colspan="9" class="p-0">
+        <table class="table table-sm mb-0" style="font-size:.82rem">
+          <thead style="background:#e9ecef">
+            <tr><th class="ps-4">Produto</th><th>Categoria</th><th class="text-center">Qtd</th><th class="text-center">Vlr.Unit</th><th class="text-center fw-bold">Total</th></tr>
+          </thead>
+          <tbody>
+            ${g.itens.map(c => `<tr>
+              <td class="ps-4">${esc(c.produto)}</td>
+              <td class="text-muted">${esc(c.categoria||'—')}</td>
+              <td class="text-center">${c.quantidade}</td>
+              <td class="text-center">${brl(c.custo_unit)}</td>
+              <td class="text-center fw-bold">${brl((c.quantidade||0)*(c.custo_unit||0))}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleDetalheCompra(pedido_num, tr) {
+  const detalhe = document.getElementById(`detalhe-${pedido_num}`);
+  if (!detalhe) return;
+  const visivel = detalhe.style.display !== 'none';
+  detalhe.style.display = visivel ? 'none' : '';
+  tr.style.background = visivel ? '' : '#fff8f0';
+}
+
+function limparFiltrosCompras() {
+  document.getElementById('cps-ini').value = '';
+  document.getElementById('cps-fim').value = '';
+  document.getElementById('cps-forn').value = '';
+  carregarCompras();
 }

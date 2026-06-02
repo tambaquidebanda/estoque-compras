@@ -79,9 +79,19 @@
       <a href="#" onclick="ir('dashboard',this)" class="ativo">
         <i class="bi bi-bar-chart-fill"></i> Dashboard
       </a>
-      <a href="#" onclick="ir('compra',this)">
-        <i class="bi bi-cart-plus-fill"></i> Lançar Compra
-      </a>
+      <!-- Grupo COMPRA -->
+      <div class="nav-grupo-btn" id="nav-grupo-compra" onclick="toggleNavGrupo('compra')">
+        <i class="bi bi-cart-plus-fill"></i> Compra
+        <span class="seta">▶</span>
+      </div>
+      <div class="nav-submenu" id="nav-submenu-compra">
+        <a href="#" onclick="ir('pedido',this)">
+          <i class="bi bi-file-earmark-plus"></i> Pedido de Compra
+        </a>
+        <a href="#" onclick="ir('compras',this)">
+          <i class="bi bi-list-ul"></i> Compras
+        </a>
+      </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
       </a>
@@ -190,9 +200,9 @@
       </div>
     </section>
 
-    <!-- ══════ LANÇAR COMPRA ══════ -->
-    <section id="pg-compra" class="pagina">
-      <h1>🛒 Lançar Compra</h1>
+    <!-- ══════ PEDIDO DE COMPRA ══════ -->
+    <section id="pg-pedido" class="pagina">
+      <h1>🛒 Pedido de Compra</h1>
       <div id="aviso-cad" class="alert alert-warning d-none mb-3"></div>
 
       <div class="card-form">
@@ -347,6 +357,71 @@
           <div class="col-md-4"><div class="card-kpi" style="border-color:var(--verde)"><div class="kpi-label">🎫 Ticket Médio</div><div class="kpi-val" id="ped-ticket">R$ 0,00</div></div></div>
         </div>
         <div id="lst-pedidos-grupos"></div>
+      </div>
+    </section>
+
+    <!-- ══════ COMPRAS ══════ -->
+    <section id="pg-compras" class="pagina">
+      <h1>📋 Compras</h1>
+
+      <!-- Filtros -->
+      <div class="card-grafico mb-3">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data inicial</label>
+            <input type="date" class="form-control" id="cps-ini" onchange="carregarCompras()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data final</label>
+            <input type="date" class="form-control" id="cps-fim" onchange="carregarCompras()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏭 Fornecedor</label>
+            <select class="form-select" id="cps-forn" onchange="carregarCompras()">
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-outline-secondary w-100" onclick="limparFiltrosCompras()">↺ Limpar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="row g-3 mb-3">
+        <div class="col-md-4 col-6">
+          <div class="card-kpi"><div class="kpi-label">📋 Pedidos</div><div class="kpi-val" id="cps-kpi-qtd">—</div></div>
+        </div>
+        <div class="col-md-4 col-6">
+          <div class="card-kpi" style="border-color:#FF6B35"><div class="kpi-label">💰 Total</div><div class="kpi-val" id="cps-kpi-total">—</div></div>
+        </div>
+        <div class="col-md-4 col-6">
+          <div class="card-kpi" style="border-color:#2EC4B6"><div class="kpi-label">✅ Recebidos</div><div class="kpi-val" id="cps-kpi-receb">—</div></div>
+        </div>
+      </div>
+
+      <!-- Tabela de pedidos -->
+      <div class="card-grafico">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm align-middle mb-0">
+            <thead style="background:#1a1a2e;color:#fff;font-size:.82rem">
+              <tr>
+                <th>📅 Data</th>
+                <th>🔖 Pedido</th>
+                <th>🏭 Fornecedor</th>
+                <th>👤 Comprador</th>
+                <th class="text-center">📦 Itens</th>
+                <th class="text-center">🚚 Entrega</th>
+                <th class="text-center">💰 Total</th>
+                <th class="text-center">Status</th>
+                <th class="text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tb-compras-lista">
+              <tr><td colspan="9" class="text-center text-muted py-4">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
