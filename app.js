@@ -1858,6 +1858,8 @@ async function carregarPlanejamento() {
   setHoje('plan-data');
   setHoje('plan-data-entrega');
 
+  if (!cForn.length || !cComp.length) await carregarCaches();
+
   const compHtml = '<option value="">— selecione —</option>' +
     cComp.map(c => `<option>${esc(c.nome)}</option>`).join('');
   const compEl     = document.getElementById('plan-comp');
@@ -2231,13 +2233,12 @@ function renderPlanejamento() {
 
   document.getElementById('lst-planejamento').dataset.keys = JSON.stringify(filtradas.map(l => l.key));
 
-  // Popula filtro de fornecedor
-  const fornsFiltro = [...new Set(linhas.map(l => l.forn).filter(Boolean))].sort();
-  const filtFornEl  = document.getElementById('plan-filtro-forn');
-  const curFilt     = filtFornEl?.value || '';
+  // Popula filtro de fornecedor — usa cadastro completo (cForn)
+  const filtFornEl = document.getElementById('plan-filtro-forn');
+  const curFilt    = filtFornEl?.value || '';
   if (filtFornEl) {
     filtFornEl.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
-      fornsFiltro.map(f => `<option value="${f}"${f === curFilt ? ' selected' : ''}>${esc(f)}</option>`).join('');
+      cForn.map(f => `<option value="${esc(f.nome)}"${f.nome === curFilt ? ' selected' : ''}>${esc(f.nome)}</option>`).join('');
   }
 
   _planKpis(linhas);
