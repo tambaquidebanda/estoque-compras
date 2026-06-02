@@ -441,7 +441,14 @@ function numK(v) {
 // ═══════════════════════════════════════════════════════════════
 async function prepararFormCompra() {
   await carregarCaches();
+  await carregarProdutosFT();
   setHoje('c-data');
+  document.getElementById('bloco-estoque').style.display = 'none';
+  // Mostra próximo número de pedido
+  const proxNum = await _gerarNumeroPedido();
+  const el = document.getElementById('prox-pedido-num');
+  if (el) el.textContent = proxNum;
+  consultarPedidos();
 
   // Populate selects
   const catSel = document.getElementById('c-cat');
@@ -513,6 +520,32 @@ function selecionarProd(nome, un, cat) {
     if ([...sel.options].some(o => o.value === cat)) sel.value = cat;
   }
   fechaAC('ac-prod');
+  // Bloco de estoque mínimo
+  const prod = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  const blocoEl = document.getElementById('bloco-estoque');
+  if (prod && parseFloat(prod.estoque_min) > 0 && blocoEl) {
+    document.getElementById('c-estmin-show').textContent = prod.estoque_min + ' ' + (prod.unidade_uso || '');
+    document.getElementById('c-estoque-atual').value = '';
+    document.getElementById('c-sugestao').textContent = '—';
+    blocoEl.style.display = '';
+    blocoEl.dataset.estmin = prod.estoque_min;
+  } else if (blocoEl) {
+    blocoEl.style.display = 'none';
+  }
+}
+
+function calcSugestao() {
+  const estMin  = parseFloat(document.getElementById('bloco-estoque')?.dataset.estmin) || 0;
+  const estAtual = parseFloat(document.getElementById('c-estoque-atual')?.value) || 0;
+  const sug = Math.max(0, estMin - estAtual);
+  const fmtSug = sug % 1 === 0 ? String(sug) : sug.toFixed(3).replace(/\.?0+$/, '');
+  document.getElementById('c-sugestao').textContent = fmtSug;
+}
+
+function aplicarSugestao() {
+  const sug = document.getElementById('c-sugestao')?.textContent;
+  const qtdEl = document.getElementById('c-qtd');
+  if (sug && sug !== '—' && qtdEl) { qtdEl.value = sug; calcTot(); }
 }
 
 function fechaAC(id) {
@@ -548,8 +581,10 @@ async function salvarCompra(e) {
   const catObj    = cCat.find(c => c.nome === cat);
   const planoConta = catObj ? (catObj.plano_conta || '') : '';
 
+  const pedido_num = await _gerarNumeroPedido();
+
   const { error } = await sb.from('cmp_compras').insert([{
-    data,
+    data, pedido_num,
     fornecedor_id:   fornId,
     fornecedor_nome: fornNome,
     produto:         prod,
@@ -562,25 +597,31 @@ async function salvarCompra(e) {
     comprador:       comp,
     unidade_uso:     uso,
     observacao:      obs || null,
+    status_receb:    'pendente',
     criado_por:      user.id,
   }]);
 
   if (error) { toast('Erro ao salvar compra: ' + error.message, 'erro'); return; }
 
-  toast(`✅ ${prod} salvo! ${brl(custo * qtd)}`, 'ok');
+  toast(`✅ ${prod} — Pedido ${pedido_num} — ${brl(custo * qtd)}`, 'ok');
 
-  // Reset product-specific fields, keep meta fields
   document.getElementById('c-prod').value   = '';
   document.getElementById('c-custo').value  = '';
   document.getElementById('c-qtd').value    = '1';
   document.getElementById('c-obs').value    = '';
   document.getElementById('c-total-show').textContent = 'R$ 0,00';
+  document.getElementById('bloco-estoque').style.display = 'none';
   document.getElementById('c-prod').focus();
 
-  // Update product cache so it appears in autocomplete next time
   if (!cProd.find(p => p.nome.toLowerCase() === prod.toLowerCase())) {
     cProd.push({ nome: prod, unidade_med: un, categoria: cat });
   }
+
+  // Atualiza próximo número e lista de pedidos
+  const proxNum = await _gerarNumeroPedido();
+  const numEl = document.getElementById('prox-pedido-num');
+  if (numEl) numEl.textContent = proxNum;
+  consultarPedidos();
 }
 
 
@@ -2866,4 +2907,213 @@ async function renderHistoricoImport() {
       <td>${pct!==null?(pct<=META_CMV?'<span class="text-success">✅ Dentro da meta</span>':'<span class="text-danger">⚠️ Acima da meta</span>'):'—'}</td>
     </tr>`;
   }).join('');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// CONSULTA E IMPRESSÃO DE PEDIDOS
+// ═══════════════════════════════════════════════════════════════
+async function consultarPedidos() {
+  const ini     = document.getElementById('ped-ini')?.value || '';
+  const fim     = document.getElementById('ped-fim')?.value || '';
+  const fornSel = document.getElementById('ped-forn')?.value || '';
+
+  let query = sb.from('cmp_compras')
+    .select('id,pedido_num,data,fornecedor_nome,comprador,produto,categoria,tipo_produto,unidade_med,quantidade,custo_unit')
+    .not('pedido_num','is',null)
+    .order('data', { ascending: false })
+    .order('pedido_num', { ascending: false });
+  if (ini) query = query.gte('data', ini);
+  if (fim) query = query.lte('data', fim);
+
+  const { data: compras } = await query;
+  if (!compras) return;
+
+  // Agrupa por pedido_num
+  const grupos = {};
+  compras.forEach(c => {
+    const key = c.pedido_num;
+    if (!grupos[key]) grupos[key] = { pedido_num: key, data: c.data, forn: c.fornecedor_nome, comp: c.comprador, itens: [], total: 0 };
+    grupos[key].itens.push(c);
+    grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
+  });
+
+  let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
+
+  // Popula filtro fornecedor
+  const fornEl = document.getElementById('ped-forn');
+  if (fornEl) {
+    const forns = [...new Set(lista.map(g => g.forn).filter(Boolean))].sort();
+    const cur = fornEl.value;
+    fornEl.innerHTML = '<option value="">Todos</option>' +
+      forns.map(f => `<option value="${f}"${f===cur?' selected':''}>${esc(f)}</option>`).join('');
+  }
+  if (fornSel) lista = lista.filter(g => g.forn === fornSel);
+
+  // KPIs
+  const kpisEl = document.getElementById('ped-kpis');
+  if (lista.length && kpisEl) {
+    kpisEl.style.display = '';
+    const totalGeral = lista.reduce((s,g) => s+g.total, 0);
+    document.getElementById('ped-qtd').textContent    = lista.length;
+    document.getElementById('ped-total').textContent  = brl(totalGeral);
+    document.getElementById('ped-ticket').textContent = brl(lista.length ? totalGeral / lista.length : 0);
+  } else if (kpisEl) kpisEl.style.display = 'none';
+
+  const cont = document.getElementById('lst-pedidos-grupos');
+  if (!lista.length) {
+    cont.innerHTML = '<p class="text-muted text-center py-3">Nenhum pedido encontrado.</p>';
+    return;
+  }
+
+  cont.innerHTML = lista.map(g => {
+    const dataBR  = (g.data||'').split('-').reverse().join('/');
+    const itensHtml = g.itens.map(c => `
+      <tr>
+        <td class="ps-4 text-muted small">${esc(c.produto)}</td>
+        <td class="text-muted small">${esc(c.categoria||'—')}</td>
+        <td class="text-center small">${c.quantidade} ${esc(c.unidade_med||'')}</td>
+        <td class="text-center small">${brl(c.custo_unit)}</td>
+        <td class="text-center small fw-semibold">${brl((c.quantidade||0)*(c.custo_unit||0))}</td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="imprimirPedido('${c.pedido_num}')">🖨️</button>
+        </td>
+      </tr>`).join('');
+
+    return `<div class="border rounded mb-2">
+      <div class="d-flex align-items-center justify-content-between p-2 px-3" style="background:#f8f9fa;cursor:pointer"
+           onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'">
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span>
+          <strong>${esc(g.forn||'—')}</strong>
+          <small class="text-muted">${dataBR}</small>
+          <span class="badge bg-secondary">${g.itens.length} item(s)</span>
+        </div>
+        <strong class="text-success">${brl(g.total)}</strong>
+      </div>
+      <div style="display:none">
+        <table class="table table-sm mb-0">
+          <thead style="background:#f0f0f0;font-size:.78rem">
+            <tr><th class="ps-4">Produto</th><th>Categoria</th><th class="text-center">Qtd</th><th class="text-center">Vlr.Unit</th><th class="text-center">Total</th><th></th></tr>
+          </thead>
+          <tbody>${itensHtml}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function imprimirPedido(pedido_num) {
+  const { data: itens } = await sb.from('cmp_compras')
+    .select('*').eq('pedido_num', pedido_num);
+  if (!itens?.length) return;
+  const ref = itens[0];
+  const dataBR = (ref.data||'').split('-').reverse().join('/');
+  const total  = itens.reduce((s,c) => s + (c.quantidade||0)*(c.custo_unit||0), 0);
+
+  const linhas = itens.map((c,i) => `<tr>
+    <td>${i+1}</td>
+    <td><strong>${esc(c.produto)}</strong></td>
+    <td>${esc(c.categoria||'—')}</td>
+    <td>${esc(c.tipo_produto||'—')}</td>
+    <td style="text-align:center">${c.quantidade} ${esc(c.unidade_med||'')}</td>
+    <td style="text-align:center">${brl(c.custo_unit)}</td>
+    <td style="text-align:center;font-weight:bold">${brl((c.quantidade||0)*(c.custo_unit||0))}</td>
+  </tr>`).join('');
+
+  const w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
+  <meta charset="UTF-8"><title>Pedido ${pedido_num}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;padding:1.5cm}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;border-bottom:3px solid #FF6B35;padding-bottom:1rem}
+  h1{color:#1a1a2e;font-size:1.4rem}.num{font-size:1.8rem;font-weight:700;color:#FF6B35}
+  .meta{display:flex;gap:2rem;margin-bottom:1rem;font-size:.85rem}
+  .meta strong{display:block;color:#1a1a2e}.meta span{color:#666}
+  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
+  th,td{padding:5px 8px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#fafafa}
+  .tot{background:#f0fdf4;font-weight:700;font-size:1rem}
+  @media print{body{padding:.5cm}}</style></head><body>
+  <div class="header">
+    <div><h1>Tambaqui de Banda</h1><p style="color:#666">Pedido de Compra</p></div>
+    <div class="num">Nº ${esc(pedido_num)}</div>
+  </div>
+  <div class="meta">
+    <div><span>Data</span><strong>${dataBR}</strong></div>
+    <div><span>Fornecedor</span><strong>${esc(ref.fornecedor_nome||'—')}</strong></div>
+    <div><span>Comprador</span><strong>${esc(ref.comprador||'—')}</strong></div>
+    ${ref.data_entrega ? `<div><span>Entrega</span><strong>${ref.data_entrega.split('-').reverse().join('/')}</strong></div>` : ''}
+  </div>
+  <table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th><th>Tipo</th>
+    <th style="text-align:center">Quantidade</th><th style="text-align:center">Valor Unit.</th>
+    <th style="text-align:center">Total</th></tr></thead>
+  <tbody>${linhas}</tbody>
+  <tfoot><tr class="tot">
+    <td colspan="6" style="text-align:right;padding-right:8px">TOTAL DO PEDIDO</td>
+    <td style="text-align:center">${brl(total)}</td>
+  </tr></tfoot></table>
+  <div style="margin-top:3rem;display:flex;gap:4rem">
+    <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Comprador</div>
+    <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Fornecedor</div>
+  </div>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+  </body></html>`);
+  w.document.close();
+}
+
+async function imprimirTodosPedidosForn() {
+  const ini = document.getElementById('ped-ini')?.value || '';
+  const fim = document.getElementById('ped-fim')?.value || '';
+  let query = sb.from('cmp_compras')
+    .select('*').not('pedido_num','is',null).order('pedido_num');
+  if (ini) query = query.gte('data', ini);
+  if (fim) query = query.lte('data', fim);
+  const { data: compras } = await query;
+  if (!compras?.length) { toast('Nenhum pedido no período.', 'erro'); return; }
+
+  const grupos = {};
+  compras.forEach(c => {
+    const key = c.pedido_num;
+    if (!grupos[key]) grupos[key] = { pedido_num: key, data: c.data, forn: c.fornecedor_nome, comp: c.comprador, itens: [] };
+    grupos[key].itens.push(c);
+  });
+
+  const pagesHtml = Object.values(grupos).map(g => {
+    const dataBR = (g.data||'').split('-').reverse().join('/');
+    const total  = g.itens.reduce((s,c) => s+(c.quantidade||0)*(c.custo_unit||0), 0);
+    const linhas = g.itens.map((c,i) => `<tr>
+      <td>${i+1}</td><td><strong>${esc(c.produto)}</strong></td>
+      <td>${esc(c.categoria||'—')}</td>
+      <td style="text-align:center">${c.quantidade} ${esc(c.unidade_med||'')}</td>
+      <td style="text-align:center">${brl(c.custo_unit)}</td>
+      <td style="text-align:center;font-weight:bold">${brl((c.quantidade||0)*(c.custo_unit||0))}</td>
+    </tr>`).join('');
+    return `<div class="page">
+      <div class="header"><div><strong>Tambaqui de Banda</strong> — Pedido de Compra</div>
+      <div class="num">Nº ${esc(g.pedido_num)}</div></div>
+      <div class="meta"><span>Data: ${dataBR}</span><span>Fornecedor: <strong>${esc(g.forn||'—')}</strong></span>
+      <span>Comprador: ${esc(g.comp||'—')}</span></div>
+      <table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th>
+        <th>Qtd</th><th>Vlr Unit.</th><th>Total</th></tr></thead>
+      <tbody>${linhas}</tbody>
+      <tfoot><tr class="tot"><td colspan="5" style="text-align:right">TOTAL</td>
+        <td style="text-align:center">${brl(total)}</td></tr></tfoot></table>
+    </div>`;
+  }).join('');
+
+  const w = window.open('', '_blank', 'width=1000,height=750');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Pedidos por Fornecedor</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11px}
+  .page{padding:1cm;page-break-after:always}
+  .header{display:flex;justify-content:space-between;border-bottom:2px solid #FF6B35;padding-bottom:.5rem;margin-bottom:.7rem}
+  .num{font-size:1.4rem;font-weight:700;color:#FF6B35}
+  .meta{display:flex;gap:1.5rem;margin-bottom:.7rem;font-size:.85rem}
+  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
+  th,td{padding:3px 6px;border:1px solid #e0e0e0}
+  .tot{background:#f0fdf4;font-weight:700}
+  @media print{.page{page-break-after:always}}</style></head>
+  <body>${pagesHtml}
+  <script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
+  w.document.close();
 }

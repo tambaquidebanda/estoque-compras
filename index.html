@@ -216,6 +216,33 @@
                 <div class="ac-list" id="ac-prod"></div>
               </div>
             </div>
+            <!-- Bloco estoque mínimo — aparece ao selecionar produto com estoque_min -->
+            <div class="col-12" id="bloco-estoque" style="display:none">
+              <div class="rounded-3 p-3" style="background:#eff6ff;border:1px solid #bfdbfe">
+                <div class="fw-semibold small text-primary mb-2">📦 Sugestão de Pedido — baseado no estoque mínimo semanal</div>
+                <div class="row g-2 align-items-end">
+                  <div class="col-md-3">
+                    <label class="form-label small mb-1">📉 Estoque Mínimo</label>
+                    <div class="form-control form-control-sm bg-white text-muted fw-semibold" id="c-estmin-show">—</div>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label small mb-1">📊 Estoque Atual <span class="text-muted fw-normal">(informe)</span></label>
+                    <input type="number" class="form-control form-control-sm" id="c-estoque-atual"
+                      min="0" step="0.001" placeholder="Qtd em estoque" oninput="calcSugestao()">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label small mb-1">💡 Pedido Sugerido</label>
+                    <div class="form-control form-control-sm fw-bold bg-white" id="c-sugestao" style="color:#1d4ed8">—</div>
+                  </div>
+                  <div class="col-md-3 d-flex align-items-end">
+                    <button type="button" class="btn btn-sm btn-primary w-100" onclick="aplicarSugestao()">
+                      ↑ Usar quantidade sugerida
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="col-md-4">
               <label class="form-label">📂 Categoria</label>
               <select class="form-select" id="c-cat" required></select>
@@ -266,10 +293,52 @@
             </div>
           </div>
 
+          <div class="d-flex align-items-center justify-content-between p-3 mb-3 rounded" style="background:#fff7ed;border:1px solid #FFD0B0">
+            <div>
+              <span class="text-muted small">Número do Pedido</span>
+              <div class="fw-bold fs-5" style="color:#FF6B35" id="prox-pedido-num">—</div>
+            </div>
+            <i class="bi bi-file-text-fill" style="font-size:2rem;color:#FFD0B0"></i>
+          </div>
           <button type="submit" class="btn btn-primary btn-lg w-100">
-            <i class="bi bi-check-circle-fill"></i> Salvar Compra
+            <i class="bi bi-check-circle-fill"></i> Salvar e Gerar Pedido
           </button>
         </form>
+      </div>
+
+      <!-- Consulta de pedidos -->
+      <div class="card-form mt-4">
+        <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+          <h5 class="mb-0">🔍 Consulta de Pedidos Emitidos</h5>
+          <button class="btn btn-sm btn-outline-primary" onclick="imprimirTodosPedidosForn()">
+            🖨️ Imprimir Pedidos por Fornecedor
+          </button>
+        </div>
+        <div class="row g-3 mb-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data inicial</label>
+            <input type="date" class="form-control" id="ped-ini" onchange="consultarPedidos()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Data final</label>
+            <input type="date" class="form-control" id="ped-fim" onchange="consultarPedidos()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏭 Fornecedor</label>
+            <select class="form-select" id="ped-forn" onchange="consultarPedidos()">
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-outline-secondary w-100" onclick="document.getElementById('ped-ini').value='';document.getElementById('ped-fim').value='';document.getElementById('ped-forn').value='';consultarPedidos()">↺ Limpar</button>
+          </div>
+        </div>
+        <div class="row g-3 mb-3" id="ped-kpis" style="display:none">
+          <div class="col-md-4"><div class="card-kpi"><div class="kpi-label">📋 Pedidos</div><div class="kpi-val" id="ped-qtd">0</div></div></div>
+          <div class="col-md-4"><div class="card-kpi" style="border-color:#FF6B35"><div class="kpi-label">💰 Total do Período</div><div class="kpi-val" id="ped-total">R$ 0,00</div></div></div>
+          <div class="col-md-4"><div class="card-kpi" style="border-color:var(--verde)"><div class="kpi-label">🎫 Ticket Médio</div><div class="kpi-val" id="ped-ticket">R$ 0,00</div></div></div>
+        </div>
+        <div id="lst-pedidos-grupos"></div>
       </div>
     </section>
 
