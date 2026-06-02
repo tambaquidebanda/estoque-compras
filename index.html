@@ -103,6 +103,9 @@
       <a href="#" onclick="ir('recebimento',this)">
         <i class="bi bi-box-seam-fill"></i> Recebimentos
       </a>
+      <a href="#" onclick="ir('controlecmv',this)">
+        <i class="bi bi-file-earmark-spreadsheet-fill"></i> Controle CMV
+      </a>
     </nav>
 
     <div class="sb-footer">
@@ -983,6 +986,114 @@
 
   </div><!-- /main -->
 </div><!-- /tela-principal -->
+
+    <!-- ══════ CONTROLE CMV ══════ -->
+    <section id="pg-controlecmv" class="pagina">
+      <h1>📋 Controle CMV — Importação de Planilha</h1>
+
+      <!-- Importação -->
+      <div class="card-grafico mb-4">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span style="font-size:1.3rem">📥</span>
+          <h5 class="mb-0">Importar Planilha de Compras</h5>
+          <span class="badge bg-success ms-auto" style="font-size:.7rem">Excel / CSV</span>
+        </div>
+        <p class="text-muted small mb-3">Colunas esperadas: <strong>FORNECEDOR · CATEGORIA · TIPO · DATA COMPRA · DATA VENCIMENTO · UNIDADE · VALOR DA COMPRA</strong></p>
+        <div class="drop-zone" id="drop-hist"
+             onclick="document.getElementById('hist-cmv-file').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="this.classList.remove('drag-over');handleDropHistCMV(event)"
+             style="cursor:pointer;border:2px dashed #dee2e6;border-radius:10px;padding:1.5rem;text-align:center">
+          <input type="file" id="hist-cmv-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarHistoricoFile(event)">
+          <div style="font-size:2.2rem">📂</div>
+          <div class="fw-semibold mt-1">Clique aqui ou arraste o arquivo</div>
+          <div class="small mt-1">Formatos: <strong>.xlsx · .xls · .csv</strong></div>
+        </div>
+
+        <div id="hist-import-preview" class="d-none mt-4">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="mb-0">Pré-visualização <span class="text-muted fw-normal">(primeiras 10 linhas)</span></h6>
+            <span id="hist-import-count" class="badge bg-secondary"></span>
+          </div>
+          <div class="table-responsive mb-3" style="max-height:240px;overflow-y:auto">
+            <table class="table table-sm table-bordered table-hover">
+              <thead class="table-light"><tr><th>Data</th><th>Fornecedor</th><th>Categoria</th><th>Tipo</th><th>Unidade</th><th>Valor</th></tr></thead>
+              <tbody id="hist-preview-body"></tbody>
+            </table>
+          </div>
+          <div class="d-flex gap-2">
+            <button class="btn btn-primary" onclick="confirmarImportHist()">✅ Confirmar e Importar</button>
+            <button class="btn btn-outline-secondary" onclick="cancelarImportHist()">✖ Cancelar</button>
+          </div>
+        </div>
+        <div id="msg-hist" class="mt-3"></div>
+        <div id="hist-clear-btn-area" class="mt-2"></div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="card-grafico mb-4" id="hist-filtros" style="display:none">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📅 Ano</label>
+            <select class="form-select" id="hist-ano" onchange="renderHistoricoImport()"></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">📂 Categoria</label>
+            <select class="form-select" id="hist-cat-fil" onchange="renderHistoricoImport()"></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏪 Unidade</label>
+            <select class="form-select" id="hist-uni-fil" onchange="renderHistoricoImport()"></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">🏷️ Tipo</label>
+            <select class="form-select" id="hist-tipo-fil" onchange="renderHistoricoImport()"></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="row g-3 mb-4" id="hist-kpis"></div>
+
+      <!-- Gráficos -->
+      <div class="row g-3 mb-4" id="hist-charts-row1" style="display:none">
+        <div class="col-12">
+          <div class="card-grafico">
+            <h5 class="mb-3">📅 Compras por Mês — R$</h5>
+            <canvas id="ch-hist-mensal" style="max-height:220px"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="row g-3 mb-4" id="hist-charts-row2" style="display:none">
+        <div class="col-md-7">
+          <div class="card-grafico">
+            <h5 class="mb-1">📈 CMV por Mês — %</h5>
+            <p class="text-muted small mb-2">🟢 ≤ 27% (meta) &nbsp;|&nbsp; 🔴 acima da meta</p>
+            <canvas id="ch-hist-cmv-pct" style="max-height:210px"></canvas>
+          </div>
+        </div>
+        <div class="col-md-5">
+          <div class="card-grafico">
+            <h5 class="mb-3">🏷️ Compras por Tipo</h5>
+            <canvas id="ch-hist-tipo" style="max-height:210px"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabela mensal -->
+      <div class="card-grafico" id="hist-table-card" style="display:none">
+        <h5 class="mb-3">📊 Resumo Mensal — Compras × Faturamento × CMV</h5>
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+              <tr><th>Mês</th><th>Compras (R$)</th><th>Faturamento (R$)</th><th>CMV %</th><th>Status</th></tr>
+            </thead>
+            <tbody id="tb-hist-cmv"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
 <!-- ══════ MODAL RECEBER PEDIDO ══════ -->
 <div class="modal fade" id="modal-receber" tabindex="-1">

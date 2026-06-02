@@ -143,6 +143,7 @@ function ir(nome, el) {
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }
+  if (nome === 'controlecmv')   renderHistoricoImport();
 }
 
 function irCad(tab, el) {
@@ -2583,4 +2584,286 @@ async function marcarPago(id) {
   await sb.from('cmp_contas_pagar').update({ status: 'pago', data_pagamento: hoje_ }).eq('id', id);
   toast('Pagamento registrado.', 'ok');
   renderContasPagar();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLE CMV — IMPORTAÇÃO HISTÓRICA
+// ═══════════════════════════════════════════════════════════════
+let _histDados  = [];
+let _histPend   = null;
+let chHistMens  = null;
+let chHistCMV   = null;
+let chHistTipo  = null;
+
+const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const _labelMes = m => { const [y,mo] = m.split('-'); return `${MESES_PT[parseInt(mo)-1]}/${y.slice(2)}`; };
+const _mes      = d => d ? d.slice(0,7) : '';
+const META_CMV  = 27;
+
+function _grpBy(arr, keyFn, valField) {
+  const out = {};
+  arr.forEach(r => {
+    const k = typeof keyFn === 'function' ? keyFn(r) : r[keyFn];
+    if (!k) return;
+    out[k] = (out[k] || 0) + (parseFloat(r[valField]) || 0);
+  });
+  return out;
+}
+
+function _normalizarData(val) {
+  if (!val) return '';
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().split('T')[0];
+  }
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const m = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (m) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  }
+  return '';
+}
+
+function _parseBRLStr(v) {
+  if (typeof v === 'number') return v;
+  return parseFloat(String(v).replace(/[R$\s.]/g,'').replace(',','.')) || 0;
+}
+
+function handleDropHistCMV(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarArqHist(f); }
+function importarHistoricoFile(e) { const f = e.target.files[0]; if (f) _processarArqHist(f); }
+
+function _processarArqHist(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = ext === 'csv'
+      ? XLSX.read(e.target.result, { type: 'string' })
+      : XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
+    _processarWbHist(wb);
+  };
+  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function _processarWbHist(wb) {
+  const ws   = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+  if (rows.length < 2) { toast('Planilha vazia.', 'erro'); return; }
+
+  const headers = rows[0].map(h => String(h).toLowerCase().trim());
+  const enc = (...ts) => headers.findIndex(h => ts.some(t => h.includes(t)));
+
+  const col = {
+    fornecedor: enc('fornecedor','supplier'),
+    categoria:  enc('categoria','category'),
+    tipo:       enc('tipo','type'),
+    data: (() => {
+      const i = headers.findIndex(h => h.includes('data') && (h.includes('compra') || h.includes('pedido') || h.includes('lanc')));
+      return i >= 0 ? i : enc('data compra','data_compra','data');
+    })(),
+    vencimento: enc('vencimento','venc'),
+    unidade:    enc('unidade','unit'),
+    valor:      enc('valor','total','preco','preço','r$'),
+  };
+
+  if (col.data < 0 || col.valor < 0) {
+    toast('Não encontrei colunas "Data Compra" e "Valor". Verifique os cabeçalhos.', 'erro');
+    return;
+  }
+
+  const registros = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r[col.data] && !r[col.valor]) continue;
+    const data  = _normalizarData(r[col.data]);
+    const valor = _parseBRLStr(r[col.valor]);
+    if (!data || valor <= 0) continue;
+    registros.push({
+      fornecedor:      col.fornecedor >= 0 ? String(r[col.fornecedor]||'').trim() : '—',
+      categoria:       col.categoria  >= 0 ? String(r[col.categoria] ||'').trim() : '',
+      tipo:            col.tipo       >= 0 ? String(r[col.tipo]      ||'').trim() : '',
+      data_compra:     data,
+      data_vencimento: col.vencimento >= 0 ? _normalizarData(r[col.vencimento]) : '',
+      unidade:         col.unidade    >= 0 ? String(r[col.unidade]   ||'').trim() : '',
+      valor,
+    });
+  }
+
+  if (!registros.length) { toast('Nenhum registro válido encontrado.', 'erro'); return; }
+
+  document.getElementById('hist-import-count').textContent = `${registros.length} registro(s)`;
+  document.getElementById('hist-preview-body').innerHTML =
+    registros.slice(0,10).map(r => `<tr>
+      <td>${r.data_compra}</td><td>${esc(r.fornecedor)}</td><td>${esc(r.categoria)}</td>
+      <td>${esc(r.tipo)}</td><td>${esc(r.unidade)}</td>
+      <td class="text-success fw-semibold">${brl(r.valor)}</td>
+    </tr>`).join('') +
+    (registros.length > 10 ? `<tr><td colspan="6" class="text-muted text-center">... e mais ${registros.length-10} registros</td></tr>` : '');
+  document.getElementById('hist-import-preview').classList.remove('d-none');
+  _histPend = registros;
+}
+
+function confirmarImportHist() {
+  if (!_histPend?.length) return;
+  _histDados = [..._histDados, ..._histPend];
+  const n = _histPend.length;
+  _histPend = null;
+  document.getElementById('hist-cmv-file').value = '';
+  document.getElementById('hist-import-preview').classList.add('d-none');
+  document.getElementById('msg-hist').innerHTML =
+    `<div class="alert alert-success">✅ <strong>${n}</strong> registro(s) importado(s) com sucesso!</div>`;
+  setTimeout(() => { const m = document.getElementById('msg-hist'); if (m) m.innerHTML = ''; }, 4000);
+  renderHistoricoImport();
+}
+
+function cancelarImportHist() {
+  _histPend = null;
+  document.getElementById('hist-cmv-file').value = '';
+  document.getElementById('hist-import-preview').classList.add('d-none');
+}
+
+function limparHistorico() {
+  if (!confirm(`Apagar todos os ${_histDados.length} registros importados? Não pode ser desfeito.`)) return;
+  _histDados = [];
+  renderHistoricoImport();
+}
+
+async function renderHistoricoImport() {
+  const data   = _histDados;
+  const show   = (id, vis) => { const el = document.getElementById(id); if (el) el.style.display = vis ? '' : 'none'; };
+  const clearEl = document.getElementById('hist-clear-btn-area');
+  if (clearEl) clearEl.innerHTML = data.length
+    ? `<button class="btn btn-sm btn-outline-danger" onclick="limparHistorico()">🗑️ Apagar todos os dados importados (${data.length} registros)</button>`
+    : '';
+
+  if (!data.length) {
+    document.getElementById('hist-kpis').innerHTML = '<div class="col-12"><p class="text-muted">Importe sua planilha para visualizar os dados.</p></div>';
+    ['hist-filtros','hist-charts-row1','hist-charts-row2','hist-table-card'].forEach(id => show(id, false));
+    return;
+  }
+
+  ['hist-filtros','hist-charts-row1','hist-charts-row2','hist-table-card'].forEach(id => show(id, true));
+
+  // Preenche filtros
+  const anos       = [...new Set(data.map(r => r.data_compra.slice(0,4)))].sort();
+  const categorias = [...new Set(data.map(r => r.categoria).filter(Boolean))].sort();
+  const unidades   = [...new Set(data.map(r => r.unidade).filter(Boolean))].sort();
+  const tipos      = [...new Set(data.map(r => r.tipo).filter(Boolean))].sort();
+
+  const fillSel = (id, opts, ph) => {
+    const el = document.getElementById(id); if (!el) return;
+    const cur = el.value;
+    el.innerHTML = `<option value="">${ph}</option>` + opts.map(o => `<option value="${o}"${o===cur?' selected':''}>${esc(o)}</option>`).join('');
+  };
+  fillSel('hist-ano',      anos,       'Todos os anos');
+  fillSel('hist-cat-fil',  categorias, 'Todas as categorias');
+  fillSel('hist-uni-fil',  unidades,   'Todas as unidades');
+  fillSel('hist-tipo-fil', tipos,      'Todos os tipos');
+
+  const anoFil  = document.getElementById('hist-ano')?.value      || '';
+  const catFil  = document.getElementById('hist-cat-fil')?.value  || '';
+  const uniFil  = document.getElementById('hist-uni-fil')?.value  || '';
+  const tipoFil = document.getElementById('hist-tipo-fil')?.value || '';
+
+  let fil = data;
+  if (anoFil)  fil = fil.filter(r => r.data_compra.startsWith(anoFil));
+  if (catFil)  fil = fil.filter(r => r.categoria === catFil);
+  if (uniFil)  fil = fil.filter(r => r.unidade   === uniFil);
+  if (tipoFil) fil = fil.filter(r => r.tipo      === tipoFil);
+
+  // Faturamento do Supabase
+  const { data: fatRows } = await sb.from('cmp_faturamento')
+    .select('data,valor').order('data');
+  const byFatMes = _grpBy(fatRows || [], r => _mes(r.data), 'valor');
+
+  const byCompMes  = _grpBy(fil, r => _mes(r.data_compra), 'valor');
+  const todosMeses = [...new Set(Object.keys(byCompMes))].sort();
+
+  const totalComp = fil.reduce((s,r) => s + r.valor, 0);
+  const totalFat  = todosMeses.reduce((s,m) => s + (byFatMes[m]||0), 0);
+  const cmvMedio  = totalFat > 0 ? (totalComp / totalFat * 100) : null;
+  const corCMV    = cmvMedio !== null && cmvMedio <= META_CMV ? 'var(--verde)' : 'var(--vermelho)';
+
+  // KPIs
+  document.getElementById('hist-kpis').innerHTML = `
+    <div class="col-md-3 col-6"><div class="card-kpi">
+      <div class="kpi-label">📦 Registros no Período</div>
+      <div class="kpi-val">${fil.length.toLocaleString('pt-BR')}</div>
+    </div></div>
+    <div class="col-md-3 col-6"><div class="card-kpi" style="border-color:#FF6B35">
+      <div class="kpi-label">💰 Total de Compras</div>
+      <div class="kpi-val">${brl(totalComp)}</div>
+    </div></div>
+    <div class="col-md-3 col-6"><div class="card-kpi" style="border-color:var(--verde)">
+      <div class="kpi-label">🏦 Faturamento (período)</div>
+      <div class="kpi-val">${totalFat ? brl(totalFat) : '—'}</div>
+      ${!totalFat ? '<div class="small text-muted">Lance faturamento para calcular</div>' : ''}
+    </div></div>
+    <div class="col-md-3 col-6"><div class="card-kpi" style="border-color:${corCMV}">
+      <div class="kpi-label">📈 CMV Médio</div>
+      <div class="kpi-val" style="color:${corCMV}">${cmvMedio !== null ? cmvMedio.toFixed(1) + '%' : '—'}</div>
+      <div class="small text-muted">Meta: ${META_CMV}%</div>
+    </div></div>`;
+
+  if (!todosMeses.length) return;
+
+  const labels  = todosMeses.map(_labelMes);
+  const valComp = todosMeses.map(m => byCompMes[m]||0);
+  const cmvPct  = todosMeses.map(m => byFatMes[m] ? ((byCompMes[m]||0)/byFatMes[m]*100) : null);
+
+  // Gráfico 1 — Compras mensais
+  if (chHistMens) { chHistMens.destroy(); chHistMens = null; }
+  const ctx1 = document.getElementById('ch-hist-mensal');
+  if (ctx1) chHistMens = new Chart(ctx1, {
+    type: 'bar',
+    data: { labels, datasets: [{ label:'Compras', data:valComp, backgroundColor:'#FF6B35', borderRadius:6 }] },
+    options: {
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>` ${brl(ctx.raw)}`}} },
+      scales: { y: { ticks:{ callback: v => 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v) } } }
+    }
+  });
+
+  // Gráfico 2 — CMV % mensal
+  if (chHistCMV) { chHistCMV.destroy(); chHistCMV = null; }
+  const ctx2 = document.getElementById('ch-hist-cmv-pct');
+  if (ctx2) chHistCMV = new Chart(ctx2, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label:'CMV %', data:cmvPct, backgroundColor:cmvPct.map(v => v===null?'#ddd':v<=META_CMV?'#2EC4B6':'#E71D36'), borderRadius:5 },
+      { label:`Meta ${META_CMV}%`, type:'line', data:todosMeses.map(()=>META_CMV),
+        borderColor:'orange', borderWidth:2, borderDash:[5,4], pointRadius:0, fill:false }
+    ]},
+    options: {
+      plugins: { legend:{display:true}, tooltip:{callbacks:{label:ctx=>ctx.datasetIndex===0?` CMV: ${ctx.raw!==null?ctx.raw.toFixed(1)+'%':'—'}`:` Meta: ${META_CMV}%`}} },
+      scales: { y: { min:0, ticks:{callback: v=>v+'%'} } }
+    }
+  });
+
+  // Gráfico 3 — Por tipo (donut)
+  if (chHistTipo) { chHistTipo.destroy(); chHistTipo = null; }
+  const byTipo = _grpBy(fil, 'tipo', 'valor');
+  const tks    = Object.keys(byTipo).filter(Boolean).sort((a,b) => byTipo[b]-byTipo[a]);
+  const ctx3   = document.getElementById('ch-hist-tipo');
+  if (ctx3 && tks.length) chHistTipo = new Chart(ctx3, {
+    type: 'doughnut',
+    data: { labels:tks, datasets:[{ data:tks.map(k=>byTipo[k]), backgroundColor:CORES_GRAFICO }] },
+    options: { plugins: { legend:{position:'bottom'}, tooltip:{callbacks:{label:ctx=>` ${brl(ctx.raw)}`}} } }
+  });
+
+  // Tabela mensal
+  document.getElementById('tb-hist-cmv').innerHTML = [...todosMeses].reverse().map(m => {
+    const comp = byCompMes[m]||0;
+    const fat  = byFatMes[m]||0;
+    const pct  = fat > 0 ? (comp/fat*100) : null;
+    return `<tr>
+      <td><strong>${_labelMes(m)}</strong></td>
+      <td>${brl(comp)}</td>
+      <td>${fat ? brl(fat) : '<span class="text-muted">—</span>'}</td>
+      <td>${pct!==null?`<span class="badge ${pct<=META_CMV?'bg-success':'bg-danger'}">${pct.toFixed(1)}%</span>`:'<span class="text-muted">Sem faturamento</span>'}</td>
+      <td>${pct!==null?(pct<=META_CMV?'<span class="text-success">✅ Dentro da meta</span>':'<span class="text-danger">⚠️ Acima da meta</span>'):'—'}</td>
+    </tr>`;
+  }).join('');
 }
