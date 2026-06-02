@@ -58,12 +58,17 @@ ALTER TABLE cmp_recebimentos      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cmp_recebimento_itens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cmp_contas_pagar      ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "auth_only" ON cmp_recebimentos
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_only" ON cmp_recebimento_itens
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "auth_only" ON cmp_contas_pagar
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='cmp_recebimentos'      AND policyname='auth_only') THEN
+    CREATE POLICY "auth_only" ON cmp_recebimentos      FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='cmp_recebimento_itens' AND policyname='auth_only') THEN
+    CREATE POLICY "auth_only" ON cmp_recebimento_itens FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='cmp_contas_pagar'      AND policyname='auth_only') THEN
+    CREATE POLICY "auth_only" ON cmp_contas_pagar      FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 -- Índices
 CREATE INDEX IF NOT EXISTS idx_cmp_receb_pedido ON cmp_recebimentos (pedido_num);
