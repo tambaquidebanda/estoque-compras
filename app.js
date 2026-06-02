@@ -587,17 +587,8 @@ function acProd(val) {
   if (!val) { lista.classList.remove('aberta'); return; }
   const q = val.toLowerCase();
 
-  // Busca no catálogo de produtos (est_produtos) + histórico de compras
-  const doCatalogo = cProdutosFT.filter(p => p.nome.toLowerCase().includes(q));
-  const doHistorico = cProd.filter(p =>
-    p.nome.toLowerCase().includes(q) &&
-    !doCatalogo.some(c => c.nome.toLowerCase() === p.nome.toLowerCase())
-  );
-
-  const hits = [
-    ...doCatalogo.map(p => ({ nome: p.nome, un: p.unidade_uso || '', cat: p.categoria || '' })),
-    ...doHistorico.map(p => ({ nome: p.nome, un: p.unidade_med || '', cat: p.categoria || '' })),
-  ].slice(0, 10);
+  // Busca apenas nos 347 produtos de compra da planilha categorizada
+  const hits = PRODUTOS_COMPRA.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 10);
 
   if (!hits.length) { lista.classList.remove('aberta'); return; }
 
@@ -610,12 +601,25 @@ function acProd(val) {
 function selecionarProd(nome, un, cat) {
   document.getElementById('c-prod').value = nome;
 
-  // Busca categoria e unidade do catálogo est_produtos (tem prioridade)
-  const prodCat = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  // Busca unidade da lista de compra (prioridade) ou catálogo
+  const prodLista = PRODUTOS_COMPRA.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  const prodCat   = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
   const catFinal = (prodCat?.categoria) || cat;
-  const unFinal  = (prodCat?.unidade_uso) || un;
+  // Unidade: lista de compra tem prioridade, depois catálogo, depois parâmetro
+  const unFinal  = prodLista?.un || prodCat?.unidade_uso || un;
+  const catFinal = prodLista?.cat || prodCat?.categoria || cat;
 
-  if (unFinal) document.getElementById('c-un').value = unFinal;
+  const unEl = document.getElementById('c-un');
+  if (unFinal && unEl) {
+    // Adiciona a opção se não existir e bloqueia o campo
+    if (![...unEl.options].some(o => o.value === unFinal)) {
+      unEl.add(new Option(unFinal, unFinal));
+    }
+    unEl.value = unFinal;
+    unEl.style.pointerEvents = 'none';
+    unEl.style.opacity = '0.7';
+    unEl.title = 'Unidade definida pelo produto';
+  }
   if (catFinal) {
     const sel = document.getElementById('c-cat');
     if ([...sel.options].some(o => o.value === catFinal)) sel.value = catFinal;
@@ -710,6 +714,8 @@ async function salvarCompra(e) {
   document.getElementById('c-custo').value  = '';
   document.getElementById('c-qtd').value    = '1';
   document.getElementById('c-obs').value    = '';
+  const unEl = document.getElementById('c-un');
+  if (unEl) { unEl.style.pointerEvents = ''; unEl.style.opacity = ''; unEl.title = ''; }
   document.getElementById('c-total-show').textContent = 'R$ 0,00';
   document.getElementById('bloco-estoque').style.display = 'none';
   document.getElementById('c-prod').focus();
