@@ -26,18 +26,13 @@ let ftFichasCache  = []; // fichas carregadas
 // INIT
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  const url = localStorage.getItem('gc_url');
-  const key = localStorage.getItem('gc_key');
-
-  if (!url || !key) { mostrarTela('config'); return; }
-
   try {
-    sb = supabase.createClient(url, key);
+    sb = supabase.createClient(SB_URL, SB_KEY);
     const { data: { session } } = await sb.auth.getSession();
     if (session) { user = session.user; entrarNoSistema(); }
     else          { mostrarTela('login'); }
   } catch {
-    mostrarTela('config');
+    mostrarTela('login');
   }
 });
 
@@ -91,9 +86,7 @@ async function fazerLogin() {
     erro.classList.remove('d-none'); return;
   }
 
-  const url = localStorage.getItem('gc_url');
-  const key = localStorage.getItem('gc_key');
-  sb = supabase.createClient(url, key);
+  sb = supabase.createClient(SB_URL, SB_KEY);
 
   const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
   if (error) {
