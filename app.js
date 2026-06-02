@@ -1074,12 +1074,13 @@ async function excluirCad(tabela, id, tipo) {
 // FICHAS TÉCNICAS
 // ═══════════════════════════════════════════════════════════════
 
-async function carregarProdutosFT() {
-  if (cProdutosFT.length) return;
+async function carregarProdutosFT(forcar = false) {
+  if (cProdutosFT.length && !forcar) return;
   const { data } = await sb.from('est_produtos')
     .select('id,nome,tipo,categoria,unidade_uso,custo_uso,preco_venda')
     .eq('ativo', true)
-    .order('nome');
+    .order('nome')
+    .limit(2000);
   cProdutosFT = data || [];
 }
 
@@ -1088,9 +1089,20 @@ async function carregarFichas() {
 
   const busca  = (document.getElementById('ft-busca')?.value  || '').toLowerCase();
   const tipo   = document.getElementById('ft-tipo')?.value   || '';
+  const cat    = document.getElementById('ft-cat')?.value    || '';
   const status = document.getElementById('ft-status')?.value ?? '';
 
-  // Load fichas with product info
+  // Popula categorias no select (só na primeira vez ou quando vazio)
+  const selCat = document.getElementById('ft-cat');
+  if (selCat && selCat.options.length <= 1) {
+    const cats = [...new Set(cProdutosFT.map(p => p.categoria).filter(Boolean))].sort();
+    cats.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      selCat.appendChild(o);
+    });
+  }
+
   const { data: fichas } = await sb.from('est_fichas_tecnicas')
     .select('id,produto_id,rendimento,unidade_rendimento,custo_total,custo_por_porcao,ativo')
     .eq('ativo', true);
@@ -1102,8 +1114,8 @@ async function carregarFichas() {
   let prods = [...cProdutosFT];
 
   if (tipo)   prods = prods.filter(p => p.tipo === tipo);
+  if (cat)    prods = prods.filter(p => p.categoria === cat);
   if (busca)  prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
-
   if (status === 'com') prods = prods.filter(p => fichaByProd[p.id]);
   if (status === 'sem') prods = prods.filter(p => !fichaByProd[p.id]);
 
@@ -1123,7 +1135,7 @@ async function carregarFichas() {
       ? ((p.preco_venda - f.custo_por_porcao) / p.preco_venda * 100)
       : null;
 
-    return `<tr>
+    return `<tr onclick="abrirModalFicha('${p.id}','${f ? f.id : ''}')">
       <td class="fw-semibold">${esc(p.nome)}</td>
       <td><span class="badge-tipo badge-${p.tipo.toLowerCase()}">${p.tipo}</span></td>
       <td class="text-muted small">${esc(p.categoria || '')}</td>
@@ -1134,12 +1146,8 @@ async function carregarFichas() {
       <td class="${margem !== null ? (margem >= 60 ? 'text-success fw-bold' : margem >= 40 ? 'text-warning fw-bold' : 'text-danger fw-bold') : ''}">
         ${margem !== null ? pct(margem) : '—'}
       </td>
-      <td>
-        <button class="btn btn-sm btn-primary py-0 px-2"
-          onclick="abrirModalFicha('${p.id}','${f ? f.id : ''}')">
-          ${f ? '<i class="bi bi-pencil"></i> Editar' : '<i class="bi bi-plus"></i> Criar'}
-        </button>
-        ${f ? `<button class="btn-del ms-1" onclick="excluirFicha('${f.id}')" title="Excluir ficha"><i class="bi bi-trash"></i></button>` : ''}
+      <td class="text-end" onclick="event.stopPropagation()">
+        ${f ? `<button class="btn-del" onclick="excluirFicha('${f.id}')" title="Excluir ficha"><i class="bi bi-trash"></i></button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -1173,6 +1181,8 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
         `Tipo: ${p.tipo} | Preço venda: ${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}`;
     }
   }
+
+  document.getElementById('btn-del-ficha').style.display = fichaId ? '' : 'none';
 
   if (fichaId) {
     document.getElementById('modal-ficha-titulo').textContent = 'Editar Ficha Técnica';
@@ -1417,4 +1427,11 @@ async function excluirFicha(fichaId) {
   toast('Ficha excluída.', 'ok');
   ftFichasCache = [];
   carregarFichas();
+}
+
+async function excluirFichaModal() {
+  const fichaId = document.getElementById('ft-ficha-id').value;
+  if (!fichaId) return;
+  bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
+  await excluirFicha(fichaId);
 }

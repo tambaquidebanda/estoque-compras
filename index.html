@@ -592,7 +592,7 @@
               <input type="text" class="form-control form-control-sm" id="ft-busca"
                 placeholder="Digite o nome..." oninput="filtrarFichas()">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label fw-semibold small">Tipo</label>
               <select class="form-select form-select-sm" id="ft-tipo" onchange="filtrarFichas()">
                 <option value="">Todos</option>
@@ -603,6 +603,12 @@
                 <option value="SA">SA — Semi-Acabado</option>
                 <option value="MP">MP — Matéria-Prima</option>
                 <option value="MC">MC — Material Consumo</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold small">Categoria</label>
+              <select class="form-select form-select-sm" id="ft-cat" onchange="filtrarFichas()">
+                <option value="">Todas</option>
               </select>
             </div>
             <div class="col-md-3">
@@ -618,12 +624,12 @@
 
         <div class="card-grafico">
           <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-hover" style="cursor:pointer">
               <thead>
                 <tr>
                   <th>Produto</th><th>Tipo</th><th>Categoria</th>
                   <th>Rendimento</th><th>Custo Total</th><th>Custo/Porção</th>
-                  <th>Preço Venda</th><th>Margem</th><th>Ações</th>
+                  <th>Preço Venda</th><th>Margem</th><th></th>
                 </tr>
               </thead>
               <tbody id="tb-fichas">
@@ -733,6 +739,10 @@
         </div>
       </div>
       <div class="modal-footer">
+        <button type="button" class="btn btn-danger me-auto" id="btn-del-ficha"
+          onclick="excluirFichaModal()" style="display:none">
+          <i class="bi bi-trash"></i> Excluir Ficha
+        </button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-primary" onclick="salvarFicha()">
           <i class="bi bi-check-circle"></i> Salvar Ficha
