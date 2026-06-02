@@ -140,6 +140,7 @@ function ir(nome, el) {
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
   if (nome === 'cadastros')   { irCad('fornecedores', document.querySelector('#tabs-cad .nav-link')); }
+  if (nome === 'inventario')  { setHoje('inv-data'); carregarInventario(); }
 }
 
 function irCad(tab, el) {
@@ -1445,4 +1446,194 @@ async function excluirFichaModal() {
   if (!fichaId) return;
   bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
   await excluirFicha(fichaId);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// INVENTÁRIOS
+// ═══════════════════════════════════════════════════════════════
+let _invLocal    = 'Centro';
+let _invProdutos = [];  // produtos filtrados atualmente na tela
+
+function mudarLocalInv(local) {
+  _invLocal = local;
+  document.getElementById('inv-local-badge').textContent = local;
+  document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
+  document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
+  document.getElementById('inv-busca').value = '';
+  renderInventario();
+}
+
+async function carregarInventario() {
+  await carregarProdutosFT();
+  renderInventario();
+  carregarHistoricoInv();
+}
+
+function filtrarInventario() {
+  renderInventario();
+}
+
+function renderInventario() {
+  const busca = (document.getElementById('inv-busca')?.value || '').toLowerCase();
+  let prods = cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo));
+  if (busca) prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
+  _invProdutos = prods;
+
+  const tbody = document.getElementById('lst-inventario');
+  if (!prods.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    calcTotalInv();
+    return;
+  }
+
+  const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
+  tbody.innerHTML = prods.map((p, i) => {
+    const unOpts = uns.map(u => `<option${u === (p.unidade_uso || 'UN') ? ' selected' : ''}>${u}</option>`).join('');
+    const val = p.custo_uso || 0;
+    return `<tr>
+      <td><strong>${esc(p.nome)}</strong></td>
+      <td class="text-muted small">${esc(p.categoria || '')}</td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center inv-campo"
+          id="inv-est-${i}" min="0" step="0.001" value="0"
+          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+      </td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center inv-campo"
+          id="inv-cb-${i}" min="0" step="0.001" value="0"
+          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+      </td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center inv-campo"
+          id="inv-out-${i}" min="0" step="0.001" value="0"
+          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+      </td>
+      <td class="text-center fw-bold" id="inv-tot-${i}">0</td>
+      <td class="text-center">
+        <select class="form-select form-select-sm" id="inv-un-${i}" style="width:75px;margin:auto">${unOpts}</select>
+      </td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-center inv-campo"
+          id="inv-val-${i}" min="0" step="0.01" value="${val.toFixed(2)}"
+          style="width:90px;margin:auto" oninput="calcLinhaInv(${i})">
+      </td>
+      <td class="text-center fw-bold text-success" id="inv-soma-${i}">R$ 0,00</td>
+    </tr>`;
+  }).join('');
+
+  calcTotalInv();
+}
+
+function calcLinhaInv(i) {
+  const est = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
+  const cb  = parseFloat(document.getElementById(`inv-cb-${i}`)?.value)  || 0;
+  const out = parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0;
+  const val = parseFloat(document.getElementById(`inv-val-${i}`)?.value) || 0;
+  const tot  = est + cb + out;
+  const soma = tot * val;
+  const totEl  = document.getElementById(`inv-tot-${i}`);
+  const somaEl = document.getElementById(`inv-soma-${i}`);
+  if (totEl)  totEl.textContent  = tot % 1 === 0 ? String(tot) : tot.toFixed(3).replace(/\.?0+$/, '');
+  if (somaEl) somaEl.textContent = brl(soma);
+  calcTotalInv();
+}
+
+function calcTotalInv() {
+  let total = 0;
+  document.querySelectorAll('[id^="inv-soma-"]').forEach(el => {
+    const v = el.textContent.replace(/[R$\s.]/g, '').replace(',', '.');
+    total += parseFloat(v) || 0;
+  });
+  const fmt = brl(total);
+  const e1 = document.getElementById('inv-total-geral');
+  if (e1) e1.textContent = fmt;
+}
+
+async function salvarInventario() {
+  const data = document.getElementById('inv-data').value;
+  if (!data) { toast('Selecione a data do inventário.', 'erro'); return; }
+  if (!_invProdutos.length) { toast('Nenhum produto na lista.', 'erro'); return; }
+
+  const resp = (document.getElementById('inv-resp').value || '').trim();
+
+  // Monta itens
+  const itens = _invProdutos.map((p, i) => ({
+    produto_id:     p.id,
+    nome:           p.nome,
+    estoque:        parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
+    cozinha_bar:    parseFloat(document.getElementById(`inv-cb-${i}`)?.value)  || 0,
+    outros:         parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0,
+    total:          parseFloat(document.getElementById(`inv-tot-${i}`)?.textContent) || 0,
+    unidade:        document.getElementById(`inv-un-${i}`)?.value || 'UN',
+    valor_unitario: parseFloat(document.getElementById(`inv-val-${i}`)?.value) || 0,
+    soma_total:     (() => {
+      const v = (document.getElementById(`inv-soma-${i}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
+      return parseFloat(v) || 0;
+    })(),
+  }));
+
+  const totalGeral = itens.reduce((s, it) => s + it.soma_total, 0);
+
+  // Número sequencial
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em', { ascending: false }).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
+  const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
+
+  // Salva cabeçalho
+  const { data: inv, error } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _invLocal, responsavel: resp, total_geral: totalGeral
+  }]).select().single();
+
+  if (error) { toast('Erro ao salvar inventário: ' + error.message, 'erro'); return; }
+
+  // Salva itens (só os que têm alguma quantidade > 0, ou todos)
+  const itensComId = itens.map(it => ({ ...it, inventario_id: inv.id }));
+  await sb.from('est_inventario_itens').insert(itensComId);
+
+  toast(`${num_inv} salvo! Total: ${brl(totalGeral)}`, 'ok');
+  carregarHistoricoInv();
+
+  // Limpa os campos
+  document.querySelectorAll('.inv-campo').forEach(el => { if (el.type === 'number' && !el.id.startsWith('inv-val-')) el.value = '0'; });
+  document.querySelectorAll('[id^="inv-tot-"]').forEach(el => el.textContent = '0');
+  document.querySelectorAll('[id^="inv-soma-"]').forEach(el => el.textContent = 'R$ 0,00');
+  calcTotalInv();
+}
+
+async function carregarHistoricoInv() {
+  const fil  = document.getElementById('hist-inv-fil')?.value || '';
+  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,responsavel,total_geral').order('criado_em', { ascending: false });
+  if (fil) query = query.eq('local', fil);
+  const { data: lista } = await query;
+
+  const cont = document.getElementById('lst-historico-inv');
+  if (!cont) return;
+  if (!lista?.length) { cont.innerHTML = '<p class="text-muted">Nenhum inventário salvo ainda.</p>'; return; }
+
+  cont.innerHTML = lista.map(inv => {
+    const localCor = inv.local === 'Centro' ? '#0d6efd' : '#198754';
+    const dataBR   = inv.data.split('-').reverse().join('/');
+    return `<div class="d-flex align-items-center justify-content-between border-bottom py-2">
+      <div>
+        <span class="badge bg-dark me-1">${inv.num_inv}</span>
+        <span class="badge me-2" style="background:${localCor}">${inv.local}</span>
+        <strong>${dataBR}</strong>
+        ${inv.responsavel ? `<span class="text-muted ms-2">— ${inv.responsavel}</span>` : ''}
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <strong class="text-success">${brl(inv.total_geral)}</strong>
+        <button class="btn btn-sm btn-outline-danger" onclick="excluirInventario('${inv.id}')">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function excluirInventario(id) {
+  if (!confirm('Excluir este inventário?')) return;
+  await sb.from('est_inventarios').delete().eq('id', id);
+  toast('Inventário excluído.', 'ok');
+  carregarHistoricoInv();
 }
