@@ -773,8 +773,31 @@
         </div>
       </div>
 
+      <!-- Importar lista de produtos -->
+      <div class="card-grafico mb-3">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <h6 class="mb-0 fw-semibold">📥 Importar Lista de Produtos para este Inventário</h6>
+          <span class="badge" id="imp-inv-local-badge" style="background:#FF6B35">Centro</span>
+        </div>
+        <p class="text-muted small mb-2">Colunas esperadas: <strong>Produto · Unidade · Valor Unitário</strong> — Categoria é opcional. Preenche valores padrão nas linhas correspondentes.</p>
+        <div class="drop-zone" id="drop-inv"
+             onclick="document.getElementById('imp-inv-file').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="this.classList.remove('drag-over');handleDropInvFile(event)"
+             style="cursor:pointer;border:2px dashed #dee2e6;border-radius:10px;padding:1rem;text-align:center">
+          <input type="file" id="imp-inv-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarProdutosInv(event)">
+          <div style="font-size:1.8rem">📂</div>
+          <div class="small mt-1">Clique ou arraste o arquivo Excel / CSV</div>
+        </div>
+        <div id="msg-imp-inv" class="mt-2"></div>
+      </div>
+
       <!-- Tabela de produtos -->
       <div class="card-grafico mb-4">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <span class="text-muted small">Produtos do inventário ativo — <span id="inv-local-badge2" style="color:#FF6B35;font-weight:600">Centro</span></span>
+        </div>
         <div class="table-responsive">
           <table class="table table-hover table-sm align-middle mb-0">
             <thead style="background:#1a1a2e;color:#fff">
@@ -793,6 +816,12 @@
             <tbody id="lst-inventario">
               <tr><td colspan="9" class="text-center text-muted py-4">Carregando...</td></tr>
             </tbody>
+            <tfoot>
+              <tr style="background:#1a1a2e;color:#fff">
+                <td colspan="8" class="text-end fw-bold pe-3">TOTAL GERAL DO INVENTÁRIO</td>
+                <td class="text-center fw-bold" style="color:#06D6A0" id="inv-rodape-total">R$ 0,00</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>

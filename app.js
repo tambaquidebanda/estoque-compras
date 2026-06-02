@@ -1591,7 +1591,11 @@ let _invProdutos = [];  // produtos filtrados atualmente na tela
 
 function mudarLocalInv(local) {
   _invLocal = local;
-  document.getElementById('inv-local-badge').textContent = local;
+  document.getElementById('inv-local-badge').textContent    = local;
+  const e2 = document.getElementById('inv-local-badge2');
+  const e3 = document.getElementById('imp-inv-local-badge');
+  if (e2) e2.textContent = local;
+  if (e3) e3.textContent = local;
   document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('inv-busca').value = '';
@@ -1681,7 +1685,9 @@ function calcTotalInv() {
   });
   const fmt = brl(total);
   const e1 = document.getElementById('inv-total-geral');
+  const e2 = document.getElementById('inv-rodape-total');
   if (e1) e1.textContent = fmt;
+  if (e2) e2.textContent = fmt;
 }
 
 async function salvarInventario() {
@@ -1772,6 +1778,63 @@ async function excluirInventario(id) {
   carregarHistoricoInv();
 }
 
+// Importação de planilha para o inventário
+function handleDropInvFile(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarArqInv(f); }
+function importarProdutosInv(e) { const f = e.target.files[0]; if (f) _processarArqInv(f); }
+
+function _processarArqInv(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = ext === 'csv'
+      ? XLSX.read(e.target.result, { type: 'string' })
+      : XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
+    _processarWbInv(wb);
+  };
+  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function _processarWbInv(wb) {
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true, defval: '' });
+  const msgEl = document.getElementById('msg-imp-inv');
+  if (!rows.length) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-warning small">Planilha vazia.</div>'; return; }
+
+  const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim());
+  const ci = (...ts) => headers.findIndex(h => ts.some(t => h.includes(t)));
+  const col = {
+    nome:    ci('produto','product','nome','item','descriç'),
+    unidade: ci('unidade','unit','un.','und'),
+    valor:   ci('valor','preço','preco','custo','unit'),
+    cat:     ci('categoria','category','categ'),
+  };
+  if (col.nome < 0) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-danger small">Coluna "Produto" não encontrada.</div>';
+    return;
+  }
+
+  let atualizados = 0;
+  rows.forEach(r => {
+    const vals = Object.values(r);
+    const nome = String(vals[col.nome] || '').trim();
+    if (!nome) return;
+    // Encontra o produto na lista carregada
+    const idx = _invProdutos.findIndex(p => p.nome.toLowerCase() === nome.toLowerCase());
+    if (idx < 0) return;
+    const p = _invProdutos[idx];
+    // Atualiza unidade e valor com os da planilha
+    if (col.unidade >= 0 && vals[col.unidade]) p.unidade_uso = String(vals[col.unidade]).trim();
+    if (col.valor >= 0 && vals[col.valor]) p.custo_uso = parseFloat(String(vals[col.valor]).replace(/[R$\s.]/g,'').replace(',','.')) || p.custo_uso;
+    atualizados++;
+  });
+
+  document.getElementById('imp-inv-file').value = '';
+  if (msgEl) {
+    msgEl.innerHTML = `<div class="alert alert-success small">✅ ${atualizados} produto(s) atualizados com unidade e valor da planilha.</div>`;
+    setTimeout(() => { if (msgEl) msgEl.innerHTML = ''; }, 5000);
+  }
+  renderInventario();
+}
 
 
 // ═══════════════════════════════════════════════════════════════
