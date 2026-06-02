@@ -1076,12 +1076,23 @@ async function excluirCad(tabela, id, tipo) {
 
 async function carregarProdutosFT(forcar = false) {
   if (cProdutosFT.length && !forcar) return;
-  const { data } = await sb.from('est_produtos')
-    .select('id,nome,tipo,categoria,unidade_uso,custo_uso,preco_venda')
-    .eq('ativo', true)
-    .order('nome')
-    .limit(2000);
-  cProdutosFT = data || [];
+  const PAGE = 1000;
+  let todos = [], from = 0, continua = true;
+  while (continua) {
+    const { data } = await sb.from('est_produtos')
+      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,preco_venda')
+      .eq('ativo', true)
+      .order('nome')
+      .range(from, from + PAGE - 1);
+    if (data && data.length) {
+      todos = todos.concat(data);
+      continua = data.length === PAGE;
+      from += PAGE;
+    } else {
+      continua = false;
+    }
+  }
+  cProdutosFT = todos;
 }
 
 async function carregarFichas() {
