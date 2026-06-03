@@ -3586,6 +3586,8 @@ async function abrirProduto(prodId) {
   const p = cProdutosFT.find(x => x.id === prodId);
   if (!p) return;
   _prodAtual = p;
+  // Garante que cCat está carregado
+  if (!cCat.length) await carregarCaches();
 
   // Navega para pg-produto
   document.querySelectorAll('.pagina').forEach(s => s.classList.remove('ativa'));
