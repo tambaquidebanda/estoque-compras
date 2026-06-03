@@ -748,89 +748,94 @@
 
       <!-- Fornecedores -->
       <div id="cad-fornecedores" class="tab-cad ativa">
-        <div class="row g-4">
-          <div class="col-md-4">
-            <div class="card-form">
-              <h5>Novo Fornecedor</h5>
-              <p class="text-muted small">Compartilhado com o sistema financeiro.</p>
-              <input type="text" class="form-control mb-3" id="n-forn" placeholder="Nome do fornecedor"
-                onkeydown="if(event.key==='Enter') addFornecedor()">
-              <button class="btn btn-primary w-100" onclick="addFornecedor()">➕ Adicionar</button>
-              <div id="msg-cad-forn" class="mt-2 small"></div>
-            </div>
+        <div class="d-flex justify-content-end mb-3">
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('forn')">
+            <i class="bi bi-plus-circle"></i> Novo Fornecedor
+          </button>
+        </div>
+        <div id="form-cad-forn" class="card-form mb-3 d-none">
+          <p class="text-muted small mb-2">Compartilhado com o sistema financeiro.</p>
+          <div class="d-flex gap-2">
+            <input type="text" class="form-control" id="n-forn" placeholder="Nome do fornecedor"
+              onkeydown="if(event.key==='Enter') addFornecedor()">
+            <button class="btn btn-primary" onclick="addFornecedor()">Adicionar</button>
+            <button class="btn btn-outline-secondary" onclick="toggleFormCad('forn')">Cancelar</button>
           </div>
-          <div class="col-md-8">
-            <div class="card-form">
-              <h5>Cadastrados</h5>
-              <div id="lst-fornecedores" class="lista-cad">Carregando...</div>
-            </div>
-          </div>
+          <div id="msg-cad-forn" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-fornecedores" class="lista-cad">Carregando...</div>
         </div>
       </div>
 
       <!-- Categorias -->
       <div id="cad-categorias" class="tab-cad">
-        <div class="row g-4">
-          <div class="col-md-4">
-            <div class="card-form">
-              <h5>Nova Categoria</h5>
-              <input type="text" class="form-control mb-2" id="n-cat" placeholder="Nome da categoria"
+        <div class="d-flex justify-content-end mb-3">
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('cat')">
+            <i class="bi bi-plus-circle"></i> Nova Categoria
+          </button>
+        </div>
+        <div id="form-cad-cat" class="card-form mb-3 d-none">
+          <div class="row g-2">
+            <div class="col-md-5">
+              <input type="text" class="form-control" id="n-cat" placeholder="Nome da categoria"
                 onkeydown="if(event.key==='Enter') addCategoria()">
-              <input type="text" class="form-control mb-3" id="n-plano"
-                placeholder="Plano de conta (opcional)">
-              <button class="btn btn-primary w-100" onclick="addCategoria()">➕ Adicionar</button>
-              <div id="msg-cad-cat" class="mt-2 small"></div>
+            </div>
+            <div class="col-md-4">
+              <input type="text" class="form-control" id="n-plano" placeholder="Plano de conta (opcional)">
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+              <button class="btn btn-primary w-100" onclick="addCategoria()">Adicionar</button>
+              <button class="btn btn-outline-secondary" onclick="toggleFormCad('cat')">✕</button>
             </div>
           </div>
-          <div class="col-md-8">
-            <div class="card-form">
-              <h5>Cadastradas</h5>
-              <div id="lst-categorias" class="lista-cad">Carregando...</div>
-            </div>
-          </div>
+          <div id="msg-cad-cat" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-categorias" class="lista-cad">Carregando...</div>
         </div>
       </div>
 
       <!-- Tipos / Destinos -->
       <div id="cad-tipos" class="tab-cad">
-        <div class="row g-4">
-          <div class="col-md-4">
-            <div class="card-form">
-              <h5>Novo Destino</h5>
-              <input type="text" class="form-control mb-3" id="n-tipo" placeholder="Ex: Temperos"
-                onkeydown="if(event.key==='Enter') addTipo()">
-              <button class="btn btn-primary w-100" onclick="addTipo()">➕ Adicionar</button>
-              <div id="msg-cad-tipo" class="mt-2 small"></div>
-            </div>
+        <div class="d-flex justify-content-end mb-3">
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('tipo')">
+            <i class="bi bi-plus-circle"></i> Novo Destino
+          </button>
+        </div>
+        <div id="form-cad-tipo" class="card-form mb-3 d-none">
+          <p class="text-muted small mb-2">Padrão: Estivas, Hortifrut, Proteínas, Bebidas, Descartáveis, Limpeza, Outros.</p>
+          <div class="d-flex gap-2">
+            <input type="text" class="form-control" id="n-tipo" placeholder="Ex: Temperos"
+              onkeydown="if(event.key==='Enter') addTipo()">
+            <button class="btn btn-primary" onclick="addTipo()">Adicionar</button>
+            <button class="btn btn-outline-secondary" onclick="toggleFormCad('tipo')">Cancelar</button>
           </div>
-          <div class="col-md-8">
-            <div class="card-form">
-              <h5>Cadastrados</h5>
-              <p class="text-muted small">Padrão: Estivas, Hortifrut, Proteínas, Bebidas, Descartáveis, Limpeza, Outros.</p>
-              <div id="lst-tipos" class="lista-cad">Carregando...</div>
-            </div>
-          </div>
+          <div id="msg-cad-tipo" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-tipos" class="lista-cad">Carregando...</div>
         </div>
       </div>
 
       <!-- Compradores -->
       <div id="cad-compradores" class="tab-cad">
-        <div class="row g-4">
-          <div class="col-md-4">
-            <div class="card-form">
-              <h5>Novo Comprador</h5>
-              <input type="text" class="form-control mb-3" id="n-comp" placeholder="Nome do comprador"
-                onkeydown="if(event.key==='Enter') addComprador()">
-              <button class="btn btn-primary w-100" onclick="addComprador()">➕ Adicionar</button>
-              <div id="msg-cad-comp" class="mt-2 small"></div>
-            </div>
+        <div class="d-flex justify-content-end mb-3">
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('comp')">
+            <i class="bi bi-plus-circle"></i> Novo Comprador
+          </button>
+        </div>
+        <div id="form-cad-comp" class="card-form mb-3 d-none">
+          <div class="d-flex gap-2">
+            <input type="text" class="form-control" id="n-comp" placeholder="Nome do comprador"
+              onkeydown="if(event.key==='Enter') addComprador()">
+            <button class="btn btn-primary" onclick="addComprador()">Adicionar</button>
+            <button class="btn btn-outline-secondary" onclick="toggleFormCad('comp')">Cancelar</button>
           </div>
-          <div class="col-md-8">
-            <div class="card-form">
-              <h5>Cadastrados</h5>
-              <div id="lst-compradores" class="lista-cad">Carregando...</div>
-            </div>
-          </div>
+          <div id="msg-cad-comp" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-compradores" class="lista-cad">Carregando...</div>
         </div>
       </div>
       <!-- Produtos -->

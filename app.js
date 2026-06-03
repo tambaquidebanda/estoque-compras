@@ -195,6 +195,15 @@ function irAba(aba, el) {
 }
 
 
+function toggleFormCad(key) {
+  const el = document.getElementById(`form-cad-${key}`);
+  if (!el) return;
+  el.classList.toggle('d-none');
+  if (!el.classList.contains('d-none')) {
+    el.querySelector('input')?.focus();
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // DATE HELPERS
 // ═══════════════════════════════════════════════════════════════
@@ -1210,6 +1219,7 @@ async function addFornecedor() {
   if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
   document.getElementById('n-forn').value = '';
   msg.innerHTML = '';
+  toggleFormCad('forn');
   toast('Fornecedor adicionado!', 'ok');
   await carregarCaches();
   renderListaCad('fornecedores');
@@ -1225,6 +1235,7 @@ async function addCategoria() {
   document.getElementById('n-cat').value   = '';
   document.getElementById('n-plano').value = '';
   msg.innerHTML = '';
+  toggleFormCad('cat');
   toast('Categoria adicionada!', 'ok');
   await carregarCaches();
   renderListaCad('categorias');
@@ -1238,6 +1249,7 @@ async function addTipo() {
   if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
   document.getElementById('n-tipo').value = '';
   msg.innerHTML = '';
+  toggleFormCad('tipo');
   toast('Destino adicionado!', 'ok');
   await carregarCaches();
   renderListaCad('tipos');
@@ -1251,6 +1263,7 @@ async function addComprador() {
   if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
   document.getElementById('n-comp').value = '';
   msg.innerHTML = '';
+  toggleFormCad('comp');
   toast('Comprador adicionado!', 'ok');
   await carregarCaches();
   renderListaCad('compradores');
