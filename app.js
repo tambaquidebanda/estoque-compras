@@ -3660,6 +3660,18 @@ async function salvarDadosProduto() {
   document.getElementById('prod-titulo').textContent = dados.nome;
 }
 
+async function excluirProduto() {
+  if (!_prodAtual) return;
+  if (!confirm(`Excluir o produto "${_prodAtual.nome}"? Esta ação não pode ser desfeita.`)) return;
+  const { error } = await sb.from('est_produtos').delete().eq('id', _prodAtual.id);
+  if (error) { toast('Não foi possível excluir — pode estar em uso em compras, fichas ou inventários.', 'erro'); return; }
+  toast('Produto excluído.', 'ok');
+  const idx = cProdutosFT.findIndex(p => p.id === _prodAtual.id);
+  if (idx >= 0) cProdutosFT.splice(idx, 1);
+  _prodAtual = null;
+  irCadSb('produtos', null);
+}
+
 async function carregarFichaProduto() {
   if (!_prodAtual) return;
   const cont = document.getElementById('prod-ficha-conteudo');
