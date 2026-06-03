@@ -3660,6 +3660,32 @@ async function salvarDadosProduto() {
   document.getElementById('prod-titulo').textContent = dados.nome;
 }
 
+function abrirModalNovoProduto() {
+  document.getElementById('np-nome').value = '';
+  document.getElementById('np-tipo').value = 'MP';
+  new bootstrap.Modal(document.getElementById('modal-novo-produto')).show();
+  setTimeout(() => document.getElementById('np-nome').focus(), 300);
+}
+
+async function criarProduto() {
+  const nome = document.getElementById('np-nome').value.trim().toUpperCase();
+  const tipo  = document.getElementById('np-tipo').value;
+  if (!nome) { toast('Informe o nome do produto.', 'erro'); return; }
+
+  const { data, error } = await sb.from('est_produtos').insert([{
+    nome, tipo, ativo: true,
+    unidade_comp: 'UN', unidade_uso: 'UN',
+    custo_comp: 0, custo_uso: 0, preco_venda: 0, estoque_min: 0,
+  }]).select('id,nome,tipo,categoria,plano_cat,unidade_comp,unidade_uso,custo_comp,custo_uso,preco_venda,estoque_min,ativo').single();
+
+  if (error) { toast('Erro ao criar produto: ' + error.message, 'erro'); return; }
+
+  cProdutosFT.push(data);
+  bootstrap.Modal.getInstance(document.getElementById('modal-novo-produto')).hide();
+  toast('Produto criado! Preencha os dados.', 'ok');
+  abrirProduto(data.id);
+}
+
 async function excluirProduto() {
   if (!_prodAtual) return;
   if (!confirm(`Excluir o produto "${_prodAtual.nome}"? Esta ação não pode ser desfeita.`)) return;

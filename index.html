@@ -845,8 +845,11 @@
       </div>
       <!-- Produtos -->
       <div id="cad-produtos" class="tab-cad">
-        <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
           <span class="text-muted small">Clique em um produto para editar os dados ou acessar a ficha técnica.</span>
+          <button class="btn btn-primary btn-sm" onclick="abrirModalNovoProduto()">
+            <i class="bi bi-plus-circle"></i> Novo Produto
+          </button>
         </div>
 
         <div class="card-grafico mb-3">
@@ -1579,6 +1582,43 @@
 </div>
 
 <!-- Toast container -->
+<!-- Modal: Novo Produto -->
+<div class="modal fade" id="modal-novo-produto" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Novo Produto</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Nome do Produto</label>
+          <input type="text" class="form-control" id="np-nome" placeholder="Ex: MP ARROZ"
+            onkeydown="if(event.key==='Enter') criarProduto()">
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo</label>
+          <select class="form-select" id="np-tipo">
+            <option value="MP">MP — Matéria-Prima</option>
+            <option value="VENDA">VENDA — Cardápio</option>
+            <option value="PPB">PPB — Bar</option>
+            <option value="PPC">PPC — Cozinha</option>
+            <option value="PPP">PPP — Produção</option>
+            <option value="SA">SA — Semi-Acabado</option>
+            <option value="MC">MC — Material Consumo</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary" onclick="criarProduto()">
+          <i class="bi bi-plus-circle"></i> Criar Produto
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast-box" style="position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;min-width:260px"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
