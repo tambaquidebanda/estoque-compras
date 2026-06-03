@@ -848,12 +848,13 @@
       </div>
       <!-- Grupos de Produto -->
       <div id="cad-grupos" class="tab-cad">
-        <div class="d-flex justify-content-end mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <span class="text-muted small">Grupos usados para classificar os produtos.</span>
           <button class="btn btn-primary btn-sm" onclick="toggleFormCad('grupo')">
             <i class="bi bi-plus-circle"></i> Novo Grupo
           </button>
         </div>
-        <div id="form-cad-grupo" class="card-form mb-3 d-none">
+        <div id="form-cad-grupo" class="card-grafico mb-3 d-none">
           <div class="d-flex gap-2">
             <input type="text" class="form-control" id="n-grupo" placeholder="Nome do grupo (ex: DRINKS, ASSADOS...)"
               onkeydown="if(event.key==='Enter') addGrupo()">
@@ -862,8 +863,18 @@
           </div>
           <div id="msg-cad-grupo" class="mt-2 small"></div>
         </div>
-        <div class="card-form">
-          <div id="lst-grupos" class="lista-cad">Carregando...</div>
+        <div class="card-grafico">
+          <div class="table-responsive">
+            <table class="table table-hover">
+              <thead>
+                <tr><th>Nome do Grupo</th><th style="width:60px"></th></tr>
+              </thead>
+              <tbody id="lst-grupos">
+                <tr><td colspan="2" class="text-center text-muted py-4">Carregando...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="text-muted small mt-2" id="grupos-count"></div>
         </div>
       </div>
 

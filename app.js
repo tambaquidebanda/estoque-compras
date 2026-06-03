@@ -1324,14 +1324,22 @@ async function carregarGrupos() {
 function renderListaGrupos() {
   const lst = document.getElementById('lst-grupos');
   if (!lst) return;
-  if (!cGrupos.length) { lst.innerHTML = '<p class="text-muted small">Nenhum grupo cadastrado.</p>'; return; }
+  if (!cGrupos.length) {
+    lst.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-4">Nenhum grupo cadastrado.</td></tr>';
+    document.getElementById('grupos-count').textContent = '';
+    return;
+  }
   lst.innerHTML = cGrupos.map(g => `
-    <div class="d-flex align-items-center justify-content-between py-1 border-bottom">
-      <span>${esc(g.nome)}</span>
-      <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
-        <i class="bi bi-trash3"></i>
-      </button>
-    </div>`).join('');
+    <tr>
+      <td>${esc(g.nome)}</td>
+      <td class="text-end">
+        <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
+          <i class="bi bi-trash3"></i>
+        </button>
+      </td>
+    </tr>`).join('');
+  const cnt = document.getElementById('grupos-count');
+  if (cnt) cnt.textContent = `${cGrupos.length} grupo(s) cadastrado(s)`;
 }
 
 async function addGrupo() {
