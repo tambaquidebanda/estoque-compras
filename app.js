@@ -1316,7 +1316,7 @@ async function carregarProdutosFT(forcar = false) {
   let todos = [], from = 0, continua = true;
   while (continua) {
     const { data } = await sb.from('est_produtos')
-      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,preco_venda')
+      .select('id,nome,tipo,categoria,plano_cat,unidade_comp,unidade_uso,custo_comp,custo_uso,preco_venda,estoque_min,ativo')
       .eq('ativo', true)
       .order('nome')
       .range(from, from + PAGE - 1);
@@ -3614,8 +3614,15 @@ async function abrirProduto(prodId) {
   document.getElementById('prod-ativo').checked      = p.ativo !== false;
 
   // Categoria select
-  // Grupo do produto — texto livre, independente do plano de contas
+  // Grupo do produto — texto livre
   document.getElementById('prod-cat').value = p.categoria || '';
+
+  // Categoria do plano de contas — select de cmp_categorias
+  const planoCatSel = document.getElementById('prod-plano-cat');
+  if (planoCatSel) {
+    planoCatSel.innerHTML = '<option value="">— Selecione —</option>' +
+      cCat.map(c => `<option value="${esc(c.nome)}"${c.nome === (p.plano_cat || '') ? ' selected' : ''}>${esc(c.nome)}</option>`).join('');
+  }
 
   // Unidades
   const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
@@ -3634,6 +3641,7 @@ async function salvarDadosProduto() {
   const dados = {
     nome:         document.getElementById('prod-nome').value.trim(),
     categoria:    document.getElementById('prod-cat').value,
+    plano_cat:    document.getElementById('prod-plano-cat').value || null,
     unidade_comp: document.getElementById('prod-un-comp').value,
     unidade_uso:  document.getElementById('prod-un-uso').value,
     custo_comp:   parseFloat(document.getElementById('prod-custo-comp').value) || 0,
