@@ -3583,10 +3583,16 @@ function limparFiltrosCompras() {
 let _prodAtual = null;
 
 async function abrirProduto(prodId) {
-  const p = cProdutosFT.find(x => x.id === prodId);
-  if (!p) return;
+  // Busca diretamente do banco para garantir dados frescos
+  const { data: prod } = await sb.from('est_produtos')
+    .select('id,nome,tipo,categoria,plano_cat,unidade_comp,unidade_uso,custo_comp,custo_uso,preco_venda,estoque_min,ativo')
+    .eq('id', prodId).single();
+  if (!prod) return;
+  // Atualiza cache local com o dado fresco
+  const idx = cProdutosFT.findIndex(x => x.id === prodId);
+  if (idx >= 0) cProdutosFT[idx] = { ...cProdutosFT[idx], ...prod };
+  const p = prod;
   _prodAtual = p;
-  // Garante que cCat está carregado
   if (!cCat.length) await carregarCaches();
 
   // Navega para pg-produto
