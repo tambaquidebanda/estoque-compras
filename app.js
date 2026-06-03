@@ -169,15 +169,21 @@ function irCad(tab, el) {
   renderListaCad(tab);
 }
 
+const _nomesCad = {
+  fornecedores: '🏪 Fornecedores', categorias: '📂 Categorias',
+  tipos: '🏷️ Destinos', compradores: '👤 Compradores', produtos: '📦 Produtos'
+};
+
 function irCadSb(tab, el) {
-  // Navega para pg-cadastros e abre a aba correta
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a, .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-cadastros').classList.add('ativa');
   document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
   document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   if (el) el.classList.add('ativo');
-  irCad(tab, document.querySelector(`#tabs-cad .nav-link[onclick*="${tab}"]`));
+  const h1 = document.querySelector('#pg-cadastros h1');
+  if (h1) h1.textContent = _nomesCad[tab] || '⚙️ Cadastros';
+  irCad(tab, null);
 }
 
 function irAba(aba, el) {
