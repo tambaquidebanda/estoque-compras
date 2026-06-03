@@ -3685,24 +3685,29 @@ async function carregarFichaProduto() {
       .select('quantidade,unidade,ingrediente_id')
       .eq('ficha_id', ficha.id);
 
+    let custoTotalCalc = 0;
     const ingHtml = await Promise.all((ings || []).map(async ing => {
       const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
+      const custoUnit = (prod?.custo_uso > 0 ? prod.custo_uso : prod?.custo_comp) || 0;
+      const subtotal = custoUnit * ing.quantidade;
+      custoTotalCalc += subtotal;
       return `<tr>
         <td>${esc(prod?.nome || ing.ingrediente_id)}</td>
         <td><span class="badge-tipo badge-${(prod?.tipo||'').toLowerCase()}">${prod?.tipo||'—'}</span></td>
         <td class="text-center">${ing.quantidade} ${ing.unidade}</td>
-        <td class="text-center">${brl((prod?.custo_uso||0) * ing.quantidade)}</td>
+        <td class="text-center">${brl(subtotal)}</td>
       </tr>`;
     }));
+    const custoPorcaoCalc = ficha.rendimento > 0 ? custoTotalCalc / ficha.rendimento : 0;
 
     html += `<div class="card-grafico mb-3">
       <div class="row g-3">
         <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Rendimento</div>
           <div class="kpi-val">${ficha.rendimento} ${ficha.unidade_rendimento}</div></div></div>
         <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Custo Total</div>
-          <div class="kpi-val">${brl(ficha.custo_total)}</div></div></div>
+          <div class="kpi-val">${brl(custoTotalCalc)}</div></div></div>
         <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Custo/Porção</div>
-          <div class="kpi-val">${brl(ficha.custo_por_porcao)}</div></div></div>
+          <div class="kpi-val">${brl(custoPorcaoCalc)}</div></div></div>
         <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Preço de Venda</div>
           <div class="kpi-val">${brl(_prodAtual.preco_venda||0)}</div></div></div>
       </div>
