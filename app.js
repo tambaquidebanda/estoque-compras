@@ -621,8 +621,6 @@ function selecionarProd(nome, un, cat) {
   // Busca unidade da lista de compra (prioridade) ou catálogo
   const prodLista = PRODUTOS_COMPRA.find(p => p.nome.toLowerCase() === nome.toLowerCase());
   const prodCat   = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
-  const catFinal = (prodCat?.categoria) || cat;
-  // Unidade: lista de compra tem prioridade, depois catálogo, depois parâmetro
   const unFinal  = prodLista?.un || prodCat?.unidade_uso || un;
   const catFinal = prodLista?.cat || prodCat?.categoria || cat;
 
