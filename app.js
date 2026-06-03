@@ -3614,12 +3614,8 @@ async function abrirProduto(prodId) {
   document.getElementById('prod-ativo').checked      = p.ativo !== false;
 
   // Categoria select
-  const catSel = document.getElementById('prod-cat');
-  // Inclui categoria atual do produto mesmo se não estiver em cCat
-  const catsOpts = [...cCat.map(c => c.nome)];
-  if (p.categoria && !catsOpts.includes(p.categoria)) catsOpts.push(p.categoria);
-  catSel.innerHTML = '<option value="">— Selecione —</option>' +
-    catsOpts.map(nome => `<option value="${esc(nome)}"${nome === p.categoria ? ' selected' : ''}>${esc(nome)}</option>`).join('');
+  // Grupo do produto — texto livre, independente do plano de contas
+  document.getElementById('prod-cat').value = p.categoria || '';
 
   // Unidades
   const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
