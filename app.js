@@ -137,10 +137,14 @@ function ir(nome, el) {
   document.querySelectorAll('.nav-sb a:not(.nav-em-breve), .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-' + nome).classList.add('ativa');
   if (el) el.classList.add('ativo');
-  // Abre o grupo pai se o item for submenu de Compra
+  // Abre o grupo pai conforme o item
   if (['pedido','compras'].includes(nome)) {
     document.getElementById('nav-grupo-compra')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-compra')?.classList.add('aberto');
+  }
+  if (['cadastros','produto'].includes(nome)) {
+    document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
+    document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
 
   if (nome === 'dashboard')   carregarDashboard();
@@ -163,6 +167,25 @@ function irCad(tab, el) {
   if (el) el.classList.add('active');
   if (tab === 'produtos') { carregarFichas(); return; }
   renderListaCad(tab);
+}
+
+function irCadSb(tab, el) {
+  // Navega para pg-cadastros e abre a aba correta
+  document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
+  document.querySelectorAll('.nav-sb a, .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
+  document.getElementById('pg-cadastros').classList.add('ativa');
+  document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
+  document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
+  if (el) el.classList.add('ativo');
+  irCad(tab, document.querySelector(`#tabs-cad .nav-link[onclick*="${tab}"]`));
+}
+
+function irAba(aba, el) {
+  document.querySelectorAll('#tabs-prod .nav-link').forEach(a => a.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('aba-dados').style.display  = aba === 'dados'  ? '' : 'none';
+  document.getElementById('aba-ficha').style.display  = aba === 'ficha'  ? '' : 'none';
+  if (aba === 'ficha') carregarFichaProduto();
 }
 
 
@@ -1313,7 +1336,7 @@ async function carregarFichas() {
       ? ((p.preco_venda - f.custo_por_porcao) / p.preco_venda * 100)
       : null;
 
-    return `<tr onclick="abrirModalFicha('${p.id}','${f ? f.id : ''}')">
+    return `<tr onclick="abrirProduto('${p.id}')" style="cursor:pointer">
       <td class="fw-semibold">${esc(p.nome)}</td>
       <td><span class="badge-tipo badge-${p.tipo.toLowerCase()}">${p.tipo}</span></td>
       <td class="text-muted small">${esc(p.categoria || '')}</td>
@@ -3505,4 +3528,147 @@ function limparFiltrosCompras() {
   document.getElementById('cps-fim').value = '';
   document.getElementById('cps-forn').value = '';
   carregarCompras();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// DETALHE DO PRODUTO
+// ═══════════════════════════════════════════════════════════════
+let _prodAtual = null;
+
+async function abrirProduto(prodId) {
+  const p = cProdutosFT.find(x => x.id === prodId);
+  if (!p) return;
+  _prodAtual = p;
+
+  // Navega para pg-produto
+  document.querySelectorAll('.pagina').forEach(s => s.classList.remove('ativa'));
+  document.getElementById('pg-produto').classList.add('ativa');
+  document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
+  document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
+
+  // Reseta abas
+  document.querySelectorAll('#tabs-prod .nav-link').forEach(a => a.classList.remove('active'));
+  document.querySelector('#tabs-prod .nav-link')?.classList.add('active');
+  document.getElementById('aba-dados').style.display = '';
+  document.getElementById('aba-ficha').style.display = 'none';
+
+  // Cabeçalho
+  document.getElementById('prod-titulo').textContent = p.nome;
+  document.getElementById('prod-tipo-badge').textContent = p.tipo;
+  document.getElementById('prod-id').value = p.id;
+
+  // Preenche form de dados
+  document.getElementById('prod-nome').value         = p.nome          || '';
+  document.getElementById('prod-tipo').value         = p.tipo          || '';
+  document.getElementById('prod-custo-comp').value   = p.custo_comp    || 0;
+  document.getElementById('prod-custo-uso').value    = p.custo_uso     || 0;
+  document.getElementById('prod-preco-venda').value  = p.preco_venda   || 0;
+  document.getElementById('prod-est-min').value      = p.estoque_min   || 0;
+  document.getElementById('prod-ativo').checked      = p.ativo !== false;
+
+  // Categoria select
+  const catSel = document.getElementById('prod-cat');
+  catSel.innerHTML = '<option value="">— Selecione —</option>' +
+    cCat.map(c => `<option value="${esc(c.nome)}"${c.nome === p.categoria ? ' selected' : ''}>${esc(c.nome)}</option>`).join('');
+
+  // Unidades
+  const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
+  const setUnSel = (id, val) => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = uns.map(u => `<option${u === val ? ' selected' : ''}>${u}</option>`).join('');
+  };
+  setUnSel('prod-un-comp', p.unidade_comp || 'UN');
+  setUnSel('prod-un-uso',  p.unidade_uso  || 'UN');
+}
+
+async function salvarDadosProduto() {
+  const id = document.getElementById('prod-id').value;
+  if (!id) return;
+
+  const dados = {
+    nome:         document.getElementById('prod-nome').value.trim(),
+    categoria:    document.getElementById('prod-cat').value,
+    unidade_comp: document.getElementById('prod-un-comp').value,
+    unidade_uso:  document.getElementById('prod-un-uso').value,
+    custo_comp:   parseFloat(document.getElementById('prod-custo-comp').value) || 0,
+    custo_uso:    parseFloat(document.getElementById('prod-custo-uso').value)  || 0,
+    preco_venda:  parseFloat(document.getElementById('prod-preco-venda').value) || 0,
+    estoque_min:  parseFloat(document.getElementById('prod-est-min').value)    || 0,
+    ativo:        document.getElementById('prod-ativo').checked,
+  };
+
+  const { error } = await sb.from('est_produtos').update(dados).eq('id', id);
+  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
+
+  toast('✅ Produto atualizado com sucesso!', 'ok');
+
+  // Atualiza cache local
+  const idx = cProdutosFT.findIndex(p => p.id === id);
+  if (idx >= 0) cProdutosFT[idx] = { ...cProdutosFT[idx], ...dados };
+  _prodAtual = { ..._prodAtual, ...dados };
+  document.getElementById('prod-titulo').textContent = dados.nome;
+}
+
+async function carregarFichaProduto() {
+  if (!_prodAtual) return;
+  const cont = document.getElementById('prod-ficha-conteudo');
+
+  const { data: fichas } = await sb.from('est_fichas_tecnicas')
+    .select('id,rendimento,unidade_rendimento,custo_total,custo_por_porcao')
+    .eq('produto_id', _prodAtual.id)
+    .eq('ativo', true);
+
+  const ficha = fichas?.[0];
+
+  let html = `<div class="d-flex align-items-center justify-content-between mb-3">
+    <h5 class="mb-0">Ficha Técnica — ${esc(_prodAtual.nome)}</h5>
+    <button class="btn btn-primary btn-sm" onclick="abrirModalFicha('${_prodAtual.id}','${ficha?.id || ''}')">
+      <i class="bi bi-pencil-fill"></i> ${ficha ? 'Editar Ficha' : 'Criar Ficha Técnica'}
+    </button>
+  </div>`;
+
+  if (!ficha) {
+    html += `<div class="alert alert-info small">Este produto ainda não tem ficha técnica. Clique em "Criar Ficha Técnica" para criar.</div>`;
+  } else {
+    const { data: ings } = await sb.from('est_ficha_ingredientes')
+      .select('quantidade,unidade,ingrediente_id')
+      .eq('ficha_id', ficha.id);
+
+    const ingHtml = await Promise.all((ings || []).map(async ing => {
+      const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
+      return `<tr>
+        <td>${esc(prod?.nome || ing.ingrediente_id)}</td>
+        <td><span class="badge-tipo badge-${(prod?.tipo||'').toLowerCase()}">${prod?.tipo||'—'}</span></td>
+        <td class="text-center">${ing.quantidade} ${ing.unidade}</td>
+        <td class="text-center">${brl((prod?.custo_uso||0) * ing.quantidade)}</td>
+      </tr>`;
+    }));
+
+    html += `<div class="card-grafico mb-3">
+      <div class="row g-3">
+        <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Rendimento</div>
+          <div class="kpi-val">${ficha.rendimento} ${ficha.unidade_rendimento}</div></div></div>
+        <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Custo Total</div>
+          <div class="kpi-val">${brl(ficha.custo_total)}</div></div></div>
+        <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Custo/Porção</div>
+          <div class="kpi-val">${brl(ficha.custo_por_porcao)}</div></div></div>
+        <div class="col-md-3"><div class="card-kpi"><div class="kpi-label">Preço de Venda</div>
+          <div class="kpi-val">${brl(_prodAtual.preco_venda||0)}</div></div></div>
+      </div>
+    </div>
+    <div class="card-grafico">
+      <h6 class="mb-3">Ingredientes</h6>
+      <div class="table-responsive">
+        <table class="table table-sm">
+          <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
+            <tr><th>Ingrediente</th><th>Tipo</th><th class="text-center">Quantidade</th><th class="text-center">Subtotal</th></tr>
+          </thead>
+          <tbody>${ingHtml.join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  cont.innerHTML = html;
 }

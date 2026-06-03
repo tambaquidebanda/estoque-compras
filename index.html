@@ -101,9 +101,18 @@
       <a href="#" onclick="ir('historico',this)">
         <i class="bi bi-clock-history"></i> Histórico
       </a>
-      <a href="#" onclick="ir('cadastros',this)">
+      <!-- Grupo CADASTROS -->
+      <div class="nav-grupo-btn" id="nav-grupo-cadastros" onclick="toggleNavGrupo('cadastros')">
         <i class="bi bi-gear-fill"></i> Cadastros
-      </a>
+        <span class="seta">▶</span>
+      </div>
+      <div class="nav-submenu" id="nav-submenu-cadastros">
+        <a href="#" onclick="irCadSb('fornecedores',this)">🏪 Fornecedores</a>
+        <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
+        <a href="#" onclick="irCadSb('tipos',this)">🏷️ Destinos</a>
+        <a href="#" onclick="irCadSb('compradores',this)">👤 Compradores</a>
+        <a href="#" onclick="irCadSb('produtos',this)">📦 Produtos</a>
+      </div>
       <a href="#" onclick="ir('inventario',this)">
         <i class="bi bi-clipboard-check-fill"></i> Inventários
       </a>
@@ -624,6 +633,98 @@
     </section>
 
     <!-- ══════ CADASTROS ══════ -->
+    <!-- ══════ PRODUTO (DETALHE) ══════ -->
+    <section id="pg-produto" class="pagina">
+      <div class="d-flex align-items-center gap-3 mb-4">
+        <button class="btn btn-outline-secondary btn-sm" onclick="irCadSb('produtos',null)">
+          <i class="bi bi-arrow-left"></i> Voltar
+        </button>
+        <h1 class="mb-0" id="prod-titulo">Produto</h1>
+        <span class="badge fs-6" id="prod-tipo-badge" style="background:#6c757d"></span>
+      </div>
+
+      <!-- Abas -->
+      <ul class="nav nav-tabs mb-4" id="tabs-prod">
+        <li class="nav-item">
+          <a class="nav-link active" href="#" onclick="irAba('dados',this)">📋 Dados do Produto</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irAba('ficha',this)">📐 Ficha Técnica</a>
+        </li>
+      </ul>
+
+      <!-- ABA: DADOS -->
+      <div id="aba-dados">
+        <input type="hidden" id="prod-id">
+        <div class="card-form">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Nome do Produto</label>
+              <input type="text" class="form-control" id="prod-nome">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Tipo</label>
+              <input type="text" class="form-control bg-light" id="prod-tipo" readonly>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Categoria</label>
+              <select class="form-select" id="prod-cat"></select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Unidade de Compra</label>
+              <select class="form-select" id="prod-un-comp">
+                <option>UN</option><option>KG</option><option>CX</option>
+                <option>LT</option><option>FD</option><option>PC</option>
+                <option>MT</option><option>DZ</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Unidade de Uso</label>
+              <select class="form-select" id="prod-un-uso">
+                <option>UN</option><option>KG</option><option>CX</option>
+                <option>LT</option><option>FD</option><option>PC</option>
+                <option>MT</option><option>DZ</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Custo de Compra (R$)</label>
+              <input type="number" class="form-control" id="prod-custo-comp" step="0.01" min="0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Custo de Uso (R$)</label>
+              <input type="number" class="form-control" id="prod-custo-uso" step="0.0001" min="0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Preço de Venda (R$)</label>
+              <input type="number" class="form-control" id="prod-preco-venda" step="0.01" min="0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Estoque Mínimo</label>
+              <input type="number" class="form-control" id="prod-est-min" step="0.001" min="0">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="prod-ativo" checked>
+                <label class="form-check-label fw-semibold" for="prod-ativo">Ativo</label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 d-flex gap-2">
+            <button class="btn btn-primary" onclick="salvarDadosProduto()">
+              <i class="bi bi-floppy-fill"></i> Salvar Dados
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ABA: FICHA TÉCNICA -->
+      <div id="aba-ficha" style="display:none">
+        <div id="prod-ficha-conteudo">
+          <p class="text-muted">Carregando ficha técnica...</p>
+        </div>
+      </div>
+    </section>
+
     <section id="pg-cadastros" class="pagina">
       <h1>⚙️ Cadastros</h1>
 
