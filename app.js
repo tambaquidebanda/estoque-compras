@@ -86,17 +86,20 @@ async function fazerLogin() {
     erro.classList.remove('d-none'); return;
   }
 
-  sb = supabase.createClient(SB_URL, SB_KEY);
-
-  const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
-  if (error) {
-    erro.textContent = 'E-mail ou senha incorretos.';
-    erro.classList.remove('d-none'); return;
+  try {
+    if (!sb) sb = supabase.createClient(SB_URL, SB_KEY);
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
+    if (error) {
+      erro.textContent = 'E-mail ou senha incorretos.';
+      erro.classList.remove('d-none'); return;
+    }
+    user = data.user;
+    erro.classList.add('d-none');
+    entrarNoSistema();
+  } catch (e) {
+    erro.textContent = 'Erro de conexão: ' + (e.message || e);
+    erro.classList.remove('d-none');
   }
-
-  user = data.user;
-  erro.classList.add('d-none');
-  entrarNoSistema();
 }
 
 function entrarNoSistema() {
