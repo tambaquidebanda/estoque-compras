@@ -1502,7 +1502,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
             tipo:      prod.tipo,
             quantidade: ing.quantidade,
             unidade:   ing.unidade,
-            custo_uso: prod.custo_uso || 0,
+            custo_uso: (prod.custo_uso > 0 ? prod.custo_uso : prod.custo_comp) || 0,
           });
         }
       }
