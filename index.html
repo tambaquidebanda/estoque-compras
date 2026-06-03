@@ -111,6 +111,7 @@
         <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
         <a href="#" onclick="irCadSb('tipos',this)">🏷️ Destinos</a>
         <a href="#" onclick="irCadSb('compradores',this)">👤 Compradores</a>
+        <a href="#" onclick="irCadSb('grupos',this)">🗂️ Grupos de Produto</a>
         <a href="#" onclick="irCadSb('produtos',this)">📦 Produtos</a>
       </div>
       <a href="#" onclick="ir('inventario',this)">
@@ -666,7 +667,9 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Grupo do Produto</label>
-              <input type="text" class="form-control" id="prod-cat" placeholder="Ex: DRINKS, ASSADOS...">
+              <select class="form-select" id="prod-cat">
+                <option value="">— Selecione —</option>
+              </select>
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Categoria (Plano de Contas)</label>
@@ -843,6 +846,27 @@
           <div id="lst-compradores" class="lista-cad">Carregando...</div>
         </div>
       </div>
+      <!-- Grupos de Produto -->
+      <div id="cad-grupos" class="tab-cad">
+        <div class="d-flex justify-content-end mb-3">
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('grupo')">
+            <i class="bi bi-plus-circle"></i> Novo Grupo
+          </button>
+        </div>
+        <div id="form-cad-grupo" class="card-form mb-3 d-none">
+          <div class="d-flex gap-2">
+            <input type="text" class="form-control" id="n-grupo" placeholder="Nome do grupo (ex: DRINKS, ASSADOS...)"
+              onkeydown="if(event.key==='Enter') addGrupo()">
+            <button class="btn btn-primary" onclick="addGrupo()">Adicionar</button>
+            <button class="btn btn-outline-secondary" onclick="toggleFormCad('grupo')">Cancelar</button>
+          </div>
+          <div id="msg-cad-grupo" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-grupos" class="lista-cad">Carregando...</div>
+        </div>
+      </div>
+
       <!-- Produtos -->
       <div id="cad-produtos" class="tab-cad">
         <div class="d-flex justify-content-between align-items-center mb-3">

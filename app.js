@@ -7,11 +7,12 @@ let sb   = null;   // supabase client
 let user = null;   // logged-in user
 
 // caches
-let cForn = [];    // fornecedores
-let cCat  = [];    // categorias
-let cTipo = [];    // tipos_produto
-let cComp = [];    // compradores
-let cProd = [];    // product names learned from past purchases
+let cForn   = [];    // fornecedores
+let cCat    = [];    // categorias
+let cTipo   = [];    // tipos_produto
+let cComp   = [];    // compradores
+let cProd   = [];    // product names learned from past purchases
+let cGrupos = [];    // grupos de produto (est_grupos_produto)
 
 // chart instances (destroyed before re-render)
 let chMensal, chCmvMensal, chFornDash, chCatDash, chCmvEvolucao;
@@ -166,12 +167,14 @@ function irCad(tab, el) {
   document.getElementById('cad-' + tab).classList.add('ativa');
   if (el) el.classList.add('active');
   if (tab === 'produtos') { carregarFichas(); return; }
+  if (tab === 'grupos')   { carregarGrupos(); return; }
   renderListaCad(tab);
 }
 
 const _nomesCad = {
   fornecedores: '🏪 Fornecedores', categorias: '📂 Categorias',
-  tipos: '🏷️ Destinos', compradores: '👤 Compradores', produtos: '📦 Produtos'
+  tipos: '🏷️ Destinos', compradores: '👤 Compradores',
+  grupos: '🗂️ Grupos de Produto', produtos: '📦 Produtos'
 };
 
 function irCadSb(tab, el) {
@@ -286,18 +289,20 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, comp, hist] = await Promise.all([
+  const [f, cat, tip, comp, hist, grp] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
     sb.from('cmp_categorias').select('id,nome,plano_conta').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria').order('produto'),
+    sb.from('est_grupos_produto').select('id,nome').order('nome'),
   ]);
 
-  cForn = f.data    || [];
-  cCat  = cat.data  || [];
-  cTipo = tip.data  || [];
-  cComp = comp.data || [];
+  cForn   = f.data    || [];
+  cCat    = cat.data  || [];
+  cTipo   = tip.data  || [];
+  cComp   = comp.data || [];
+  cGrupos = grp.data  || [];
 
   // Build unique product list from past purchases (self-learning autocomplete)
   const seen = new Set();
@@ -1305,6 +1310,57 @@ async function excluirCad(tabela, id, tipo) {
   renderListaCad(tipo);
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// GRUPOS DE PRODUTO
+// ═══════════════════════════════════════════════════════════════
+
+async function carregarGrupos() {
+  const { data } = await sb.from('est_grupos_produto').select('id,nome').order('nome');
+  cGrupos = data || [];
+  renderListaGrupos();
+}
+
+function renderListaGrupos() {
+  const lst = document.getElementById('lst-grupos');
+  if (!lst) return;
+  if (!cGrupos.length) { lst.innerHTML = '<p class="text-muted small">Nenhum grupo cadastrado.</p>'; return; }
+  lst.innerHTML = cGrupos.map(g => `
+    <div class="d-flex align-items-center justify-content-between py-1 border-bottom">
+      <span>${esc(g.nome)}</span>
+      <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
+        <i class="bi bi-trash3"></i>
+      </button>
+    </div>`).join('');
+}
+
+async function addGrupo() {
+  const nome = (document.getElementById('n-grupo').value || '').trim().toUpperCase();
+  const msg  = document.getElementById('msg-cad-grupo');
+  if (!nome) { msg.innerHTML = '<span class="text-danger">Informe o nome do grupo.</span>'; return; }
+  const { error } = await sb.from('est_grupos_produto').insert([{ nome }]);
+  if (error) { msg.innerHTML = `<span class="text-danger">Erro: ${error.message}</span>`; return; }
+  msg.innerHTML = '';
+  document.getElementById('n-grupo').value = '';
+  toggleFormCad('grupo');
+  toast('Grupo adicionado!', 'ok');
+  await carregarGrupos();
+}
+
+async function excluirGrupo(id, nome) {
+  if (!confirm(`Excluir o grupo "${nome}"?`)) return;
+  const { error } = await sb.from('est_grupos_produto').delete().eq('id', id);
+  if (error) { toast('Não foi possível excluir.', 'erro'); return; }
+  toast('Grupo excluído.', 'ok');
+  await carregarGrupos();
+}
+
+function preencherSelectGrupo(valorAtual) {
+  const sel = document.getElementById('prod-cat');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Selecione —</option>' +
+    cGrupos.map(g => `<option value="${esc(g.nome)}"${g.nome === valorAtual ? ' selected' : ''}>${esc(g.nome)}</option>`).join('');
+}
 
 // ═══════════════════════════════════════════════════════════════
 // FICHAS TÉCNICAS
@@ -3582,7 +3638,7 @@ async function abrirProduto(prodId) {
   if (idx >= 0) cProdutosFT[idx] = { ...cProdutosFT[idx], ...prod };
   const p = prod;
   _prodAtual = p;
-  if (!cCat.length) await carregarCaches();
+  if (!cCat.length || !cGrupos.length) await carregarCaches();
 
   // Navega para pg-produto
   document.querySelectorAll('.pagina').forEach(s => s.classList.remove('ativa'));
@@ -3613,6 +3669,9 @@ async function abrirProduto(prodId) {
   // Categoria select
   // Grupo do produto — texto livre
   document.getElementById('prod-cat').value = p.categoria || '';
+
+  // Grupo do produto — select de est_grupos_produto
+  preencherSelectGrupo(p.categoria || '');
 
   // Categoria do plano de contas — select de cmp_categorias
   const planoCatSel = document.getElementById('prod-plano-cat');
