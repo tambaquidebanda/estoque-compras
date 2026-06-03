@@ -1372,30 +1372,19 @@ async function carregarFichas() {
   const tbody = document.getElementById('tb-fichas');
 
   if (!prods.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
     return;
   }
 
   tbody.innerHTML = prods.map(p => {
-    const f      = fichaByProd[p.id];
-    const margem = f && p.preco_venda > 0
-      ? ((p.preco_venda - f.custo_por_porcao) / p.preco_venda * 100)
-      : null;
-
     return `<tr onclick="abrirProduto('${p.id}')" style="cursor:pointer">
       <td class="fw-semibold">${esc(p.nome)}</td>
       <td><span class="badge-tipo badge-${p.tipo.toLowerCase()}">${p.tipo}</span></td>
       <td class="text-muted small">${esc(p.categoria || '')}</td>
-      <td>${f ? `${Number(f.rendimento).toLocaleString('pt-BR')} ${esc(f.unidade_rendimento)}` : '—'}</td>
-      <td>${f ? brl(f.custo_total) : '—'}</td>
-      <td>${f ? brl(f.custo_por_porcao) : '—'}</td>
-      <td>${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}</td>
-      <td class="${margem !== null ? (margem >= 60 ? 'text-success fw-bold' : margem >= 40 ? 'text-warning fw-bold' : 'text-danger fw-bold') : ''}">
-        ${margem !== null ? pct(margem) : '—'}
-      </td>
-      <td class="text-end" onclick="event.stopPropagation()">
-        ${f ? `<button class="btn-del" onclick="excluirFicha('${f.id}')" title="Excluir ficha"><i class="bi bi-trash"></i></button>` : ''}
-      </td>
+      <td class="text-center">${esc(p.unidade_comp || '—')}</td>
+      <td class="text-center">${esc(p.unidade_uso  || '—')}</td>
+      <td class="text-end">${p.custo_comp > 0 ? brl(p.custo_comp) : '—'}</td>
+      <td class="text-end">${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}</td>
     </tr>`;
   }).join('');
 }
