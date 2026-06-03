@@ -3615,8 +3615,11 @@ async function abrirProduto(prodId) {
 
   // Categoria select
   const catSel = document.getElementById('prod-cat');
+  // Inclui categoria atual do produto mesmo se não estiver em cCat
+  const catsOpts = [...cCat.map(c => c.nome)];
+  if (p.categoria && !catsOpts.includes(p.categoria)) catsOpts.push(p.categoria);
   catSel.innerHTML = '<option value="">— Selecione —</option>' +
-    cCat.map(c => `<option value="${esc(c.nome)}"${c.nome === p.categoria ? ' selected' : ''}>${esc(c.nome)}</option>`).join('');
+    catsOpts.map(nome => `<option value="${esc(nome)}"${nome === p.categoria ? ' selected' : ''}>${esc(nome)}</option>`).join('');
 
   // Unidades
   const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
