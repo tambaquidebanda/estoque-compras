@@ -678,6 +678,12 @@ function selecionarProd(nome, un, cat) {
     if ([...sel.options].some(o => o.value === catFinal)) sel.value = catFinal;
   }
   fechaAC('ac-prod');
+  // Preenche valor do produto no campo custo (formatado)
+  if (prodCat?.custo_uso > 0) {
+    const custoFmt = prodCat.custo_uso.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('c-custo').value = custoFmt;
+    calcTot();
+  }
   // Bloco de estoque mínimo
   const prod = prodCat;
   const blocoEl = document.getElementById('bloco-estoque');
@@ -710,9 +716,29 @@ function fechaAC(id) {
   document.getElementById(id).classList.remove('aberta');
 }
 
+function mascaraMoeda(el) {
+  let v = el.value;
+  const temVirgula = v.includes(',');
+  // Remove tudo que não for dígito ou vírgula
+  v = v.replace(/[^\d,]/g, '');
+  const partes = v.split(',');
+  // Parte inteira: formata com pontos de milhar
+  const intRaw = partes[0].replace(/\D/g, '');
+  const intFmt = intRaw ? parseInt(intRaw, 10).toLocaleString('pt-BR') : '';
+  // Parte decimal: até 2 dígitos
+  const dec = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 2) : null;
+  el.value = dec !== null ? `${intFmt},${dec}` : intFmt;
+  calcTot();
+}
+
+function _parseCusto() {
+  const v = document.getElementById('c-custo').value || '0';
+  return parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
+}
+
 function calcTot() {
-  const custo = parseFloat(document.getElementById('c-custo').value) || 0;
-  const qtd   = parseFloat(document.getElementById('c-qtd').value)   || 0;
+  const custo = _parseCusto();
+  const qtd   = parseFloat(document.getElementById('c-qtd').value) || 0;
   document.getElementById('c-total-show').textContent = brl(custo * qtd);
 }
 
@@ -726,7 +752,7 @@ async function salvarCompra(e) {
   const cat      = document.getElementById('c-cat').value;
   const tipo     = document.getElementById('c-tipo').value;
   const un       = document.getElementById('c-un').value;
-  const custo    = parseFloat(document.getElementById('c-custo').value);
+  const custo    = _parseCusto();
   const qtd      = parseFloat(document.getElementById('c-qtd').value);
   const comp     = document.getElementById('c-comp').value;
   const uso      = document.getElementById('c-uso').value;
@@ -765,6 +791,7 @@ async function salvarCompra(e) {
 
   document.getElementById('c-prod').value   = '';
   document.getElementById('c-custo').value  = '';
+  document.getElementById('c-total-show').textContent = 'R$ 0,00';
   document.getElementById('c-qtd').value    = '1';
   document.getElementById('c-obs').value    = '';
   const unEl = document.getElementById('c-un');

@@ -274,10 +274,7 @@
               <label class="form-label">📂 Categoria</label>
               <select class="form-select" id="c-cat" required></select>
             </div>
-            <div class="col-md-4">
-              <label class="form-label">🏷️ Destino do Produto</label>
-              <select class="form-select" id="c-tipo" required></select>
-            </div>
+            <input type="hidden" id="c-tipo" value="Loja">
             <div class="col-md-4">
               <label class="form-label">⚖️ Unidade de Medida</label>
               <select class="form-select" id="c-un">
@@ -286,15 +283,16 @@
                 <option>MT</option><option>DZ</option>
               </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label">💵 Custo Unitário (R$)</label>
-              <input type="number" class="form-control" id="c-custo"
-                step="0.01" min="0" placeholder="0,00" required oninput="calcTot()">
+              <input type="text" class="form-control" id="c-custo"
+                placeholder="0,00" required oninput="mascaraMoeda(this);calcTot()"
+                inputmode="decimal">
             </div>
             <div class="col-md-3">
               <label class="form-label">🔢 Quantidade</label>
               <input type="number" class="form-control" id="c-qtd"
-                step="0.001" min="0" value="1" required oninput="calcTot()">
+                step="1" min="0" value="1" required oninput="calcTot()">
             </div>
             <div class="col-md-3 d-flex flex-column">
               <label class="form-label">🧮 Total</label>
