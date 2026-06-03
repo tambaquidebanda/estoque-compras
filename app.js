@@ -1488,21 +1488,28 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
     document.getElementById('modal-ficha-titulo').textContent = 'Editar Ficha Técnica';
     // Load existing ingredients
     const { data: ings } = await sb.from('est_ficha_ingredientes')
-      .select('id,ingrediente_id,quantidade,unidade')
+      .select('id,ingrediente_id,quantidade,unidade,perda,fator_conversao')
       .eq('ficha_id', fichaId);
 
     if (ings) {
       for (const ing of ings) {
         const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
         if (prod) {
+          const perda        = ing.perda || 0;
+          const fator        = ing.fator_conversao || 1;
+          const custoBase    = prod.custo_comp || prod.custo_uso || 0;
+          const rendimento   = 1 - (perda / 100);
+          const custoEfetivo = rendimento > 0 ? (custoBase / fator) / rendimento : 0;
           ftIngredientes.push({
-            id:        ing.id,
-            prod_id:   ing.ingrediente_id,
-            nome:      prod.nome,
-            tipo:      prod.tipo,
-            quantidade: ing.quantidade,
-            unidade:   ing.unidade,
-            custo_uso: (prod.custo_uso > 0 ? prod.custo_uso : prod.custo_comp) || 0,
+            id:             ing.id,
+            prod_id:        ing.ingrediente_id,
+            nome:           prod.nome,
+            tipo:           prod.tipo,
+            quantidade:     ing.quantidade,
+            unidade:        ing.unidade,
+            perda,
+            fator_conversao: fator,
+            custo_uso:      custoEfetivo,
           });
         }
       }
@@ -1578,19 +1585,26 @@ function acIngrediente(val) {
 function selecionarIngrediente(id) {
   const p = cProdutosFT.find(x => x.id === id);
   if (!p) return;
-  document.getElementById('ft-ing-id').value   = id;
-  document.getElementById('ft-ing-nome').value = p.nome;
-  document.getElementById('ft-ing-un').value   = p.unidade_uso || 'UN';
+  document.getElementById('ft-ing-id').value    = id;
+  document.getElementById('ft-ing-nome').value  = p.nome;
+  document.getElementById('ft-ing-un').value    = p.unidade_uso || 'UN';
+  document.getElementById('ft-ing-perda').value = '0';
+  document.getElementById('ft-ing-fator').value = '1';
+  const ucmp = p.unidade_comp || 'UN';
+  const uuso = p.unidade_uso  || 'UN';
   document.getElementById('ft-ing-info').textContent =
-    `Custo: ${brl(p.custo_uso)} / ${p.unidade_uso || 'UN'}`;
+    `Compra: ${ucmp} | Uso: ${uuso} | Custo: ${brl(p.custo_comp || 0)}/${ucmp}`;
+  document.getElementById('ft-ing-fator-label').textContent = `1 ${ucmp} → ${uuso}`;
   fechaAC('ac-ft-ing');
   document.getElementById('ft-ing-qtd').focus();
 }
 
 function addIngrediente() {
-  const id  = document.getElementById('ft-ing-id').value;
-  const qtd = parseFloat(document.getElementById('ft-ing-qtd').value);
-  const un  = document.getElementById('ft-ing-un').value.trim();
+  const id    = document.getElementById('ft-ing-id').value;
+  const qtd   = parseFloat(document.getElementById('ft-ing-qtd').value);
+  const un    = document.getElementById('ft-ing-un').value.trim();
+  const perda = parseFloat(document.getElementById('ft-ing-perda').value) || 0;
+  const fator = parseFloat(document.getElementById('ft-ing-fator').value) || 1;
 
   if (!id || !qtd || qtd <= 0) {
     toast('Selecione um ingrediente e informe a quantidade.', 'erro'); return;
@@ -1599,24 +1613,31 @@ function addIngrediente() {
   const prod = cProdutosFT.find(x => x.id === id);
   if (!prod) return;
 
-  // Remove if already exists
+  const custoBase    = prod.custo_comp || prod.custo_uso || 0;
+  const rendimento   = 1 - (perda / 100);
+  const custoEfetivo = rendimento > 0 ? (custoBase / fator) / rendimento : 0;
+
   ftIngredientes = ftIngredientes.filter(i => i.prod_id !== id);
 
   ftIngredientes.push({
-    id:        null,
-    prod_id:   id,
-    nome:      prod.nome,
-    tipo:      prod.tipo,
-    quantidade: qtd,
-    unidade:   un,
-    custo_uso: prod.custo_uso || 0,
+    id:             null,
+    prod_id:        id,
+    nome:           prod.nome,
+    tipo:           prod.tipo,
+    quantidade:     qtd,
+    unidade:        un,
+    perda,
+    fator_conversao: fator,
+    custo_uso:      custoEfetivo,
   });
 
-  // Reset fields
-  document.getElementById('ft-ing-nome').value = '';
-  document.getElementById('ft-ing-id').value   = '';
-  document.getElementById('ft-ing-qtd').value  = '1';
-  document.getElementById('ft-ing-info').textContent = '';
+  document.getElementById('ft-ing-nome').value        = '';
+  document.getElementById('ft-ing-id').value          = '';
+  document.getElementById('ft-ing-qtd').value         = '1';
+  document.getElementById('ft-ing-perda').value       = '0';
+  document.getElementById('ft-ing-fator').value       = '1';
+  document.getElementById('ft-ing-info').textContent  = '';
+  document.getElementById('ft-ing-fator-label').textContent = '';
   document.getElementById('ft-ing-nome').focus();
 
   renderIngredientes();
@@ -1639,12 +1660,14 @@ function renderIngredientes() {
   }
 
   tbody.innerHTML = ftIngredientes.map((ing, idx) => {
-    const subtotal = ing.quantidade * ing.custo_uso;
+    const subtotal  = ing.quantidade * ing.custo_uso;
+    const perdaStr  = ing.perda > 0 ? `${ing.perda}%` : '—';
     return `<tr>
       <td class="fw-semibold">${esc(ing.nome)}</td>
       <td><span class="badge-tipo badge-${ing.tipo.toLowerCase()}">${ing.tipo}</span></td>
       <td>${Number(ing.quantidade).toLocaleString('pt-BR', {maximumFractionDigits:4})}</td>
       <td>${esc(ing.unidade)}</td>
+      <td class="text-muted">${perdaStr}</td>
       <td class="text-muted">${brl(ing.custo_uso)}</td>
       <td class="fw-semibold">${brl(subtotal)}</td>
       <td>
@@ -1706,10 +1729,12 @@ async function salvarFicha() {
 
   // Insert ingredients
   const ings = ftIngredientes.map(i => ({
-    ficha_id:       targetFichaId,
-    ingrediente_id: i.prod_id,
-    quantidade:     i.quantidade,
-    unidade:        i.unidade,
+    ficha_id:        targetFichaId,
+    ingrediente_id:  i.prod_id,
+    quantidade:      i.quantidade,
+    unidade:         i.unidade,
+    perda:           i.perda || 0,
+    fator_conversao: i.fator_conversao || 1,
   }));
 
   const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
