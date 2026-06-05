@@ -2846,18 +2846,27 @@ async function renderPendentes() {
     return;
   }
 
-  // Verifica quais pedidos já têm conta gerada no financeiro
+  // Verifica contas e rascunhos existentes para cada pedido
   const numeros = lista.map(g => g.pedido_num);
-  const { data: contasExist } = await sb.from('cmp_contas_pagar')
-    .select('pedido_num,lancamento_id').in('pedido_num', numeros);
-  const contaMap = {};
-  (contasExist || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
+  const [{ data: contasExist }, { data: rascunhosExist }] = await Promise.all([
+    sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id').in('pedido_num', numeros),
+    sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
+  ]);
+  const contaMap    = {};
+  const rascunhoSet = new Set();
+  (contasExist   || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
+  (rascunhosExist || []).forEach(r => rascunhoSet.add(r.pedido_num));
 
   tbody.innerHTML = lista.map(g => {
-    const jaEnviado  = !!contaMap[g.pedido_num];
+    const jaEnviado   = !!contaMap[g.pedido_num];
+    const temRascunho = rascunhoSet.has(g.pedido_num);
     const btnFin = jaEnviado
-      ? `<button class="btn btn-sm btn-outline-success py-0 px-2" disabled title="Conta já gerada no financeiro">
-           <i class="bi bi-check-circle-fill"></i> Financeiro
+      ? `<button class="btn btn-sm btn-outline-success py-0 px-2" disabled title="Conta já enviada ao financeiro">
+           <i class="bi bi-check-circle-fill"></i> Enviado
+         </button>`
+      : temRascunho
+      ? `<button class="btn btn-sm btn-outline-warning py-0 px-2" disabled title="Rascunho aguardando aprovação no financeiro">
+           <i class="bi bi-hourglass-split"></i> Aguardando
          </button>`
       : `<button class="btn btn-sm btn-outline-primary py-0 px-2"
            onclick="abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}','${esc(g.plano_conta||'')}',${g.total})">
@@ -4455,8 +4464,14 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
   };
 
   if (!producao) {
-    // Modo Teste — só mostra aviso
-    toast(`🧪 TESTE: Conta seria gerada — ${brl(valor)} venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
+    // Modo Teste — grava em lancamentos_rascunho para revisão no financeiro
+    const { error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
+      ...dadosLancamento,
+      pedido_num,
+      conta_id: conta_id || null,
+    }]);
+    if (errRasc) { toast('Erro ao salvar rascunho: ' + errRasc.message, 'erro'); return; }
+    toast(`🧪 Rascunho enviado ao financeiro para revisão! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
     return;
   }
 
