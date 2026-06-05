@@ -105,6 +105,16 @@ async function fazerLogin() {
 }
 
 function entrarNoSistema() {
+  // Verifica permissão — bloqueia se sistemas estiver definido e não incluir 'estoque'
+  const sistemas = user?.user_metadata?.sistemas;
+  if (sistemas && !sistemas.includes('estoque')) {
+    sb.auth.signOut();
+    document.getElementById('login-erro').textContent = 'Você não tem acesso ao sistema de Gestão de Compras.';
+    document.getElementById('login-erro').classList.remove('d-none');
+    mostrarTela('login');
+    return;
+  }
+
   sbAdmin = supabase.createClient(SB_URL, SB_SERVICE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
@@ -4019,7 +4029,21 @@ async function carregarUsuarios() {
     const perfil  = isAdmin
       ? '<span class="text-danger fw-bold">Administrador</span>'
       : 'Funcionário';
-    const dt     = new Date(u.created_at).toLocaleDateString('pt-BR');
+    const dt      = new Date(u.created_at).toLocaleDateString('pt-BR');
+    const sistemas = u.user_metadata?.sistemas;
+    const sisBadges = sistemas
+      ? sistemas.map(s => s === 'estoque'
+          ? '<span class="badge bg-primary me-1">Compras</span>'
+          : '<span class="badge bg-success me-1">Financeiro</span>'
+        ).join('')
+      : '<span class="badge bg-secondary">Todos</span>';
+    const metaNome = encodeURIComponent(nome);
+    const btnPerm = !isAdmin
+      ? `<button class="btn btn-sm btn-outline-secondary me-1" title="Permissões"
+           onclick="abrirPermissoes('${u.id}','${esc(u.email)}','${metaNome}',${JSON.stringify(sistemas||null)})">
+           <i class="bi bi-shield-lock"></i>
+         </button>`
+      : '';
     const btnDel = !isAdmin
       ? `<button class="btn btn-sm btn-danger" onclick="excluirUsuario('${u.id}','${esc(u.email)}')">
            <i class="bi bi-trash"></i>
@@ -4029,8 +4053,9 @@ async function carregarUsuarios() {
       <td class="fw-semibold">${esc(nome)}</td>
       <td>${esc(u.email)}</td>
       <td>${perfil}</td>
+      <td>${sisBadges}</td>
       <td>${dt}</td>
-      <td class="text-end">${btnDel}</td>
+      <td class="text-end">${btnPerm}${btnDel}</td>
     </tr>`;
   }).join('');
 }
@@ -4047,10 +4072,19 @@ async function convidarFuncionario() {
     return;
   }
 
+  const sistemas = [];
+  if (document.getElementById('inv-sys-estoque').checked)   sistemas.push('estoque');
+  if (document.getElementById('inv-sys-financeiro').checked) sistemas.push('financeiro');
+  if (!sistemas.length) {
+    msg.textContent = 'Selecione ao menos um sistema.';
+    msg.className   = 'text-danger small mt-2';
+    return;
+  }
+
   const { error } = await sbAdmin.auth.admin.createUser({
     email,
     password: senha,
-    user_metadata: { nome },
+    user_metadata: { nome, sistemas },
     email_confirm: true,
   });
 
@@ -4080,6 +4114,45 @@ async function excluirUsuario(id, email) {
   if (error) { toast(error.message, 'erro'); return; }
   toast('Usuário excluído.', 'ok');
   carregarUsuarios();
+}
+
+function abrirPermissoes(id, email, metaNome, sistemas) {
+  document.getElementById('perm-user-id').value        = id;
+  document.getElementById('perm-user-meta-nome').value = decodeURIComponent(metaNome);
+  document.getElementById('perm-user-nome').textContent = `${decodeURIComponent(metaNome)} (${email})`;
+  document.getElementById('perm-sys-estoque').checked   = !sistemas || sistemas.includes('estoque');
+  document.getElementById('perm-sys-financeiro').checked = !sistemas || sistemas.includes('financeiro');
+  document.getElementById('perm-msg').textContent = '';
+  new bootstrap.Modal(document.getElementById('modal-perm')).show();
+}
+
+async function salvarPermissoes() {
+  const id   = document.getElementById('perm-user-id').value;
+  const nome = document.getElementById('perm-user-meta-nome').value;
+  const msg  = document.getElementById('perm-msg');
+
+  const sistemas = [];
+  if (document.getElementById('perm-sys-estoque').checked)   sistemas.push('estoque');
+  if (document.getElementById('perm-sys-financeiro').checked) sistemas.push('financeiro');
+
+  if (!sistemas.length) {
+    msg.textContent = 'Selecione ao menos um sistema.';
+    msg.className   = 'text-danger small';
+    return;
+  }
+
+  const { error } = await sbAdmin.auth.admin.updateUserById(id, {
+    user_metadata: { nome, sistemas }
+  });
+
+  if (error) { msg.textContent = error.message; msg.className = 'text-danger small'; return; }
+
+  msg.textContent = 'Permissões salvas!';
+  msg.className   = 'text-success small';
+  setTimeout(() => {
+    bootstrap.Modal.getInstance(document.getElementById('modal-perm'))?.hide();
+    carregarUsuarios();
+  }, 1200);
 }
 
 async function alterarMinhaSenha() {
