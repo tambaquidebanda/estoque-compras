@@ -739,10 +739,17 @@ function setMoeda(id, val) {
   const el = document.getElementById(id);
   if (!el) return;
   const n = parseFloat(val) || 0;
-  if (!n) { el.value = ''; return; }
-  let str = n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (str.endsWith(',00')) str = str.slice(0, -3);
-  el.value = str;
+  el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
+
+function moedaFocus(el) {
+  if (el.value.endsWith(',00')) el.value = el.value.slice(0, -3);
+}
+
+function moedaBlur(el) {
+  const v = el.value.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(v) || 0;
+  el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
 function _parseCusto() {

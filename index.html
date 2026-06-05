@@ -287,7 +287,7 @@
             <div class="col-md-4">
               <label class="form-label">💵 Custo Unitário (R$)</label>
               <input type="text" class="form-control" id="c-custo"
-                placeholder="0,00" required oninput="mascaraMoeda(this); calcTot()"
+                placeholder="0,00" required oninput="mascaraMoeda(this); calcTot()" onfocus="moedaFocus(this)" onblur="moedaBlur(this); calcTot()"
                 inputmode="decimal">
             </div>
             <div class="col-md-3">
@@ -448,7 +448,7 @@
               <label class="form-label">💰 Valor do dia (R$)</label>
               <input type="text" class="form-control" id="f-valor"
                 placeholder="0,00" inputmode="decimal"
-                oninput="mascaraMoeda(this)"
+                oninput="mascaraMoeda(this)" onfocus="moedaFocus(this)" onblur="moedaBlur(this)"
                 onkeydown="if(event.key==='Enter') salvarFaturamento()">
             </div>
             <div class="mb-3">
@@ -694,7 +694,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Custo de Compra (R$)</label>
-              <input type="text" class="form-control" id="prod-custo-comp" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this); atualizarCustoEfetivo()">
+              <input type="text" class="form-control" id="prod-custo-comp" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this); atualizarCustoEfetivo()" onfocus="moedaFocus(this)" onblur="moedaBlur(this); atualizarCustoEfetivo()">
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Conversão</label>
@@ -712,7 +712,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Preço de Venda (R$)</label>
-              <input type="text" class="form-control" id="prod-preco-venda" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this)">
+              <input type="text" class="form-control" id="prod-preco-venda" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this)" onfocus="moedaFocus(this)" onblur="moedaBlur(this)">
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Estoque Mínimo</label>
