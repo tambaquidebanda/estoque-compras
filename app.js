@@ -2848,14 +2848,15 @@ async function renderPendentes() {
 
   // Verifica contas e rascunhos existentes para cada pedido
   const numeros = lista.map(g => g.pedido_num);
-  const [{ data: contasExist }, { data: rascunhosExist }] = await Promise.all([
+  const [resContas, resRascunhos] = await Promise.all([
     sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id').in('pedido_num', numeros),
     sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
   ]);
+  if (resRascunhos.error) console.error('Erro ao buscar rascunhos:', resRascunhos.error);
   const contaMap    = {};
   const rascunhoSet = new Set();
-  (contasExist   || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
-  (rascunhosExist || []).forEach(r => rascunhoSet.add(r.pedido_num));
+  (resContas.data   || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
+  (resRascunhos.data || []).forEach(r => rascunhoSet.add(r.pedido_num));
 
   tbody.innerHTML = lista.map(g => {
     const jaEnviado   = !!contaMap[g.pedido_num];
@@ -2897,7 +2898,11 @@ async function renderPendentes() {
 
 async function excluirPedidoReceb(pedido_num) {
   if (!confirm(`Excluir o pedido ${pedido_num}? Esta ação não pode ser desfeita.`)) return;
-  await sb.from('cmp_compras').delete().eq('pedido_num', pedido_num);
+  await Promise.all([
+    sb.from('cmp_compras').delete().eq('pedido_num', pedido_num),
+    sb.from('lancamentos_rascunho').delete().eq('pedido_num', pedido_num),
+    sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num),
+  ]);
   toast('Pedido excluído.', 'ok');
   renderPendentes();
 }
