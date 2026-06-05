@@ -115,8 +115,8 @@ function entrarNoSistema() {
   setMes('f-filtro-mes');
   setMes('hist-mes');
 
-  const hash = window.location.hash.slice(1);
-  if (hash) {
+  const hash = window.location.hash.slice(1) || localStorage.getItem('gc_nav') || '';
+  if (hash && hash !== 'dashboard') {
     restaurarPagina(hash);
   } else {
     ir('dashboard', document.querySelector('.nav-sb a'));
@@ -155,8 +155,13 @@ function toggleNavGrupo(grupo) {
   submenu.classList.toggle('aberto', !aberto);
 }
 
+function salvarNav(chave) {
+  localStorage.setItem('gc_nav', chave);
+  history.replaceState(null, '', '#' + chave);
+}
+
 function ir(nome, el) {
-  history.replaceState(null, '', '#' + nome);
+  salvarNav(nome);
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a:not(.nav-em-breve), .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-' + nome).classList.add('ativa');
@@ -207,7 +212,7 @@ const _nomesCad = {
 };
 
 function irCadSb(tab, el) {
-  history.replaceState(null, '', '#cad-' + tab);
+  salvarNav('cad-' + tab);
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a, .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-cadastros').classList.add('ativa');
@@ -3727,7 +3732,7 @@ async function abrirProduto(prodId) {
   if (!cCat.length || !cGrupos.length) await carregarCaches();
 
   // Navega para pg-produto
-  history.replaceState(null, '', '#produto-' + prodId);
+  salvarNav('produto-' + prodId);
   document.querySelectorAll('.pagina').forEach(s => s.classList.remove('ativa'));
   document.getElementById('pg-produto').classList.add('ativa');
   document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
