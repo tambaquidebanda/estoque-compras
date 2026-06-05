@@ -202,7 +202,7 @@ function ir(nome, el) {
   if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
-  if (nome === 'backup')        {}
+  if (nome === 'backup')        inicializarToggleIntegracao();
 }
 
 function irCad(tab, el) {
@@ -2804,7 +2804,7 @@ async function renderPendentes() {
   const fornSel = document.getElementById('receb-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_nome,comprador,produto,categoria,tipo_produto,unidade_med,quantidade,custo_unit,status_receb')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb')
     .not('pedido_num', 'is', null)
     .neq('status_receb', 'recebido')
     .order('data', { ascending: false });
@@ -2818,7 +2818,11 @@ async function renderPendentes() {
   const grupos = {};
   (compras || []).forEach(c => {
     const key = c.pedido_num;
-    if (!grupos[key]) grupos[key] = { pedido_num: key, data: c.data, forn: c.fornecedor_nome, comp: c.comprador, itens: [], total: 0 };
+    if (!grupos[key]) grupos[key] = {
+      pedido_num: key, data: c.data, forn: c.fornecedor_nome,
+      fornecedor_id: c.fornecedor_id, plano_conta: c.plano_conta,
+      comp: c.comprador, itens: [], total: 0
+    };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade || 0) * (c.custo_unit || 0);
   });
@@ -2838,10 +2842,28 @@ async function renderPendentes() {
 
   const tbody = document.getElementById('tb-receb-pendentes');
   if (!lista.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Nenhum pedido pendente de recebimento.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">Nenhum pedido pendente de recebimento.</td></tr>';
     return;
   }
-  tbody.innerHTML = lista.map(g => `
+
+  // Verifica quais pedidos já têm conta gerada no financeiro
+  const numeros = lista.map(g => g.pedido_num);
+  const { data: contasExist } = await sb.from('cmp_contas_pagar')
+    .select('pedido_num,lancamento_id').in('pedido_num', numeros);
+  const contaMap = {};
+  (contasExist || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
+
+  tbody.innerHTML = lista.map(g => {
+    const jaEnviado  = !!contaMap[g.pedido_num];
+    const btnFin = jaEnviado
+      ? `<button class="btn btn-sm btn-outline-success py-0 px-2" disabled title="Conta já gerada no financeiro">
+           <i class="bi bi-check-circle-fill"></i> Financeiro
+         </button>`
+      : `<button class="btn btn-sm btn-outline-primary py-0 px-2"
+           onclick="abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}','${esc(g.plano_conta||'')}',${g.total})">
+           <i class="bi bi-arrow-left-right"></i> Financeiro
+         </button>`;
+    return `
     <tr>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
       <td>${(g.data||'').split('-').reverse().join('/')}</td>
@@ -2849,6 +2871,7 @@ async function renderPendentes() {
       <td>${esc(g.comp||'—')}</td>
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span></td>
       <td class="text-center"><strong>${brl(g.total)}</strong></td>
+      <td class="text-center">${btnFin}</td>
       <td class="text-center">
         <button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${esc(g.pedido_num)}')">
           📬 Receber
@@ -2859,7 +2882,8 @@ async function renderPendentes() {
           🗑️ Excluir
         </button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function excluirPedidoReceb(pedido_num) {
@@ -2979,19 +3003,45 @@ async function confirmarRecebimento() {
   // Salva itens
   await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
 
-  // Gera conta a pagar
-  await sb.from('cmp_contas_pagar').insert([{
-    pedido_num, recebimento_id: receb.id,
-    fornecedor: ref?.fornecedor_nome || '',
-    data_receb: dataRec, vencimento, valor: totalRecebido,
-    status: 'pendente',
-  }]);
+  // Verifica se já foi gerada conta no financeiro (Flow A)
+  const { data: contaExist } = await sb.from('cmp_contas_pagar')
+    .select('id,lancamento_id').eq('pedido_num', pedido_num).single();
+
+  if (contaExist) {
+    // Já existe — apenas atualiza com dados do recebimento
+    await sb.from('cmp_contas_pagar').update({
+      recebimento_id: receb.id, data_receb: dataRec,
+      vencimento, valor: totalRecebido,
+    }).eq('id', contaExist.id);
+  } else {
+    // Flow B — cria a conta e tenta enviar ao financeiro
+    const { data: novaConta } = await sb.from('cmp_contas_pagar').insert([{
+      pedido_num, recebimento_id: receb.id,
+      fornecedor: ref?.fornecedor_nome || '',
+      data_receb: dataRec, vencimento, valor: totalRecebido,
+      status: 'pendente',
+    }]).select().single();
+
+    // Envia ao financeiro se modo produção
+    if (novaConta) {
+      const nf = document.getElementById('receb-nf')?.value?.trim() || null;
+      await gerarContaFinanceiro({
+        pedido_num, vencimento, valor: totalRecebido,
+        fornecedor_id: ref?.fornecedor_id || null,
+        fornecedor_nome: ref?.fornecedor_nome || '',
+        plano_conta: ref?.plano_conta || '',
+        nf_numero: nf,
+        conta_id: novaConta.id,
+        obs: `Pedido ${pedido_num}`,
+      });
+    }
+  }
 
   // Marca itens como recebidos
   await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('pedido_num', pedido_num);
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
-  toast(`✅ Recebimento confirmado! Conta gerada: ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
+  toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
   renderPendentes();
 }
 
@@ -4261,4 +4311,163 @@ function redefinirConexao() {
   localStorage.removeItem('gc_url');
   localStorage.removeItem('gc_key');
   location.reload();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// INTEGRAÇÃO FINANCEIRO — CONTAS A PAGAR
+// ═══════════════════════════════════════════════════════════════
+
+function modoIntegracaoProducao() {
+  return localStorage.getItem('gc_integracao_fin') === 'producao';
+}
+
+function alternarModoIntegracao(ativo) {
+  const modo   = ativo ? 'producao' : 'teste';
+  localStorage.setItem('gc_integracao_fin', modo);
+  document.getElementById('label-integracao-fin').textContent = ativo ? 'Modo Produção' : 'Modo Teste';
+  document.getElementById('badge-integracao-fin').textContent = ativo
+    ? 'PRODUÇÃO — dados enviados ao financeiro' : 'TESTE — dados não são enviados';
+  document.getElementById('badge-integracao-fin').style.background = ativo ? '#198754' : '#6c757d';
+  document.getElementById('desc-integracao-fin').innerHTML = ativo
+    ? 'Em Modo Produção: contas a pagar são <strong>gravadas de verdade</strong> no sistema financeiro.'
+    : 'Em Modo Teste: mostra preview completo mas <strong>não grava</strong> nada no financeiro.';
+}
+
+// Inicializa o toggle conforme o valor salvo
+function inicializarToggleIntegracao() {
+  const prod = modoIntegracaoProducao();
+  const el   = document.getElementById('toggle-integracao-fin');
+  if (el) {
+    el.checked = prod;
+    alternarModoIntegracao(prod);
+  }
+}
+
+function abrirGerarConta(pedido_num, forn, fornId, plano, total) {
+  document.getElementById('gc-pedido-num').value      = pedido_num;
+  document.getElementById('gc-fornecedor-id').value   = fornId;
+  document.getElementById('gc-pedido-label').textContent    = pedido_num;
+  document.getElementById('gc-fornecedor-label').textContent = forn || '—';
+  document.getElementById('gc-plano-label').textContent     = plano || '—';
+  setMoeda('gc-valor', total);
+  document.getElementById('gc-vencimento').value = '';
+  document.getElementById('gc-nf').value         = '';
+  document.getElementById('gc-obs').value        = `Pedido ${pedido_num}`;
+  document.getElementById('gc-preview').classList.add('d-none');
+
+  const prodMode = modoIntegracaoProducao();
+  document.getElementById('btn-gc-label').textContent = prodMode
+    ? 'Enviar ao Financeiro' : 'Simular (Modo Teste)';
+  document.getElementById('btn-gc-enviar').className = prodMode
+    ? 'btn btn-primary' : 'btn btn-warning';
+
+  new bootstrap.Modal(document.getElementById('modal-gerar-conta')).show();
+}
+
+function previewContaFinanceiro() {
+  const valor     = parseMoeda('gc-valor');
+  const venc      = document.getElementById('gc-vencimento').value;
+  const nf        = document.getElementById('gc-nf').value.trim();
+  const obs       = document.getElementById('gc-obs').value.trim();
+  const pedido    = document.getElementById('gc-pedido-num').value;
+  const forn      = document.getElementById('gc-fornecedor-label').textContent;
+  const plano     = document.getElementById('gc-plano-label').textContent;
+
+  if (!valor || !venc) { toast('Informe valor e vencimento antes de visualizar.', 'erro'); return; }
+
+  const preview = document.getElementById('gc-preview');
+  document.getElementById('gc-preview-dados').innerHTML = `
+    <div class="row g-2">
+      <div class="col-6"><strong>tipo:</strong> pagar</div>
+      <div class="col-6"><strong>status:</strong> pendente</div>
+      <div class="col-12"><strong>descricao:</strong> Pedido ${pedido} — ${forn}</div>
+      <div class="col-4"><strong>valor:</strong> ${brl(valor)}</div>
+      <div class="col-4"><strong>vencimento:</strong> ${venc.split('-').reverse().join('/')}</div>
+      <div class="col-4"><strong>numero_pedido:</strong> ${nf || pedido}</div>
+      <div class="col-6"><strong>fornecedor:</strong> ${forn}</div>
+      <div class="col-6"><strong>plano_contas:</strong> ${plano}</div>
+      ${obs ? `<div class="col-12"><strong>observacoes:</strong> ${obs}</div>` : ''}
+    </div>`;
+  preview.classList.remove('d-none');
+}
+
+async function confirmarGerarConta() {
+  const pedido_num   = document.getElementById('gc-pedido-num').value;
+  const fornecedor_id = document.getElementById('gc-fornecedor-id').value || null;
+  const valor        = parseMoeda('gc-valor');
+  const vencimento   = document.getElementById('gc-vencimento').value;
+  const nf_numero    = document.getElementById('gc-nf').value.trim() || null;
+  const obs          = document.getElementById('gc-obs').value.trim();
+  const forn_nome    = document.getElementById('gc-fornecedor-label').textContent;
+  const plano_conta  = document.getElementById('gc-plano-label').textContent;
+
+  if (!valor || valor <= 0) { toast('Informe um valor válido.', 'erro'); return; }
+  if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
+
+  // Upsert em cmp_contas_pagar
+  const { data: conta } = await sb.from('cmp_contas_pagar').upsert([{
+    pedido_num,
+    fornecedor:  forn_nome,
+    vencimento,
+    valor,
+    nf_numero,
+    status: 'pendente',
+  }], { onConflict: 'pedido_num' }).select().single();
+
+  await gerarContaFinanceiro({
+    pedido_num, vencimento, valor,
+    fornecedor_id, fornecedor_nome: forn_nome,
+    plano_conta, nf_numero,
+    conta_id: conta?.id || null,
+    obs: obs || `Pedido ${pedido_num}`,
+  });
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
+  renderPendentes();
+}
+
+async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
+  fornecedor_nome, plano_conta, nf_numero, conta_id, obs }) {
+
+  const producao = modoIntegracaoProducao();
+
+  // Busca plano_conta_id pelo nome
+  let plano_conta_id = null;
+  if (plano_conta && plano_conta !== '—') {
+    const { data: pc } = await sb.from('plano_contas').select('id').ilike('nome', plano_conta).single();
+    plano_conta_id = pc?.id || null;
+  }
+
+  const dadosLancamento = {
+    descricao:      `Pedido ${pedido_num} — ${fornecedor_nome}`,
+    valor,
+    vencimento,
+    tipo:           'pagar',
+    status:         'pendente',
+    fornecedor_id:  fornecedor_id || null,
+    plano_conta_id: plano_conta_id,
+    numero_pedido:  nf_numero || pedido_num,
+    observacoes:    obs || null,
+    data_pagamento: null,
+    acrescimo:      0,
+    desconto:       0,
+  };
+
+  if (!producao) {
+    // Modo Teste — só mostra aviso
+    toast(`🧪 TESTE: Conta seria gerada — ${brl(valor)} venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
+    return;
+  }
+
+  // Modo Produção — grava em lancamentos
+  const { data: lanc, error } = await sb.from('lancamentos').insert([dadosLancamento]).select('id').single();
+  if (error) { toast('Erro ao gerar no financeiro: ' + error.message, 'erro'); return; }
+
+  // Registra lancamento_id na conta a pagar local
+  if (conta_id && lanc?.id) {
+    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', conta_id);
+  }
+
+  toast(`✅ Conta gerada no financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
 }

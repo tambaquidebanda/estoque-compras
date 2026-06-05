@@ -1397,6 +1397,24 @@
         </div>
       </div>
 
+      <div class="card-form mb-4">
+        <div class="fw-semibold mb-1"><i class="bi bi-arrow-left-right text-primary"></i> Integração com o Financeiro</div>
+        <p class="text-muted small mb-3">Controla se os pedidos de compra enviam contas a pagar reais ao sistema financeiro.</p>
+        <div class="d-flex align-items-center gap-3">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" role="switch" id="toggle-integracao-fin"
+              onchange="alternarModoIntegracao(this.checked)" style="width:2.5rem;height:1.3rem">
+            <label class="form-check-label fw-semibold ms-1" for="toggle-integracao-fin" id="label-integracao-fin">
+              Modo Teste
+            </label>
+          </div>
+          <span class="badge" id="badge-integracao-fin" style="background:#6c757d">TESTE — dados não são enviados</span>
+        </div>
+        <div class="small text-muted mt-2" id="desc-integracao-fin">
+          Em Modo Teste: mostra preview completo mas <strong>não grava</strong> nada no financeiro.
+        </div>
+      </div>
+
       <div class="card-form">
         <div class="fw-semibold mb-1"><i class="bi bi-plug-fill text-danger"></i> Conexão com o Banco de Dados</div>
         <p class="text-muted small mb-3">Use esta opção apenas se precisar reconectar o sistema a um projeto Supabase diferente.</p>
@@ -1687,6 +1705,75 @@
 </div>
 
 <!-- ══════ USUÁRIOS ══════ -->
+<!-- Modal: Gerar Conta no Financeiro (Flow A - antes do recebimento) -->
+<div class="modal fade" id="modal-gerar-conta" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-left-right"></i> Gerar Conta a Pagar no Financeiro</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="gc-pedido-num">
+        <input type="hidden" id="gc-fornecedor-id">
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Pedido</label>
+            <div class="form-control bg-light" id="gc-pedido-label"></div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Fornecedor</label>
+            <div class="form-control bg-light" id="gc-fornecedor-label"></div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Plano de Contas</label>
+            <div class="form-control bg-light" id="gc-plano-label"></div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Valor (R$) *</label>
+            <input type="text" class="form-control" id="gc-valor" placeholder="0,00"
+              inputmode="decimal" oninput="mascaraMoeda(this)" onfocus="moedaFocus(this)" onblur="moedaBlur(this)">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Vencimento *</label>
+            <input type="date" class="form-control" id="gc-vencimento">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Nº NF / Documento</label>
+            <input type="text" class="form-control" id="gc-nf" placeholder="Opcional">
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Observações</label>
+          <input type="text" class="form-control" id="gc-obs" placeholder="Opcional">
+        </div>
+
+        <!-- Preview (Modo Teste) -->
+        <div id="gc-preview" class="d-none mt-3">
+          <div class="alert alert-warning mb-2">
+            <i class="bi bi-eye-fill"></i> <strong>MODO TESTE</strong> — Dados que seriam enviados ao financeiro:
+          </div>
+          <div class="card-form" id="gc-preview-dados" style="font-family:monospace;font-size:.85rem"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-outline-primary me-auto" onclick="previewContaFinanceiro()">
+          <i class="bi bi-eye"></i> Preview
+        </button>
+        <button class="btn btn-primary" id="btn-gc-enviar" onclick="confirmarGerarConta()">
+          <i class="bi bi-arrow-left-right"></i> <span id="btn-gc-label">Gerar no Financeiro</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Convidar Funcionário -->
 <div class="modal fade" id="modal-convidar" tabindex="-1">
   <div class="modal-dialog">
