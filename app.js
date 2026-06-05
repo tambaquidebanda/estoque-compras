@@ -4465,8 +4465,9 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
   if (!producao) {
     // Modo Teste — grava em lancamentos_rascunho para revisão no financeiro
+    const { data_pagamento: _, ...dadosRascunho } = dadosLancamento;
     const { error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
-      ...dadosLancamento,
+      ...dadosRascunho,
       pedido_num,
       conta_id: conta_id || null,
     }]);
