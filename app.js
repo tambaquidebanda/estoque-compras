@@ -3831,7 +3831,11 @@ async function carregarFichaProduto() {
     let custoTotalCalc = 0;
     const ingHtml = await Promise.all((ings || []).map(async ing => {
       const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
-      const custoUnit = (prod?.custo_uso > 0 ? prod.custo_uso : prod?.custo_comp) || 0;
+      const fator      = prod?.fator_conversao || 1;
+      const perda      = prod?.perda || 0;
+      const rendimento = 1 - (perda / 100);
+      const custoBase  = prod?.custo_comp || prod?.custo_uso || 0;
+      const custoUnit  = rendimento > 0 ? (custoBase / fator) / rendimento : 0;
       const subtotal = custoUnit * ing.quantidade;
       custoTotalCalc += subtotal;
       return `<tr>
