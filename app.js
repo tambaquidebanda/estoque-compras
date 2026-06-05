@@ -3812,6 +3812,58 @@ async function salvarDadosProduto() {
   if (idx >= 0) cProdutosFT[idx] = { ...cProdutosFT[idx], ...dados };
   _prodAtual = { ..._prodAtual, ...dados };
   document.getElementById('prod-titulo').textContent = dados.nome;
+
+  // Recalcula todas as fichas que usam este produto como ingrediente
+  await recalcularFichasDoIngrediente(id);
+}
+
+async function recalcularFichasDoIngrediente(ingredienteId) {
+  // Busca fichas que contêm este ingrediente
+  const { data: usos } = await sb.from('est_ficha_ingredientes')
+    .select('ficha_id').eq('ingrediente_id', ingredienteId);
+  if (!usos?.length) return;
+
+  const fichaIds = [...new Set(usos.map(i => i.ficha_id))];
+
+  const { data: fichas } = await sb.from('est_fichas_tecnicas')
+    .select('id,produto_id,rendimento').in('id', fichaIds).eq('ativo', true);
+  if (!fichas?.length) return;
+
+  for (const ficha of fichas) {
+    const { data: ings } = await sb.from('est_ficha_ingredientes')
+      .select('quantidade,ingrediente_id').eq('ficha_id', ficha.id);
+
+    let custoTotal = 0;
+    for (const ing of (ings || [])) {
+      const prod = cProdutosFT.find(p => p.id === ing.ingrediente_id);
+      if (!prod) continue;
+      const fator = prod.fator_conversao || 1;
+      const perda = prod.perda || 0;
+      const rend  = 1 - (perda / 100);
+      const base  = prod.custo_comp || 0;
+      custoTotal += ing.quantidade * (rend > 0 ? (base / fator) / rend : 0);
+    }
+
+    const custoPorcao = ficha.rendimento > 0 ? custoTotal / ficha.rendimento : custoTotal;
+
+    await sb.from('est_fichas_tecnicas').update({
+      custo_total: custoTotal, custo_por_porcao: custoPorcao
+    }).eq('id', ficha.id);
+
+    await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', ficha.produto_id);
+
+    const iProd = cProdutosFT.findIndex(p => p.id === ficha.produto_id);
+    if (iProd >= 0) cProdutosFT[iProd].custo_comp = custoPorcao;
+
+    // Se estiver vendo o produto pai agora, atualiza o display
+    if (_prodAtual?.id === ficha.produto_id) {
+      setMoeda('prod-custo-comp', custoPorcao);
+      atualizarCustoEfetivo();
+    }
+  }
+
+  if (fichas.length > 0)
+    toast(`${fichas.length} ficha(s) recalculada(s) automaticamente.`, 'ok');
 }
 
 function abrirModalNovoProduto() {
