@@ -1733,6 +1733,11 @@ async function salvarFicha() {
   const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
   if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); return; }
 
+  // Atualiza custo_comp do produto com o custo/porção calculado pela ficha
+  await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', prodId);
+  const idxProd = cProdutosFT.findIndex(p => p.id === prodId);
+  if (idxProd >= 0) cProdutosFT[idxProd].custo_comp = custoPorcao;
+
   toast('Ficha técnica salva!', 'ok');
   bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
   ftFichasCache = [];
@@ -3686,8 +3691,7 @@ async function abrirProduto(prodId) {
   // Preenche form de dados
   document.getElementById('prod-nome').value         = p.nome          || '';
   document.getElementById('prod-tipo').value         = p.tipo          || '';
-  document.getElementById('prod-custo-comp').value   = p.custo_comp    || 0;
-  document.getElementById('prod-custo-uso').value    = p.custo_uso     || 0;
+  document.getElementById('prod-custo-comp').value  = p.custo_comp     || 0;
   document.getElementById('prod-fator-conv').value  = p.fator_conversao || 1;
   document.getElementById('prod-perda').value        = p.perda          || 0;
   document.getElementById('prod-preco-venda').value  = p.preco_venda   || 0;
@@ -3745,7 +3749,6 @@ async function salvarDadosProduto() {
     unidade_comp: document.getElementById('prod-un-comp').value,
     unidade_uso:  document.getElementById('prod-un-uso').value,
     custo_comp:      parseFloat(document.getElementById('prod-custo-comp').value)  || 0,
-    custo_uso:       parseFloat(document.getElementById('prod-custo-uso').value)   || 0,
     fator_conversao: parseFloat(document.getElementById('prod-fator-conv').value)  || 1,
     perda:           parseFloat(document.getElementById('prod-perda').value)        || 0,
     preco_venda:     parseFloat(document.getElementById('prod-preco-venda').value)  || 0,
