@@ -110,7 +110,25 @@ function entrarNoSistema() {
   setHoje('f-data');
   setMes('f-filtro-mes');
   setMes('hist-mes');
-  ir('dashboard', document.querySelector('.nav-sb a'));
+
+  const hash = window.location.hash.slice(1);
+  if (hash) {
+    restaurarPagina(hash);
+  } else {
+    ir('dashboard', document.querySelector('.nav-sb a'));
+  }
+}
+
+function restaurarPagina(hash) {
+  if (hash.startsWith('cad-')) {
+    irCadSb(hash.slice(4), null);
+  } else if (hash.startsWith('produto-')) {
+    abrirProduto(hash.slice(8));
+  } else if (document.getElementById('pg-' + hash)) {
+    ir(hash, null);
+  } else {
+    ir('dashboard', document.querySelector('.nav-sb a'));
+  }
 }
 
 async function sair() {
@@ -134,6 +152,7 @@ function toggleNavGrupo(grupo) {
 }
 
 function ir(nome, el) {
+  history.replaceState(null, '', '#' + nome);
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a:not(.nav-em-breve), .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-' + nome).classList.add('ativa');
@@ -178,6 +197,7 @@ const _nomesCad = {
 };
 
 function irCadSb(tab, el) {
+  history.replaceState(null, '', '#cad-' + tab);
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a, .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
   document.getElementById('pg-cadastros').classList.add('ativa');
@@ -1757,7 +1777,13 @@ async function salvarFicha() {
   toast('Ficha técnica salva!', 'ok');
   bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
   ftFichasCache = [];
-  carregarFichas();
+
+  // Se estava na tela do produto, mostra a ficha direto na aba
+  if (_prodAtual && _prodAtual.id === prodId) {
+    irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
+  } else {
+    carregarFichas();
+  }
 }
 
 async function excluirFicha(fichaId) {
@@ -3691,6 +3717,7 @@ async function abrirProduto(prodId) {
   if (!cCat.length || !cGrupos.length) await carregarCaches();
 
   // Navega para pg-produto
+  history.replaceState(null, '', '#produto-' + prodId);
   document.querySelectorAll('.pagina').forEach(s => s.classList.remove('ativa'));
   document.getElementById('pg-produto').classList.add('ativa');
   document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
