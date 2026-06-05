@@ -677,7 +677,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Unidade de Compra</label>
-              <select class="form-select" id="prod-un-comp">
+              <select class="form-select" id="prod-un-comp" onchange="atualizarCustoEfetivo()">
                 <option>UN</option><option>KG</option><option>CX</option>
                 <option>LT</option><option>FD</option><option>PC</option>
                 <option>MT</option><option>DZ</option>
@@ -685,7 +685,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Unidade de Uso</label>
-              <select class="form-select" id="prod-un-uso">
+              <select class="form-select" id="prod-un-uso" onchange="atualizarCustoEfetivo()">
                 <option>UN</option><option>KG</option><option>CX</option>
                 <option>LT</option><option>FD</option><option>PC</option>
                 <option>MT</option><option>DZ</option>
@@ -693,7 +693,21 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Custo de Compra (R$)</label>
-              <input type="number" class="form-control" id="prod-custo-comp" step="0.01" min="0">
+              <input type="number" class="form-control" id="prod-custo-comp" step="0.01" min="0" oninput="atualizarCustoEfetivo()">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Conversão</label>
+              <input type="number" class="form-control" id="prod-fator-conv" value="1" min="0.001" step="0.001" oninput="atualizarCustoEfetivo()">
+              <div class="small text-muted mt-1" id="prod-fator-label"></div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">% Perda</label>
+              <input type="number" class="form-control" id="prod-perda" value="0" min="0" max="99.99" step="0.01" oninput="atualizarCustoEfetivo()">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Custo Efetivo</label>
+              <div class="form-control bg-light fw-bold text-success" id="prod-custo-efetivo">—</div>
+              <div class="small text-muted mt-1" id="prod-custo-efetivo-un"></div>
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Custo de Uso (R$)</label>
@@ -1555,7 +1569,7 @@
         <div class="sec-titulo">Ingredientes</div>
 
         <div class="row g-2 mb-3 align-items-end">
-          <div class="col-md-4">
+          <div class="col-md-5">
             <label class="form-label small fw-semibold">Ingrediente (MP, SA, PP...)</label>
             <div class="ac-wrapper">
               <input type="text" class="form-control form-control-sm" id="ft-ing-nome"
@@ -1574,22 +1588,11 @@
               value="1" min="0" step="0.001"
               onkeydown="if(event.key==='Enter'){event.preventDefault();addIngrediente()}">
           </div>
-          <div class="col-md-1">
-            <label class="form-label small fw-semibold">Un.</label>
+          <div class="col-md-2">
+            <label class="form-label small fw-semibold">Unidade</label>
             <input type="text" class="form-control form-control-sm" id="ft-ing-un" value="UN">
           </div>
-          <div class="col-md-2">
-            <label class="form-label small fw-semibold">Perda %</label>
-            <input type="number" class="form-control form-control-sm" id="ft-ing-perda"
-              value="0" min="0" max="99.99" step="0.01" placeholder="0">
-          </div>
-          <div class="col-md-1">
-            <label class="form-label small fw-semibold">Fator</label>
-            <input type="number" class="form-control form-control-sm" id="ft-ing-fator"
-              value="1" min="0.001" step="0.001" placeholder="1">
-            <div class="small text-muted" id="ft-ing-fator-label"></div>
-          </div>
-          <div class="col-md-2 d-flex align-items-end">
+          <div class="col-md-3 d-flex align-items-end">
             <button class="btn btn-primary w-100" onclick="addIngrediente()">
               <i class="bi bi-plus"></i> Adicionar
             </button>
@@ -1602,11 +1605,11 @@
             <thead>
               <tr>
                 <th>Ingrediente</th><th>Tipo</th><th>Quantidade</th>
-                <th>Un.</th><th>Perda</th><th>Custo Efetivo</th><th>Subtotal</th><th></th>
+                <th>Un.</th><th>Custo Unit.</th><th>Subtotal</th><th></th>
               </tr>
             </thead>
             <tbody id="tb-ing-body">
-              <tr id="tr-ing-vazio"><td colspan="8" class="text-center text-muted py-3">
+              <tr id="tr-ing-vazio"><td colspan="7" class="text-center text-muted py-3">
                 Nenhum ingrediente adicionado.
               </td></tr>
             </tbody>
