@@ -3,7 +3,8 @@
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let sb   = null;   // supabase client
+let sb      = null;   // supabase client (anon)
+let sbAdmin = null;   // supabase client (service_role)
 let user = null;   // logged-in user
 
 // caches
@@ -104,6 +105,9 @@ async function fazerLogin() {
 }
 
 function entrarNoSistema() {
+  sbAdmin = supabase.createClient(SB_URL, SB_SERVICE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
   mostrarTela('principal');
   document.getElementById('sb-usuario').textContent = user.email;
   setHoje('c-data');
@@ -166,6 +170,10 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
+  if (['usuarios','backup'].includes(nome)) {
+    document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
+    document.getElementById('nav-submenu-config')?.classList.add('aberto');
+  }
 
   if (nome === 'dashboard')   carregarDashboard();
   if (nome === 'pedido')      prepararFormCompra();
@@ -178,6 +186,8 @@ function ir(nome, el) {
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }
   if (nome === 'controlecmv')   renderHistoricoImport();
+  if (nome === 'usuarios')      carregarUsuarios();
+  if (nome === 'backup')        {}
 }
 
 function irCad(tab, el) {
@@ -3974,4 +3984,203 @@ async function carregarFichaProduto() {
   }
 
   cont.innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// USUÁRIOS
+// ═══════════════════════════════════════════════════════════════
+async function carregarUsuarios() {
+  const tbody = document.getElementById('tb-usuarios');
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Carregando...</td></tr>';
+
+  const { data, error } = await sbAdmin.auth.admin.listUsers();
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small py-3">${error.message}</td></tr>`;
+    return;
+  }
+
+  const users = (data?.users || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+  const me = users.find(u => u.id === user?.id);
+  if (me) {
+    document.getElementById('cfg-user-nome').textContent  = me.user_metadata?.nome || me.email;
+    document.getElementById('cfg-user-email').textContent = me.email;
+  }
+
+  tbody.innerHTML = users.map(u => {
+    const nome    = u.user_metadata?.nome || '—';
+    const isAdmin = u.id === user?.id;
+    const perfil  = isAdmin
+      ? '<span class="text-danger fw-bold">Administrador</span>'
+      : 'Funcionário';
+    const dt     = new Date(u.created_at).toLocaleDateString('pt-BR');
+    const btnDel = !isAdmin
+      ? `<button class="btn btn-sm btn-danger" onclick="excluirUsuario('${u.id}','${esc(u.email)}')">
+           <i class="bi bi-trash"></i>
+         </button>`
+      : '';
+    return `<tr>
+      <td class="fw-semibold">${esc(nome)}</td>
+      <td>${esc(u.email)}</td>
+      <td>${perfil}</td>
+      <td>${dt}</td>
+      <td class="text-end">${btnDel}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function convidarFuncionario() {
+  const nome  = document.getElementById('inv-nome').value.trim();
+  const email = document.getElementById('inv-email').value.trim();
+  const senha = document.getElementById('inv-senha').value;
+  const msg   = document.getElementById('inv-msg');
+
+  if (!nome || !email || !senha) {
+    msg.textContent = 'Preencha todos os campos.';
+    msg.className   = 'text-danger small mt-2';
+    return;
+  }
+
+  const { error } = await sbAdmin.auth.admin.createUser({
+    email,
+    password: senha,
+    user_metadata: { nome },
+    email_confirm: true,
+  });
+
+  if (error) {
+    msg.textContent = error.message;
+    msg.className   = 'text-danger small mt-2';
+    return;
+  }
+
+  msg.textContent = 'Funcionário criado com sucesso!';
+  msg.className   = 'text-success small mt-2';
+
+  document.getElementById('inv-nome').value  = '';
+  document.getElementById('inv-email').value = '';
+  document.getElementById('inv-senha').value = '';
+
+  setTimeout(() => {
+    bootstrap.Modal.getInstance(document.getElementById('modal-convidar'))?.hide();
+    msg.textContent = '';
+    carregarUsuarios();
+  }, 1500);
+}
+
+async function excluirUsuario(id, email) {
+  if (!confirm(`Excluir o usuário ${email}?`)) return;
+  const { error } = await sbAdmin.auth.admin.deleteUser(id);
+  if (error) { toast(error.message, 'erro'); return; }
+  toast('Usuário excluído.', 'ok');
+  carregarUsuarios();
+}
+
+async function alterarMinhaSenha() {
+  const nova = document.getElementById('nova-senha').value;
+  const conf = document.getElementById('conf-senha').value;
+  const msg  = document.getElementById('senha-msg');
+
+  if (!nova || nova.length < 6) {
+    msg.textContent = 'Senha deve ter ao menos 6 caracteres.';
+    msg.className   = 'text-danger small mt-2';
+    return;
+  }
+  if (nova !== conf) {
+    msg.textContent = 'As senhas não coincidem.';
+    msg.className   = 'text-danger small mt-2';
+    return;
+  }
+
+  const { error } = await sb.auth.updateUser({ password: nova });
+  if (error) { msg.textContent = error.message; msg.className = 'text-danger small mt-2'; return; }
+
+  msg.textContent = 'Senha alterada com sucesso!';
+  msg.className   = 'text-success small mt-2';
+
+  setTimeout(() => {
+    bootstrap.Modal.getInstance(document.getElementById('modal-senha'))?.hide();
+    msg.textContent = '';
+    document.getElementById('nova-senha').value = '';
+    document.getElementById('conf-senha').value = '';
+  }, 1500);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// BACKUP
+// ═══════════════════════════════════════════════════════════════
+async function fazerBackup() {
+  const btn = document.getElementById('btn-backup');
+  btn.disabled    = true;
+  btn.innerHTML   = '<span class="spinner-border spinner-border-sm"></span> Exportando...';
+
+  try {
+    const tabelas = [
+      'est_produtos', 'est_grupos_produto',
+      'est_fichas_tecnicas', 'est_ficha_ingredientes',
+      'est_inventarios', 'est_inventario_itens',
+    ];
+    const backup = { versao: 1, data: new Date().toISOString(), tabelas: {} };
+
+    for (const tb of tabelas) {
+      const { data } = await sb.from(tb).select('*');
+      backup.tabelas[tb] = data || [];
+    }
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `backup_estoque_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup exportado com sucesso!', 'ok');
+  } catch (e) {
+    toast('Erro ao exportar: ' + e.message, 'erro');
+  } finally {
+    btn.disabled  = false;
+    btn.innerHTML = '<i class="bi bi-download"></i> Fazer Backup Agora';
+  }
+}
+
+function carregarArquivoBackup() {
+  document.getElementById('inp-backup').click();
+}
+
+async function restaurarBackup(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  let backup;
+  try { backup = JSON.parse(await file.text()); } catch { toast('Arquivo inválido.', 'erro'); return; }
+  if (!backup.tabelas) { toast('Formato de backup inválido.', 'erro'); return; }
+  if (!confirm('Restaurar o backup? Os dados atuais serão substituídos nas tabelas exportadas.')) return;
+
+  const btn = document.getElementById('btn-restaurar');
+  btn.disabled  = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Restaurando...';
+
+  try {
+    for (const [tb, rows] of Object.entries(backup.tabelas)) {
+      await sb.from(tb).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if (rows.length) await sb.from(tb).insert(rows);
+    }
+    toast('Backup restaurado! Recarregando...', 'ok');
+    setTimeout(() => location.reload(), 2000);
+  } catch (e) {
+    toast('Erro ao restaurar: ' + e.message, 'erro');
+  } finally {
+    btn.disabled  = false;
+    btn.innerHTML = '<i class="bi bi-upload"></i> Carregar Backup para Restaurar';
+    e.target.value = '';
+  }
+}
+
+function redefinirConexao() {
+  if (!confirm('Redefinir a conexão com o Supabase? Você será desconectado.')) return;
+  localStorage.removeItem('gc_url');
+  localStorage.removeItem('gc_key');
+  location.reload();
 }
