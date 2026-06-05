@@ -287,7 +287,7 @@
             <div class="col-md-4">
               <label class="form-label">💵 Custo Unitário (R$)</label>
               <input type="text" class="form-control" id="c-custo"
-                placeholder="0,00" required oninput="mascaraMoeda(this);calcTot()"
+                placeholder="0,00" required oninput="mascaraMoeda(this); calcTot()"
                 inputmode="decimal">
             </div>
             <div class="col-md-3">
@@ -446,8 +446,9 @@
             </div>
             <div class="mb-3">
               <label class="form-label">💰 Valor do dia (R$)</label>
-              <input type="number" class="form-control" id="f-valor"
-                step="0.01" min="0" placeholder="0,00"
+              <input type="text" class="form-control" id="f-valor"
+                placeholder="0,00" inputmode="decimal"
+                oninput="mascaraMoeda(this)"
                 onkeydown="if(event.key==='Enter') salvarFaturamento()">
             </div>
             <div class="mb-3">
@@ -693,7 +694,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Custo de Compra (R$)</label>
-              <input type="number" class="form-control" id="prod-custo-comp" step="0.01" min="0" oninput="atualizarCustoEfetivo()">
+              <input type="text" class="form-control" id="prod-custo-comp" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this); atualizarCustoEfetivo()">
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Conversão</label>
@@ -711,7 +712,7 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Preço de Venda (R$)</label>
-              <input type="number" class="form-control" id="prod-preco-venda" step="0.01" min="0">
+              <input type="text" class="form-control" id="prod-preco-venda" placeholder="0,00" inputmode="decimal" oninput="mascaraMoeda(this)">
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Estoque Mínimo</label>

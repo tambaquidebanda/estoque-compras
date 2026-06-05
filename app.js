@@ -722,18 +722,26 @@ function fechaAC(id) {
 }
 
 function mascaraMoeda(el) {
-  let v = el.value;
-  const temVirgula = v.includes(',');
-  // Remove tudo que não for dígito ou vírgula
-  v = v.replace(/[^\d,]/g, '');
+  let v = el.value.replace(/[^\d,]/g, '');
   const partes = v.split(',');
-  // Parte inteira: formata com pontos de milhar
   const intRaw = partes[0].replace(/\D/g, '');
   const intFmt = intRaw ? parseInt(intRaw, 10).toLocaleString('pt-BR') : '';
-  // Parte decimal: até 2 dígitos
-  const dec = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 2) : null;
-  el.value = dec !== null ? `${intFmt},${dec}` : intFmt;
-  calcTot();
+  const dec    = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 2) : null;
+  el.value     = dec !== null ? `${intFmt},${dec}` : intFmt;
+}
+
+function parseMoeda(id) {
+  const v = document.getElementById(id)?.value || '0';
+  return parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
+}
+
+function setMoeda(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const n = parseFloat(val) || 0;
+  el.value = n > 0
+    ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '';
 }
 
 function _parseCusto() {
@@ -822,7 +830,7 @@ async function salvarCompra(e) {
 // ═══════════════════════════════════════════════════════════════
 async function salvarFaturamento() {
   const data  = document.getElementById('f-data').value;
-  const valor = parseFloat(document.getElementById('f-valor').value);
+  const valor = parseMoeda('f-valor');
   const canal = document.getElementById('f-canal').value;
   const obs   = document.getElementById('f-obs').value.trim();
 
@@ -3691,11 +3699,11 @@ async function abrirProduto(prodId) {
   // Preenche form de dados
   document.getElementById('prod-nome').value         = p.nome          || '';
   document.getElementById('prod-tipo').value         = p.tipo          || '';
-  document.getElementById('prod-custo-comp').value  = p.custo_comp     || 0;
-  document.getElementById('prod-fator-conv').value  = p.fator_conversao || 1;
-  document.getElementById('prod-perda').value        = p.perda          || 0;
-  document.getElementById('prod-preco-venda').value  = p.preco_venda   || 0;
-  document.getElementById('prod-est-min').value      = p.estoque_min   || 0;
+  setMoeda('prod-custo-comp', p.custo_comp);
+  setMoeda('prod-preco-venda', p.preco_venda);
+  document.getElementById('prod-fator-conv').value = p.fator_conversao || 1;
+  document.getElementById('prod-perda').value       = p.perda          || 0;
+  document.getElementById('prod-est-min').value     = p.estoque_min    || 0;
   document.getElementById('prod-ativo').checked      = p.ativo !== false;
 
   // Categoria select
@@ -3726,7 +3734,7 @@ async function abrirProduto(prodId) {
 function atualizarCustoEfetivo() {
   const unComp = document.getElementById('prod-un-comp')?.value || 'UN';
   const unUso  = document.getElementById('prod-un-uso')?.value  || 'UN';
-  const custo  = parseFloat(document.getElementById('prod-custo-comp')?.value) || 0;
+  const custo  = parseMoeda('prod-custo-comp');
   const fator  = parseFloat(document.getElementById('prod-fator-conv')?.value) || 1;
   const perda  = parseFloat(document.getElementById('prod-perda')?.value)      || 0;
 
@@ -3748,10 +3756,10 @@ async function salvarDadosProduto() {
     plano_cat:    document.getElementById('prod-plano-cat').value || null,
     unidade_comp: document.getElementById('prod-un-comp').value,
     unidade_uso:  document.getElementById('prod-un-uso').value,
-    custo_comp:      parseFloat(document.getElementById('prod-custo-comp').value)  || 0,
+    custo_comp:      parseMoeda('prod-custo-comp'),
     fator_conversao: parseFloat(document.getElementById('prod-fator-conv').value)  || 1,
     perda:           parseFloat(document.getElementById('prod-perda').value)        || 0,
-    preco_venda:     parseFloat(document.getElementById('prod-preco-venda').value)  || 0,
+    preco_venda:     parseMoeda('prod-preco-venda'),
     estoque_min:     parseFloat(document.getElementById('prod-est-min').value)      || 0,
     ativo:           document.getElementById('prod-ativo').checked,
   };
