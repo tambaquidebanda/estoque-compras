@@ -154,7 +154,7 @@ function ir(nome, el) {
   if (nome === 'faturamento') { setHoje('f-data'); carregarFaturamento(); }
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
-  if (nome === 'cadastros')   { irCad('fornecedores', document.querySelector('#tabs-cad .nav-link')); }
+  if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }

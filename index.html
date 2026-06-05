@@ -107,12 +107,11 @@
         <span class="seta">▶</span>
       </div>
       <div class="nav-submenu" id="nav-submenu-cadastros">
+        <a href="#" onclick="irCadSb('produtos',this)">📦 Produtos</a>
+        <a href="#" onclick="irCadSb('grupos',this)">🗂️ Grupos de Produto</a>
         <a href="#" onclick="irCadSb('fornecedores',this)">🏪 Fornecedores</a>
         <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
-        <a href="#" onclick="irCadSb('tipos',this)">🏷️ Destinos</a>
         <a href="#" onclick="irCadSb('compradores',this)">👤 Compradores</a>
-        <a href="#" onclick="irCadSb('grupos',this)">🗂️ Grupos de Produto</a>
-        <a href="#" onclick="irCadSb('produtos',this)">📦 Produtos</a>
       </div>
       <a href="#" onclick="ir('inventario',this)">
         <i class="bi bi-clipboard-check-fill"></i> Inventários
@@ -749,19 +748,19 @@
 
       <ul class="nav nav-tabs mb-4 d-none" id="tabs-cad">
         <li class="nav-item">
-          <a class="nav-link active" href="#" onclick="irCad('fornecedores',this)">🏪 Fornecedores</a>
+          <a class="nav-link active" href="#" onclick="irCad('produtos',this)">📦 Produtos</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('grupos',this)">🗂️ Grupos de Produto</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('fornecedores',this)">🏪 Fornecedores</a>
         </li>
         <li class="nav-item">
           <a class="nav-link" href="#" onclick="irCad('categorias',this)">📂 Categorias</a>
         </li>
         <li class="nav-item">
-          <a class="nav-link" href="#" onclick="irCad('tipos',this)">🏷️ Destinos</a>
-        </li>
-        <li class="nav-item">
           <a class="nav-link" href="#" onclick="irCad('compradores',this)">👤 Compradores</a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link" href="#" onclick="irCad('produtos',this)">📦 Produtos</a>
         </li>
       </ul>
 
@@ -816,27 +815,6 @@
       </div>
 
       <!-- Tipos / Destinos -->
-      <div id="cad-tipos" class="tab-cad">
-        <div class="d-flex justify-content-end mb-3">
-          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('tipo')">
-            <i class="bi bi-plus-circle"></i> Novo Destino
-          </button>
-        </div>
-        <div id="form-cad-tipo" class="card-form mb-3 d-none">
-          <p class="text-muted small mb-2">Padrão: Estivas, Hortifrut, Proteínas, Bebidas, Descartáveis, Limpeza, Outros.</p>
-          <div class="d-flex gap-2">
-            <input type="text" class="form-control" id="n-tipo" placeholder="Ex: Temperos"
-              onkeydown="if(event.key==='Enter') addTipo()">
-            <button class="btn btn-primary" onclick="addTipo()">Adicionar</button>
-            <button class="btn btn-outline-secondary" onclick="toggleFormCad('tipo')">Cancelar</button>
-          </div>
-          <div id="msg-cad-tipo" class="mt-2 small"></div>
-        </div>
-        <div class="card-form">
-          <div id="lst-tipos" class="lista-cad">Carregando...</div>
-        </div>
-      </div>
-
       <!-- Compradores -->
       <div id="cad-compradores" class="tab-cad">
         <div class="d-flex justify-content-end mb-3">
