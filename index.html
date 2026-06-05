@@ -881,7 +881,7 @@
             <div class="col-md-4">
               <label class="form-label fw-semibold small">Buscar produto</label>
               <input type="text" class="form-control form-control-sm" id="ft-busca"
-                placeholder="Digite o nome..." oninput="filtrarFichas()">
+                placeholder="Digite o nome..." oninput="if(this.value){document.getElementById('ft-cat').value='';document.getElementById('ft-tipo').value=''}; filtrarFichas()">
             </div>
             <div class="col-md-2">
               <label class="form-label fw-semibold small">Tipo</label>
