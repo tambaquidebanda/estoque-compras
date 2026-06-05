@@ -739,9 +739,10 @@ function setMoeda(id, val) {
   const el = document.getElementById(id);
   if (!el) return;
   const n = parseFloat(val) || 0;
-  el.value = n > 0
-    ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '';
+  if (!n) { el.value = ''; return; }
+  let str = n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (str.endsWith(',00')) str = str.slice(0, -3);
+  el.value = str;
 }
 
 function _parseCusto() {
