@@ -1845,9 +1845,12 @@ function renderInventario() {
         <select class="form-select form-select-sm" id="inv-un-${i}" style="width:75px;margin:auto">${unOpts}</select>
       </td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center inv-campo"
-          id="inv-val-${i}" min="0" step="0.01" value="${val.toFixed(2)}"
-          style="width:90px;margin:auto" oninput="calcLinhaInv(${i})">
+        <input type="text" class="form-control form-control-sm text-center inv-campo"
+          id="inv-val-${i}" inputmode="decimal"
+          value="${val > 0 ? val.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) : ''}"
+          placeholder="0,00" style="width:90px;margin:auto"
+          oninput="mascaraMoeda(this); calcLinhaInv(${i})"
+          onfocus="moedaFocus(this)" onblur="moedaBlur(this); calcLinhaInv(${i})">
       </td>
       <td class="text-center fw-bold text-success" id="inv-soma-${i}">R$ 0,00</td>
     </tr>`;
@@ -1860,7 +1863,7 @@ function calcLinhaInv(i) {
   const est = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
   const cb  = parseFloat(document.getElementById(`inv-cb-${i}`)?.value)  || 0;
   const out = parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0;
-  const val = parseFloat(document.getElementById(`inv-val-${i}`)?.value) || 0;
+  const val = parseMoeda(`inv-val-${i}`);
   const tot  = est + cb + out;
   const soma = tot * val;
   const totEl  = document.getElementById(`inv-tot-${i}`);
@@ -1899,7 +1902,7 @@ async function salvarInventario() {
     outros:         parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0,
     total:          parseFloat(document.getElementById(`inv-tot-${i}`)?.textContent) || 0,
     unidade:        document.getElementById(`inv-un-${i}`)?.value || 'UN',
-    valor_unitario: parseFloat(document.getElementById(`inv-val-${i}`)?.value) || 0,
+    valor_unitario: parseMoeda(`inv-val-${i}`),
     soma_total:     (() => {
       const v = (document.getElementById(`inv-soma-${i}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
       return parseFloat(v) || 0;
@@ -1928,7 +1931,7 @@ async function salvarInventario() {
   carregarHistoricoInv();
 
   // Limpa os campos
-  document.querySelectorAll('.inv-campo').forEach(el => { if (el.type === 'number' && !el.id.startsWith('inv-val-')) el.value = '0'; });
+  document.querySelectorAll('.inv-campo').forEach(el => { el.value = el.id.startsWith('inv-val-') ? '' : '0'; });
   document.querySelectorAll('[id^="inv-tot-"]').forEach(el => el.textContent = '0');
   document.querySelectorAll('[id^="inv-soma-"]').forEach(el => el.textContent = 'R$ 0,00');
   calcTotalInv();
