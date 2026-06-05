@@ -3729,7 +3729,7 @@ function atualizarCustoEfetivo() {
   const rendimento = 1 - (perda / 100);
   const efetivo    = rendimento > 0 ? (custo / fator) / rendimento : 0;
 
-  document.getElementById('prod-fator-label').textContent       = `1 ${unComp} = ${fator} ${unUso}`;
+  document.getElementById('prod-fator-label').textContent       = `1 ${unComp} = ${fator.toLocaleString('pt-BR', {maximumFractionDigits:2})} ${unUso}`;
   document.getElementById('prod-custo-efetivo').textContent     = brl(efetivo);
   document.getElementById('prod-custo-efetivo-un').textContent  = `por ${unUso}`;
 }
