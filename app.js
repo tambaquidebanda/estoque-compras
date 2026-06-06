@@ -4540,9 +4540,6 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
 
   // Monta rateio com plano_conta_id resolvido diretamente de cCat (por categoria do item)
   const g = _pedidosGrupos[pedido_num];
-  console.log('[rateio] cCat:', cCat.map(c => `${c.nome} → ${c.plano_conta_id}`));
-  console.log('[rateio] cPlanoConta:', cPlanoConta.map(p => p.nome));
-  console.log('[rateio] itens:', g?.itens?.map(i => `${i.produto} | cat:${i.categoria} | plano:${i.plano_conta}`));
   const rateioMap = {}; // chave: plano_conta_id || nome
   (g?.itens || []).forEach(it => {
     const catObj  = cCat.find(c => c.nome === it.categoria);
@@ -4550,7 +4547,6 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
     const pcId    = catObj?.plano_conta_id
       || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
       || null;
-    console.log(`[rateio] item "${it.produto}" → catObj:`, catObj?.nome, '| pcId:', pcId);
     const key     = pcId || pcNome;
     if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
     rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
@@ -4626,17 +4622,30 @@ async function confirmarGerarConta() {
   const temRateio   = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
 
+  // Resolve plano_conta_ids direto do banco (garante IDs corretos independente do cache)
+  let rateioItensResolvidos = [];
+  if (temRateio && _rateioItensAtual.length) {
+    const nomes = _rateioItensAtual.map(r => r.nome);
+    const { data: planosDB } = await sb.from('plano_contas').select('id,nome').in('nome', nomes);
+    const pcMap = {};
+    (planosDB || []).forEach(p => { pcMap[p.nome] = p.id; });
+    rateioItensResolvidos = _rateioItensAtual.map(r => ({
+      ...r,
+      plano_conta_id: r.plano_conta_id || pcMap[r.nome] || null,
+    }));
+  }
+
   // Upsert em cmp_contas_pagar
-  const { data: conta } = await sb.from('cmp_contas_pagar').upsert([{
-    pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente',
-  }], { onConflict: 'pedido_num' }).select().single();
+  const { data: conta } = await sb.from('cmp_contas_pagar')
+    .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
+            { onConflict: 'pedido_num', ignoreDuplicates: false })
+    .select().single();
 
   await gerarContaFinanceiro({
     pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
     plano_conta, nf_numero, conta_id: conta?.id || null,
     obs: obs || `Pedido ${pedido_num}`,
-    temRateio,
-    rateioItensResolvidos: temRateio ? _rateioItensAtual : [],
+    temRateio, rateioItensResolvidos,
   });
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
