@@ -1414,9 +1414,15 @@ async function renderListaCad(tipo) {
     ? rows.map(r => `
         <div class="lista-item">
           <span>${esc(r.nome)}${c.extra ? c.extra(r) : ''}</span>
-          <button class="btn-del" onclick="excluirCad('${c.tbl}','${r.id}','${tipo}')" title="Excluir">
-            <i class="bi bi-trash"></i>
-          </button>
+          <div class="d-flex gap-1">
+            ${tipo === 'categorias' ? `
+            <button class="btn-del" style="background:#e8f4f8;color:#0d6efd" onclick="editarPlanoCategoria('${r.id}','${esc(r.nome)}','${r.plano_conta_id||''}')" title="Editar plano de contas">
+              <i class="bi bi-pencil"></i>
+            </button>` : ''}
+            <button class="btn-del" onclick="excluirCad('${c.tbl}','${r.id}','${tipo}')" title="Excluir">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
         </div>`).join('')
     : '<p class="text-muted small p-2 mb-0">Nenhum item cadastrado.</p>';
 }
@@ -1492,6 +1498,38 @@ async function excluirCad(tabela, id, tipo) {
   toast('Excluído.', 'ok');
   await carregarCaches();
   renderListaCad(tipo);
+}
+
+function editarPlanoCategoria(catId, catNome, planoAtualId) {
+  const opts = cPlanoConta.map(p =>
+    `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`
+  ).join('');
+
+  document.getElementById('epc-titulo').textContent  = catNome;
+  document.getElementById('epc-cat-id').value        = catId;
+  document.getElementById('epc-plano').innerHTML     = `<option value="">— Sem vínculo —</option>${opts}`;
+  document.getElementById('epc-plano').value         = planoAtualId || '';
+
+  new bootstrap.Modal(document.getElementById('modal-editar-plano-cat')).show();
+}
+
+async function salvarPlanoCategoria() {
+  const catId   = document.getElementById('epc-cat-id').value;
+  const novoId  = document.getElementById('epc-plano').value || null;
+  const planoObj = cPlanoConta.find(p => p.id === novoId);
+  const planoNome = planoObj?.nome || '';
+
+  const { error } = await sb.from('cmp_categorias').update({
+    plano_conta_id: novoId || null,
+    plano_conta:    planoNome,
+  }).eq('id', catId);
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-editar-plano-cat'))?.hide();
+
+  if (error) { toast('Erro ao atualizar: ' + error.message, 'erro'); return; }
+  toast(`✅ Plano de contas atualizado!`, 'ok');
+  await carregarCaches();
+  renderListaCad('categorias');
 }
 
 
