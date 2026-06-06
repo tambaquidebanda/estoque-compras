@@ -20,3 +20,9 @@ ALTER TABLE rascunho_rateio_itens ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "acesso_total" ON rascunho_rateio_itens FOR ALL USING (true) WITH CHECK (true);
 
 NOTIFY pgrst, 'reload schema';
+
+-- Adiciona plano_conta_id (FK) em cmp_categorias para lookup direto por ID
+ALTER TABLE cmp_categorias
+  ADD COLUMN IF NOT EXISTS plano_conta_id uuid REFERENCES plano_contas(id) ON DELETE SET NULL;
+
+NOTIFY pgrst, 'reload schema';

@@ -27,6 +27,9 @@ let ftFichasCache  = []; // fichas carregadas
 let _pedidoItens    = [];   // itens do pedido em construção
 let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
 
+// plano de contas do financeiro (para resolver IDs sem busca no banco)
+let cPlanoConta = [];   // { id, nome }
+
 
 // ═══════════════════════════════════════════════════════════════
 // INIT
@@ -252,6 +255,14 @@ function toggleFormCad(key) {
   if (!el) return;
   el.classList.toggle('d-none');
   if (!el.classList.contains('d-none')) {
+    // Popula dropdown de plano de contas ao abrir o form de categorias
+    if (key === 'cat') {
+      const sel = document.getElementById('n-plano');
+      if (sel && cPlanoConta.length) {
+        sel.innerHTML = '<option value="">— Plano de contas (opcional) —</option>' +
+          cPlanoConta.map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+      }
+    }
     el.querySelector('input')?.focus();
   }
 }
@@ -338,20 +349,22 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, comp, hist, grp] = await Promise.all([
+  const [f, cat, tip, comp, hist, grp, pc] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
-    sb.from('cmp_categorias').select('id,nome,plano_conta').eq('ativo', true).order('nome'),
+    sb.from('cmp_categorias').select('id,nome,plano_conta,plano_conta_id').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
+    sb.from('plano_contas').select('id,nome').order('nome'),
   ]);
 
-  cForn   = f.data    || [];
-  cCat    = cat.data  || [];
-  cTipo   = tip.data  || [];
-  cComp   = comp.data || [];
-  cGrupos = grp.data  || [];
+  cForn       = f.data    || [];
+  cCat        = cat.data  || [];
+  cTipo       = tip.data  || [];
+  cComp       = comp.data || [];
+  cGrupos     = grp.data  || [];
+  cPlanoConta = pc.data   || [];
 
   // Build unique product list from past purchases — ordered DESC so first hit = last price
   const seen = new Set();
@@ -1384,7 +1397,7 @@ async function importarComprasExcel(event) {
 async function renderListaCad(tipo) {
   const cfg = {
     fornecedores: { tbl: 'fornecedores',      el: 'lst-fornecedores', extra: null },
-    categorias:   { tbl: 'cmp_categorias',    el: 'lst-categorias',   extra: r => r.plano_conta ? `<small class="text-muted ms-2">${esc(r.plano_conta)}</small>` : '' },
+    categorias:   { tbl: 'cmp_categorias',    el: 'lst-categorias',   extra: r => r.plano_conta ? `<small class="text-muted ms-2">→ ${esc(r.plano_conta)}</small>` : '<small class="text-warning ms-2">sem plano</small>' },
     tipos:        { tbl: 'cmp_tipos_produto', el: 'lst-tipos',        extra: null },
     compradores:  { tbl: 'cmp_compradores',   el: 'lst-compradores',  extra: null },
   };
@@ -1392,7 +1405,7 @@ async function renderListaCad(tipo) {
   const c = cfg[tipo];
   if (!c) return;
 
-  const cols = c.tbl === 'cmp_categorias' ? 'id,nome,plano_conta' : 'id,nome';
+  const cols = c.tbl === 'cmp_categorias' ? 'id,nome,plano_conta,plano_conta_id' : 'id,nome';
   const { data } = await sb.from(c.tbl).select(cols).order('nome');
   const rows = data || [];
   const el   = document.getElementById(c.el);
@@ -1423,11 +1436,17 @@ async function addFornecedor() {
 }
 
 async function addCategoria() {
-  const nome  = (document.getElementById('n-cat').value   || '').trim();
-  const plano = (document.getElementById('n-plano').value || '').trim();
+  const nome         = (document.getElementById('n-cat').value || '').trim();
+  const planoId      = document.getElementById('n-plano').value || null;
+  const planoObj     = cPlanoConta.find(p => p.id === planoId);
+  const planoNome    = planoObj?.nome || '';
   if (!nome) return;
   const msg = document.getElementById('msg-cad-cat');
-  const { error } = await sb.from('cmp_categorias').insert([{ nome, plano_conta: plano }]);
+  const { error } = await sb.from('cmp_categorias').insert([{
+    nome,
+    plano_conta:    planoNome,
+    plano_conta_id: planoId || null,
+  }]);
   if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
   document.getElementById('n-cat').value   = '';
   document.getElementById('n-plano').value = '';
@@ -4585,22 +4604,19 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
   const producao = modoIntegracaoProducao();
 
-  // Resolve plano_conta_id principal (null quando tem rateio)
-  let plano_conta_id = null;
-  if (!temRateio && plano_conta && plano_conta !== '—') {
-    const { data: pc } = await sb.from('plano_contas').select('id').ilike('nome', plano_conta).single();
-    plano_conta_id = pc?.id || null;
-  }
+  // Resolve plano_conta_id a partir do cache local (sem busca no banco)
+  const _resolverPlanoId = (nome) => {
+    if (!nome || nome === '—') return null;
+    return cPlanoConta.find(p => p.nome.toLowerCase() === nome.toLowerCase())?.id || null;
+  };
 
-  // Resolve IDs dos planos de contas do rateio
+  const plano_conta_id = temRateio ? null : _resolverPlanoId(plano_conta);
+
+  // Monta rateio com IDs já resolvidos
   let rateioItens = [];
   if (temRateio) {
-    const nomesRateio = Object.keys(rateioGrupos);
-    const { data: pcs } = await sb.from('plano_contas').select('id,nome').in('nome', nomesRateio);
-    const pcMap = {};
-    (pcs || []).forEach(pc => { pcMap[pc.nome] = pc.id; });
     rateioItens = Object.entries(rateioGrupos).map(([nome, val]) => ({
-      plano_conta_id: pcMap[nome] || null,
+      plano_conta_id: _resolverPlanoId(nome),
       valor:          val,
       descricao:      nome,
     }));

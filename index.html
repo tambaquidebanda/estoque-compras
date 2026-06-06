@@ -842,7 +842,9 @@
                 onkeydown="if(event.key==='Enter') addCategoria()">
             </div>
             <div class="col-md-4">
-              <input type="text" class="form-control" id="n-plano" placeholder="Plano de conta (opcional)">
+              <select class="form-select" id="n-plano">
+                <option value="">— Plano de contas (opcional) —</option>
+              </select>
             </div>
             <div class="col-md-3 d-flex gap-2">
               <button class="btn btn-primary w-100" onclick="addCategoria()">Adicionar</button>
