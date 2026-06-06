@@ -23,6 +23,10 @@ let cProdutosFT  = [];   // all est_produtos for autocomplete
 let ftIngredientes = []; // ingredientes da ficha em edição
 let ftFichasCache  = []; // fichas carregadas
 
+// pedido de compra multi-item (acumulados antes de finalizar)
+let _pedidoItens    = [];   // itens do pedido em construção
+let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
+
 
 // ═══════════════════════════════════════════════════════════════
 // INIT
@@ -808,73 +812,161 @@ function calcTot() {
   document.getElementById('c-total-show').textContent = brl(custo * qtd);
 }
 
-async function salvarCompra(e) {
+// Adiciona um item à lista temporária do pedido
+function adicionarItemPedido(e) {
   e.preventDefault();
 
   const data     = document.getElementById('c-data').value;
   const fornNome = document.getElementById('c-forn').value.trim();
   const fornId   = document.getElementById('c-forn-id').value || null;
+  const comp     = document.getElementById('c-comp').value;
   const prod     = document.getElementById('c-prod').value.trim();
   const cat      = document.getElementById('c-cat').value;
-  const tipo     = document.getElementById('c-tipo').value;
   const un       = document.getElementById('c-un').value;
   const custo    = _parseCusto();
-  const qtd      = parseFloat(document.getElementById('c-qtd').value);
-  const comp     = document.getElementById('c-comp').value;
+  const qtd      = parseFloat(document.getElementById('c-qtd').value) || 0;
   const uso      = document.getElementById('c-uso').value;
-  const obs      = document.getElementById('c-obs').value.trim();
 
-  if (!data || !fornNome || !prod || !cat || !tipo || !custo || !qtd || !comp) {
-    toast('Preencha todos os campos obrigatórios.', 'erro'); return;
+  if (!data || !fornNome || !comp) {
+    toast('Preencha Data, Fornecedor e Comprador.', 'erro'); return;
+  }
+  if (!prod || !cat || !custo || !qtd) {
+    toast('Preencha Produto, Categoria, Custo e Quantidade.', 'erro'); return;
   }
 
-  const catObj    = cCat.find(c => c.nome === cat);
+  const catObj     = cCat.find(c => c.nome === cat);
   const planoConta = catObj ? (catObj.plano_conta || '') : '';
 
-  const pedido_num = await _gerarNumeroPedido();
+  _pedidoItens.push({
+    data, fornNome, fornId, comp,
+    prod, cat, planoConta, un, custo, qtd, uso,
+    total: custo * qtd,
+  });
 
-  const { error } = await sb.from('cmp_compras').insert([{
-    data, pedido_num,
-    fornecedor_id:   fornId,
-    fornecedor_nome: fornNome,
-    produto:         prod,
-    categoria:       cat,
-    plano_conta:     planoConta,
-    tipo_produto:    tipo,
-    unidade_med:     un,
-    custo_unit:      custo,
-    quantidade:      qtd,
-    comprador:       comp,
-    unidade_uso:     uso,
-    observacao:      obs || null,
-    status_receb:    'pendente',
-    criado_por:      user.id,
-  }]);
-
-  if (error) { toast('Erro ao salvar compra: ' + error.message, 'erro'); return; }
-
-  toast(`✅ ${prod} — Pedido ${pedido_num} — ${brl(custo * qtd)}`, 'ok');
-
-  document.getElementById('c-prod').value   = '';
-  document.getElementById('c-custo').value  = '';
-  document.getElementById('c-total-show').textContent = 'R$ 0,00';
-  document.getElementById('c-qtd').value    = '1';
-  document.getElementById('c-obs').value    = '';
-  const unEl = document.getElementById('c-un');
-  if (unEl) { unEl.style.pointerEvents = ''; unEl.style.opacity = ''; unEl.title = ''; }
+  // Limpa apenas os campos de item
+  document.getElementById('c-prod').value  = '';
+  document.getElementById('c-custo').value = '';
+  document.getElementById('c-qtd').value   = '1';
   document.getElementById('c-total-show').textContent = 'R$ 0,00';
   document.getElementById('bloco-estoque').style.display = 'none';
+  const unEl = document.getElementById('c-un');
+  if (unEl) { unEl.style.pointerEvents = ''; unEl.style.opacity = ''; unEl.title = ''; }
   document.getElementById('c-prod').focus();
 
   if (!cProd.find(p => p.nome.toLowerCase() === prod.toLowerCase())) {
     cProd.push({ nome: prod, unidade_med: un, categoria: cat });
   }
 
-  // Atualiza próximo número e lista de pedidos
-  const proxNum = await _gerarNumeroPedido();
-  const numEl = document.getElementById('prox-pedido-num');
-  if (numEl) numEl.textContent = proxNum;
+  _renderItensPedido();
+}
+
+function _renderItensPedido() {
+  const bloco   = document.getElementById('bloco-itens-pedido');
+  const tbody   = document.getElementById('tb-itens-pedido');
+  const tfoot   = document.getElementById('tfoot-itens-pedido');
+  const btnFin  = document.getElementById('btn-finalizar-pedido');
+  const btnCanc = document.getElementById('btn-cancelar-pedido');
+
+  if (!_pedidoItens.length) {
+    bloco.style.display   = 'none';
+    btnFin.disabled       = true;
+    btnCanc.style.display = 'none';
+    return;
+  }
+
+  bloco.style.display   = '';
+  btnFin.disabled       = false;
+  btnCanc.style.display = '';
+
+  tbody.innerHTML = _pedidoItens.map((it, idx) => `
+    <tr>
+      <td><strong>${esc(it.prod)}</strong></td>
+      <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
+      <td class="text-center">${it.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
+      <td class="text-center">${esc(it.un)}</td>
+      <td class="text-end">${brl(it.custo)}</td>
+      <td class="text-end fw-bold">${brl(it.total)}</td>
+      <td class="text-center">
+        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removerItemPedido(${idx})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`).join('');
+
+  // Subtotais por plano de contas
+  const grupos = {};
+  _pedidoItens.forEach(it => {
+    const k = it.planoConta || it.cat || '—';
+    grupos[k] = (grupos[k] || 0) + it.total;
+  });
+  const totalGeral = _pedidoItens.reduce((s, it) => s + it.total, 0);
+
+  const linhasGrupo = Object.entries(grupos).map(([k, v]) =>
+    `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td></td></tr>`
+  ).join('');
+
+  tfoot.innerHTML = linhasGrupo +
+    `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total do Pedido</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td></td></tr>`;
+}
+
+function removerItemPedido(idx) {
+  _pedidoItens.splice(idx, 1);
+  _renderItensPedido();
+}
+
+async function finalizarPedido() {
+  if (!_pedidoItens.length) { toast('Adicione pelo menos um item ao pedido.', 'erro'); return; }
+
+  const btn = document.getElementById('btn-finalizar-pedido');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
+
+  const pedido_num = await _gerarNumeroPedido();
+  const { data: head } = _pedidoItens[0];
+
+  const rows = _pedidoItens.map(it => ({
+    data:            it.data,
+    pedido_num,
+    fornecedor_id:   it.fornId,
+    fornecedor_nome: it.fornNome,
+    produto:         it.prod,
+    categoria:       it.cat,
+    plano_conta:     it.planoConta,
+    tipo_produto:    it.uso,
+    unidade_med:     it.un,
+    custo_unit:      it.custo,
+    quantidade:      it.qtd,
+    comprador:       it.comp,
+    unidade_uso:     it.uso,
+    observacao:      null,
+    status_receb:    'pendente',
+    criado_por:      user.id,
+  }));
+
+  const { error } = await sb.from('cmp_compras').insert(rows);
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+
+  if (error) { toast('Erro ao salvar pedido: ' + error.message, 'erro'); return; }
+
+  const total = _pedidoItens.reduce((s, it) => s + it.total, 0);
+  toast(`✅ Pedido ${pedido_num} finalizado — ${_pedidoItens.length} item(s) — ${brl(total)}`, 'ok');
+
+  cancelarPedido();
   consultarPedidos();
+}
+
+function cancelarPedido() {
+  _pedidoItens = [];
+  _renderItensPedido();
+
+  // Limpa cabeçalho e campos de item
+  document.getElementById('c-prod').value  = '';
+  document.getElementById('c-custo').value = '';
+  document.getElementById('c-qtd').value   = '1';
+  document.getElementById('c-total-show').textContent = 'R$ 0,00';
+  document.getElementById('bloco-estoque').style.display = 'none';
 }
 
 
@@ -2829,6 +2921,10 @@ async function renderPendentes() {
 
   let lista = Object.values(grupos).sort((a,b) => b.data.localeCompare(a.data));
 
+  // Salva grupos para o modal de financeiro
+  _pedidosGrupos = {};
+  lista.forEach(g => { _pedidosGrupos[g.pedido_num] = g; });
+
   // Popula filtro de fornecedor
   const fornEl = document.getElementById('receb-forn');
   if (fornEl) {
@@ -2870,7 +2966,7 @@ async function renderPendentes() {
            <i class="bi bi-hourglass-split"></i> Aguardando
          </button>`
       : `<button class="btn btn-sm btn-outline-primary py-0 px-2"
-           onclick="abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}','${esc(g.plano_conta||'')}',${g.total})">
+           onclick="abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})">
            <i class="bi bi-arrow-left-right"></i> Financeiro
          </button>`;
     return `
@@ -4358,17 +4454,42 @@ function inicializarToggleIntegracao() {
   }
 }
 
-function abrirGerarConta(pedido_num, forn, fornId, plano, total) {
-  document.getElementById('gc-pedido-num').value      = pedido_num;
-  document.getElementById('gc-fornecedor-id').value   = fornId;
-  document.getElementById('gc-pedido-label').textContent    = pedido_num;
+function abrirGerarConta(pedido_num, forn, fornId, total) {
+  document.getElementById('gc-pedido-num').value           = pedido_num;
+  document.getElementById('gc-fornecedor-id').value        = fornId;
+  document.getElementById('gc-pedido-label').textContent   = pedido_num;
   document.getElementById('gc-fornecedor-label').textContent = forn || '—';
-  document.getElementById('gc-plano-label').textContent     = plano || '—';
   setMoeda('gc-valor', total);
   document.getElementById('gc-vencimento').value = '';
   document.getElementById('gc-nf').value         = '';
   document.getElementById('gc-obs').value        = `Pedido ${pedido_num}`;
   document.getElementById('gc-preview').classList.add('d-none');
+
+  // Monta rateio a partir dos itens do pedido
+  const g = _pedidosGrupos[pedido_num];
+  const rateioGrupos = {};
+  (g?.itens || []).forEach(it => {
+    const k = it.plano_conta || it.categoria || '—';
+    rateioGrupos[k] = (rateioGrupos[k] || 0) + (it.quantidade || 0) * (it.custo_unit || 0);
+  });
+  const rateioEntries = Object.entries(rateioGrupos);
+  const temRateio = rateioEntries.length > 1;
+
+  const rateioSection  = document.getElementById('gc-rateio-section');
+  const planoSection   = document.getElementById('gc-plano-section');
+  const rateioBody     = document.getElementById('gc-rateio-body');
+
+  if (temRateio) {
+    rateioSection.classList.remove('d-none');
+    planoSection.classList.add('d-none');
+    rateioBody.innerHTML = rateioEntries.map(([k, v]) =>
+      `<tr><td>${esc(k)}</td><td class="text-end">${brl(v)}</td></tr>`
+    ).join('');
+  } else {
+    rateioSection.classList.add('d-none');
+    planoSection.classList.remove('d-none');
+    document.getElementById('gc-plano-label').textContent = rateioEntries[0]?.[0] || '—';
+  }
 
   const prodMode = modoIntegracaoProducao();
   document.getElementById('btn-gc-label').textContent = prodMode
@@ -4380,17 +4501,18 @@ function abrirGerarConta(pedido_num, forn, fornId, plano, total) {
 }
 
 function previewContaFinanceiro() {
-  const valor     = parseMoeda('gc-valor');
-  const venc      = document.getElementById('gc-vencimento').value;
-  const nf        = document.getElementById('gc-nf').value.trim();
-  const obs       = document.getElementById('gc-obs').value.trim();
-  const pedido    = document.getElementById('gc-pedido-num').value;
-  const forn      = document.getElementById('gc-fornecedor-label').textContent;
-  const plano     = document.getElementById('gc-plano-label').textContent;
+  const valor  = parseMoeda('gc-valor');
+  const venc   = document.getElementById('gc-vencimento').value;
+  const nf     = document.getElementById('gc-nf').value.trim();
+  const obs    = document.getElementById('gc-obs').value.trim();
+  const pedido = document.getElementById('gc-pedido-num').value;
+  const forn   = document.getElementById('gc-fornecedor-label').textContent;
 
   if (!valor || !venc) { toast('Informe valor e vencimento antes de visualizar.', 'erro'); return; }
 
-  const preview = document.getElementById('gc-preview');
+  const temRateio = !document.getElementById('gc-rateio-section').classList.contains('d-none');
+  const plano = temRateio ? 'Rateio' : document.getElementById('gc-plano-label').textContent;
+
   document.getElementById('gc-preview-dados').innerHTML = `
     <div class="row g-2">
       <div class="col-6"><strong>tipo:</strong> pagar</div>
@@ -4403,38 +4525,43 @@ function previewContaFinanceiro() {
       <div class="col-6"><strong>plano_contas:</strong> ${plano}</div>
       ${obs ? `<div class="col-12"><strong>observacoes:</strong> ${obs}</div>` : ''}
     </div>`;
-  preview.classList.remove('d-none');
+  document.getElementById('gc-preview').classList.remove('d-none');
 }
 
 async function confirmarGerarConta() {
-  const pedido_num   = document.getElementById('gc-pedido-num').value;
+  const pedido_num    = document.getElementById('gc-pedido-num').value;
   const fornecedor_id = document.getElementById('gc-fornecedor-id').value || null;
-  const valor        = parseMoeda('gc-valor');
-  const vencimento   = document.getElementById('gc-vencimento').value;
-  const nf_numero    = document.getElementById('gc-nf').value.trim() || null;
-  const obs          = document.getElementById('gc-obs').value.trim();
-  const forn_nome    = document.getElementById('gc-fornecedor-label').textContent;
-  const plano_conta  = document.getElementById('gc-plano-label').textContent;
+  const valor         = parseMoeda('gc-valor');
+  const vencimento    = document.getElementById('gc-vencimento').value;
+  const nf_numero     = document.getElementById('gc-nf').value.trim() || null;
+  const obs           = document.getElementById('gc-obs').value.trim();
+  const forn_nome     = document.getElementById('gc-fornecedor-label').textContent;
 
   if (!valor || valor <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
 
+  // Monta rateio
+  const temRateio = !document.getElementById('gc-rateio-section').classList.contains('d-none');
+  const g = _pedidosGrupos[pedido_num];
+  const rateioGrupos = {};
+  if (temRateio && g?.itens) {
+    g.itens.forEach(it => {
+      const k = it.plano_conta || it.categoria || '—';
+      rateioGrupos[k] = (rateioGrupos[k] || 0) + (it.quantidade || 0) * (it.custo_unit || 0);
+    });
+  }
+  const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
+
   // Upsert em cmp_contas_pagar
   const { data: conta } = await sb.from('cmp_contas_pagar').upsert([{
-    pedido_num,
-    fornecedor:  forn_nome,
-    vencimento,
-    valor,
-    nf_numero,
-    status: 'pendente',
+    pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente',
   }], { onConflict: 'pedido_num' }).select().single();
 
   await gerarContaFinanceiro({
-    pedido_num, vencimento, valor,
-    fornecedor_id, fornecedor_nome: forn_nome,
-    plano_conta, nf_numero,
-    conta_id: conta?.id || null,
+    pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+    plano_conta, nf_numero, conta_id: conta?.id || null,
     obs: obs || `Pedido ${pedido_num}`,
+    temRateio, rateioGrupos,
   });
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
@@ -4442,18 +4569,32 @@ async function confirmarGerarConta() {
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
-  fornecedor_nome, plano_conta, nf_numero, conta_id, obs }) {
+  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioGrupos = {} }) {
 
   const producao = modoIntegracaoProducao();
 
-  // Busca plano_conta_id pelo nome
+  // Resolve plano_conta_id principal (null quando tem rateio)
   let plano_conta_id = null;
-  if (plano_conta && plano_conta !== '—') {
+  if (!temRateio && plano_conta && plano_conta !== '—') {
     const { data: pc } = await sb.from('plano_contas').select('id').ilike('nome', plano_conta).single();
     plano_conta_id = pc?.id || null;
   }
 
-  const dadosLancamento = {
+  // Resolve IDs dos planos de contas do rateio
+  let rateioItens = [];
+  if (temRateio) {
+    const nomesRateio = Object.keys(rateioGrupos);
+    const { data: pcs } = await sb.from('plano_contas').select('id,nome').in('nome', nomesRateio);
+    const pcMap = {};
+    (pcs || []).forEach(pc => { pcMap[pc.nome] = pc.id; });
+    rateioItens = Object.entries(rateioGrupos).map(([nome, val]) => ({
+      plano_conta_id: pcMap[nome] || null,
+      valor:          val,
+      descricao:      nome,
+    }));
+  }
+
+  const dadosBase = {
     descricao:      `Pedido ${pedido_num} — ${fornecedor_nome}`,
     valor,
     vencimento,
@@ -4463,27 +4604,45 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
     plano_conta_id: plano_conta_id,
     numero_pedido:  nf_numero || pedido_num,
     observacoes:    obs || null,
-    data_pagamento: null,
     acrescimo:      0,
     desconto:       0,
+    tem_rateio:     temRateio,
   };
 
   if (!producao) {
-    // Modo Teste — grava em lancamentos_rascunho para revisão no financeiro
-    const { data_pagamento: _, ...dadosRascunho } = dadosLancamento;
-    const { error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
+    // Modo Teste — grava em lancamentos_rascunho
+    const { data_pagamento: _, tem_rateio: tr, ...dadosRascunho } = { data_pagamento: null, ...dadosBase };
+    const { data: rasc, error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
       ...dadosRascunho,
+      tem_rateio: temRateio,
       pedido_num,
       conta_id: conta_id || null,
-    }]);
+    }]).select('id').single();
     if (errRasc) { toast('Erro ao salvar rascunho: ' + errRasc.message, 'erro'); return; }
-    toast(`🧪 Rascunho enviado ao financeiro para revisão! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
+
+    // Grava itens de rateio do rascunho
+    if (temRateio && rasc?.id && rateioItens.length) {
+      await sb.from('rascunho_rateio_itens').insert(
+        rateioItens.map(r => ({ ...r, rascunho_id: rasc.id }))
+      );
+    }
+
+    toast(`🧪 Rascunho enviado ao financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
     return;
   }
 
   // Modo Produção — grava em lancamentos
-  const { data: lanc, error } = await sb.from('lancamentos').insert([dadosLancamento]).select('id').single();
+  const { data: lanc, error } = await sb.from('lancamentos').insert([{
+    ...dadosBase, data_pagamento: null,
+  }]).select('id').single();
   if (error) { toast('Erro ao gerar no financeiro: ' + error.message, 'erro'); return; }
+
+  // Grava rateio_itens
+  if (temRateio && lanc?.id && rateioItens.length) {
+    await sb.from('rateio_itens').insert(
+      rateioItens.map(r => ({ ...r, lancamento_id: lanc.id }))
+    );
+  }
 
   // Registra lancamento_id na conta a pagar local
   if (conta_id && lanc?.id) {

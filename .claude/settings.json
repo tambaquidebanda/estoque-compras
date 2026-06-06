@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /Users/wagnercarvalho/.claude/projects/)",
+      "Read(//Users/wagnercarvalho/.claude/projects/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(ls /Users/wagnercarvalho/Documents/GitHub/)",
+      "Read(//Users/wagnercarvalho/Documents/GitHub/**)",
+      "Bash(ls /Users/wagnercarvalho/restaurante-financeiro/)",
+      "Read(//Users/wagnercarvalho/restaurante-financeiro/**)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro status)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro add app.js index.html supabase.js)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro commit -m ' *)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro add app.js index.html)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro add index.html)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro revert HEAD --no-edit)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro log --oneline -8)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro revert a74aafa --no-edit)",
+      "Bash(git -C /Users/wagnercarvalho/restaurante-financeiro revert 4405535 --no-edit)"
+    ],
+    "additionalDirectories": [
+      "/Users/wagnercarvalho/restaurante-financeiro"
+    ]
+  }
+}
