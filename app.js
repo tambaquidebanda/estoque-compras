@@ -4538,16 +4538,21 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   document.getElementById('gc-obs').value        = `Pedido ${pedido_num}`;
   document.getElementById('gc-preview').classList.add('d-none');
 
-  // Monta rateio com plano_conta_id resolvido diretamente de cCat (por categoria do item)
+  // Busca categorias do banco pelo nome (garante plano_conta_id mesmo com cCat vazio)
   const g = _pedidosGrupos[pedido_num];
-  const rateioMap = {}; // chave: plano_conta_id || nome
+  const catNomes = [...new Set((g?.itens || []).map(it => it.categoria).filter(Boolean))];
+  const { data: catData } = catNomes.length
+    ? await sb.from('cmp_categorias').select('nome,plano_conta,plano_conta_id').in('nome', catNomes)
+    : { data: [] };
+  const catDbMap = {};
+  (catData || []).forEach(c => { catDbMap[c.nome] = c; });
+
+  const rateioMap = {};
   (g?.itens || []).forEach(it => {
-    const catObj  = cCat.find(c => c.nome === it.categoria);
-    const pcNome  = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
-    const pcId    = catObj?.plano_conta_id
-      || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
-      || null;
-    const key     = pcId || pcNome;
+    const catObj = catDbMap[it.categoria] || cCat.find(c => c.nome === it.categoria);
+    const pcNome = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
+    const pcId   = catObj?.plano_conta_id || null;
+    const key    = pcId || pcNome;
     if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
     rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
   });
@@ -4622,20 +4627,8 @@ async function confirmarGerarConta() {
   const temRateio   = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
 
-  // Resolve plano_conta_ids via cmp_categorias (tabela do estoque — acesso garantido)
-  let rateioItensResolvidos = [];
-  if (temRateio && _rateioItensAtual.length) {
-    const nomes = _rateioItensAtual.map(r => r.nome).filter(Boolean);
-    const { data: catDB } = await sb.from('cmp_categorias')
-      .select('plano_conta,plano_conta_id')
-      .in('plano_conta', nomes);
-    const pcMap = {};
-    (catDB || []).forEach(c => { if (c.plano_conta_id) pcMap[c.plano_conta] = c.plano_conta_id; });
-    rateioItensResolvidos = _rateioItensAtual.map(r => ({
-      ...r,
-      plano_conta_id: r.plano_conta_id || pcMap[r.nome] || null,
-    }));
-  }
+  // plano_conta_id já resolvido em abrirGerarConta via query direta ao banco
+  const rateioItensResolvidos = temRateio ? _rateioItensAtual : [];
 
   // Upsert em cmp_contas_pagar
   const { data: conta } = await sb.from('cmp_contas_pagar')
