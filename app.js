@@ -207,7 +207,7 @@ function ir(nome, el) {
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
-  if (nome === 'recebimento')   { abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link')); }
+  if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
   if (nome === 'backup')        inicializarToggleIntegracao();
