@@ -753,8 +753,10 @@ function selecionarProd(nome, un, cat) {
   }
   fechaAC('ac-prod');
 
-  // Preenche custo: último preço de compra > custo_uso do catálogo
-  const custo = prodLista?.custo_unit > 0 ? prodLista.custo_unit : (prodCat?.custo_uso || 0);
+  // Preenche custo: último preço de compra > custo_comp do catálogo > custo_uso
+  const custo = prodLista?.custo_unit > 0
+    ? prodLista.custo_unit
+    : (prodCat?.custo_comp || prodCat?.custo_uso || 0);
   if (custo > 0) {
     document.getElementById('c-custo').value = custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     calcTot();
