@@ -4622,13 +4622,15 @@ async function confirmarGerarConta() {
   const temRateio   = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
 
-  // Resolve plano_conta_ids direto do banco (garante IDs corretos independente do cache)
+  // Resolve plano_conta_ids via cmp_categorias (tabela do estoque — acesso garantido)
   let rateioItensResolvidos = [];
   if (temRateio && _rateioItensAtual.length) {
-    const nomes = _rateioItensAtual.map(r => r.nome);
-    const { data: planosDB } = await sb.from('plano_contas').select('id,nome').in('nome', nomes);
+    const nomes = _rateioItensAtual.map(r => r.nome).filter(Boolean);
+    const { data: catDB } = await sb.from('cmp_categorias')
+      .select('plano_conta,plano_conta_id')
+      .in('plano_conta', nomes);
     const pcMap = {};
-    (planosDB || []).forEach(p => { pcMap[p.nome] = p.id; });
+    (catDB || []).forEach(c => { if (c.plano_conta_id) pcMap[c.plano_conta] = c.plano_conta_id; });
     rateioItensResolvidos = _rateioItensAtual.map(r => ({
       ...r,
       plano_conta_id: r.plano_conta_id || pcMap[r.nome] || null,
