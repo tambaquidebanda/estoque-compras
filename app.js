@@ -343,7 +343,7 @@ async function carregarCaches() {
     sb.from('cmp_categorias').select('id,nome,plano_conta').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
-    sb.from('cmp_compras').select('produto,unidade_med,categoria').order('produto'),
+    sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
   ]);
 
@@ -353,13 +353,13 @@ async function carregarCaches() {
   cComp   = comp.data || [];
   cGrupos = grp.data  || [];
 
-  // Build unique product list from past purchases (self-learning autocomplete)
+  // Build unique product list from past purchases — ordered DESC so first hit = last price
   const seen = new Set();
   cProd = [];
   (hist.data || []).forEach(r => {
     if (r.produto && !seen.has(r.produto.toLowerCase())) {
       seen.add(r.produto.toLowerCase());
-      cProd.push({ nome: r.produto, unidade_med: r.unidade_med, categoria: r.categoria });
+      cProd.push({ nome: r.produto, un: r.unidade_med, cat: r.categoria, custo_unit: r.custo_unit || 0 });
     }
   });
 }
@@ -696,13 +696,20 @@ function acProd(val) {
   if (!val) { lista.classList.remove('aberta'); return; }
   const q = val.toLowerCase();
 
-  // Busca apenas nos 347 produtos de compra da planilha categorizada
-  const hits = PRODUTOS_COMPRA.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 10);
+  // Combina histórico de compras (cProd) com catálogo (cProdutosFT)
+  const vistos = new Set();
+  const hits = [];
+  [...cProd, ...cProdutosFT.map(p => ({ nome: p.nome, un: p.unidade_uso, cat: p.categoria }))].forEach(p => {
+    if (p.nome.toLowerCase().includes(q) && !vistos.has(p.nome.toLowerCase())) {
+      vistos.add(p.nome.toLowerCase());
+      hits.push(p);
+    }
+  });
 
   if (!hits.length) { lista.classList.remove('aberta'); return; }
 
-  lista.innerHTML = hits.map(p =>
-    `<div class="ac-item" onmousedown="selecionarProd('${esc(p.nome)}','${esc(p.un)}','${esc(p.cat)}')">${esc(p.nome)} <small class="text-muted">${esc(p.un)}</small></div>`
+  lista.innerHTML = hits.slice(0, 10).map(p =>
+    `<div class="ac-item" onmousedown="selecionarProd('${esc(p.nome)}','${esc(p.un||'')}','${esc(p.cat||'')}')">${esc(p.nome)} <small class="text-muted">${esc(p.un||'')}</small></div>`
   ).join('');
   lista.classList.add('aberta');
 }
@@ -710,15 +717,15 @@ function acProd(val) {
 function selecionarProd(nome, un, cat) {
   document.getElementById('c-prod').value = nome;
 
-  // Busca unidade da lista de compra (prioridade) ou catálogo
-  const prodLista = PRODUTOS_COMPRA.find(p => p.nome.toLowerCase() === nome.toLowerCase());
+  // Histórico de compras (tem último preço pago), catálogo (tem custo_uso)
+  const prodLista = cProd.find(p => p.nome.toLowerCase() === nome.toLowerCase());
   const prodCat   = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
-  const unFinal  = prodLista?.un || prodCat?.unidade_uso || un;
-  const catFinal = prodLista?.cat || prodCat?.categoria || cat;
+
+  const unFinal  = prodLista?.un  || prodCat?.unidade_uso || un;
+  const catFinal = prodLista?.cat || prodCat?.categoria   || cat;
 
   const unEl = document.getElementById('c-un');
   if (unFinal && unEl) {
-    // Adiciona a opção se não existir e bloqueia o campo
     if (![...unEl.options].some(o => o.value === unFinal)) {
       unEl.add(new Option(unFinal, unFinal));
     }
@@ -732,21 +739,22 @@ function selecionarProd(nome, un, cat) {
     if ([...sel.options].some(o => o.value === catFinal)) sel.value = catFinal;
   }
   fechaAC('ac-prod');
-  // Preenche valor do produto no campo custo (formatado)
-  if (prodCat?.custo_uso > 0) {
-    const custoFmt = prodCat.custo_uso.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    document.getElementById('c-custo').value = custoFmt;
+
+  // Preenche custo: último preço de compra > custo_uso do catálogo
+  const custo = prodLista?.custo_unit > 0 ? prodLista.custo_unit : (prodCat?.custo_uso || 0);
+  if (custo > 0) {
+    document.getElementById('c-custo').value = custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     calcTot();
   }
+
   // Bloco de estoque mínimo
-  const prod = prodCat;
   const blocoEl = document.getElementById('bloco-estoque');
-  if (prod && parseFloat(prod.estoque_min) > 0 && blocoEl) {
-    document.getElementById('c-estmin-show').textContent = prod.estoque_min + ' ' + (prod.unidade_uso || '');
+  if (prodCat && parseFloat(prodCat.estoque_min) > 0 && blocoEl) {
+    document.getElementById('c-estmin-show').textContent = prodCat.estoque_min + ' ' + (prodCat.unidade_uso || '');
     document.getElementById('c-estoque-atual').value = '';
     document.getElementById('c-sugestao').textContent = '—';
     blocoEl.style.display = '';
-    blocoEl.dataset.estmin = prod.estoque_min;
+    blocoEl.dataset.estmin = prodCat.estoque_min;
   } else if (blocoEl) {
     blocoEl.style.display = 'none';
   }
@@ -854,7 +862,11 @@ function adicionarItemPedido(e) {
   document.getElementById('c-prod').focus();
 
   if (!cProd.find(p => p.nome.toLowerCase() === prod.toLowerCase())) {
-    cProd.push({ nome: prod, unidade_med: un, categoria: cat });
+    cProd.push({ nome: prod, un, cat, custo_unit: custo });
+  } else {
+    // Atualiza último preço pago
+    const existing = cProd.find(p => p.nome.toLowerCase() === prod.toLowerCase());
+    if (existing) existing.custo_unit = custo;
   }
 
   _renderItensPedido();
