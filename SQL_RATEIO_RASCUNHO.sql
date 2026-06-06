@@ -17,12 +17,23 @@ CREATE TABLE IF NOT EXISTS rascunho_rateio_itens (
 );
 
 ALTER TABLE rascunho_rateio_itens ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "acesso_total" ON rascunho_rateio_itens FOR ALL USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='rascunho_rateio_itens' AND policyname='acesso_total') THEN
+    CREATE POLICY "acesso_total" ON rascunho_rateio_itens FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 NOTIFY pgrst, 'reload schema';
 
 -- Adiciona plano_conta_id (FK) em cmp_categorias para lookup direto por ID
 ALTER TABLE cmp_categorias
   ADD COLUMN IF NOT EXISTS plano_conta_id uuid REFERENCES plano_contas(id) ON DELETE SET NULL;
+
+-- Migra plano_conta_id nas categorias que já têm o nome do plano configurado
+UPDATE cmp_categorias c
+SET plano_conta_id = pc.id
+FROM plano_contas pc
+WHERE LOWER(TRIM(c.plano_conta)) = LOWER(TRIM(pc.nome))
+  AND c.plano_conta_id IS NULL;
 
 NOTIFY pgrst, 'reload schema';
