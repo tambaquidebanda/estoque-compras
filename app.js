@@ -26,6 +26,7 @@ let ftFichasCache  = []; // fichas carregadas
 // pedido de compra multi-item (acumulados antes de finalizar)
 let _pedidoItens    = [];   // itens do pedido em construção
 let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
+let _rateioItensAtual = []; // itens de rateio já resolvidos (com plano_conta_id) para o modal atual
 
 // plano de contas do financeiro (para resolver IDs sem busca no banco)
 let cPlanoConta = [];   // { id, nome }
@@ -4536,15 +4537,19 @@ function abrirGerarConta(pedido_num, forn, fornId, total) {
   document.getElementById('gc-obs').value        = `Pedido ${pedido_num}`;
   document.getElementById('gc-preview').classList.add('d-none');
 
-  // Monta rateio a partir dos itens do pedido
+  // Monta rateio com plano_conta_id resolvido diretamente de cCat (por categoria do item)
   const g = _pedidosGrupos[pedido_num];
-  const rateioGrupos = {};
+  const rateioMap = {}; // chave: plano_conta_id || nome
   (g?.itens || []).forEach(it => {
-    const k = it.plano_conta || it.categoria || '—';
-    rateioGrupos[k] = (rateioGrupos[k] || 0) + (it.quantidade || 0) * (it.custo_unit || 0);
+    const catObj  = cCat.find(c => c.nome === it.categoria);
+    const pcId    = catObj?.plano_conta_id || null;
+    const pcNome  = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
+    const key     = pcId || pcNome;
+    if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
+    rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
   });
-  const rateioEntries = Object.entries(rateioGrupos);
-  const temRateio = rateioEntries.length > 1;
+  _rateioItensAtual = Object.values(rateioMap);
+  const temRateio = _rateioItensAtual.length > 1;
 
   const rateioSection  = document.getElementById('gc-rateio-section');
   const planoSection   = document.getElementById('gc-plano-section');
@@ -4553,13 +4558,13 @@ function abrirGerarConta(pedido_num, forn, fornId, total) {
   if (temRateio) {
     rateioSection.classList.remove('d-none');
     planoSection.classList.add('d-none');
-    rateioBody.innerHTML = rateioEntries.map(([k, v]) =>
-      `<tr><td>${esc(k)}</td><td class="text-end">${brl(v)}</td></tr>`
+    rateioBody.innerHTML = _rateioItensAtual.map(r =>
+      `<tr><td>${esc(r.nome)}</td><td class="text-end">${brl(r.valor)}</td></tr>`
     ).join('');
   } else {
     rateioSection.classList.add('d-none');
     planoSection.classList.remove('d-none');
-    document.getElementById('gc-plano-label').textContent = rateioEntries[0]?.[0] || '—';
+    document.getElementById('gc-plano-label').textContent = _rateioItensAtual[0]?.nome || '—';
   }
 
   const prodMode = modoIntegracaoProducao();
@@ -4611,16 +4616,7 @@ async function confirmarGerarConta() {
   if (!valor || valor <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
 
-  // Monta rateio
-  const temRateio = !document.getElementById('gc-rateio-section').classList.contains('d-none');
-  const g = _pedidosGrupos[pedido_num];
-  const rateioGrupos = {};
-  if (temRateio && g?.itens) {
-    g.itens.forEach(it => {
-      const k = it.plano_conta || it.categoria || '—';
-      rateioGrupos[k] = (rateioGrupos[k] || 0) + (it.quantidade || 0) * (it.custo_unit || 0);
-    });
-  }
+  const temRateio   = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
 
   // Upsert em cmp_contas_pagar
@@ -4632,7 +4628,8 @@ async function confirmarGerarConta() {
     pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
     plano_conta, nf_numero, conta_id: conta?.id || null,
     obs: obs || `Pedido ${pedido_num}`,
-    temRateio, rateioGrupos,
+    temRateio,
+    rateioItensResolvidos: temRateio ? _rateioItensAtual : [],
   });
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
@@ -4640,27 +4637,23 @@ async function confirmarGerarConta() {
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
-  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioGrupos = {} }) {
+  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [] }) {
 
   const producao = modoIntegracaoProducao();
 
-  // Resolve plano_conta_id a partir do cache local (sem busca no banco)
-  const _resolverPlanoId = (nome) => {
-    if (!nome || nome === '—') return null;
-    return cPlanoConta.find(p => p.nome.toLowerCase() === nome.toLowerCase())?.id || null;
-  };
-
-  const plano_conta_id = temRateio ? null : _resolverPlanoId(plano_conta);
-
-  // Monta rateio com IDs já resolvidos
-  let rateioItens = [];
-  if (temRateio) {
-    rateioItens = Object.entries(rateioGrupos).map(([nome, val]) => ({
-      plano_conta_id: _resolverPlanoId(nome),
-      valor:          val,
-      descricao:      nome,
-    }));
+  // Resolve plano_conta_id do plano único (sem rateio) a partir de cCat
+  let plano_conta_id = null;
+  if (!temRateio && plano_conta && plano_conta !== '—') {
+    const catComPlano = cCat.find(c => c.plano_conta === plano_conta);
+    plano_conta_id = catComPlano?.plano_conta_id
+      || cPlanoConta.find(p => p.nome.toLowerCase() === plano_conta.toLowerCase())?.id
+      || null;
   }
+
+  // Rateio: usa itens já resolvidos (plano_conta_id vem direto de cCat)
+  const rateioItens = temRateio
+    ? rateioItensResolvidos.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.nome }))
+    : [];
 
   const dadosBase = {
     descricao:      `Pedido ${pedido_num} — ${fornecedor_nome}`,
