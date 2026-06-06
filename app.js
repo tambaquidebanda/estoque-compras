@@ -4690,9 +4690,12 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
     // Grava itens de rateio do rascunho
     if (temRateio && rasc?.id && rateioItens.length) {
-      await sb.from('rascunho_rateio_itens').insert(
+      const { error: errRateio } = await sb.from('rascunho_rateio_itens').insert(
         rateioItens.map(r => ({ ...r, rascunho_id: rasc.id }))
       );
+      if (errRateio) { toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro'); return; }
+    } else if (temRateio) {
+      toast('Aviso: nenhum item de rateio encontrado para gravar.', 'erro'); return;
     }
 
     toast(`🧪 Rascunho enviado ao financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
@@ -4707,9 +4710,10 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
   // Grava rateio_itens
   if (temRateio && lanc?.id && rateioItens.length) {
-    await sb.from('rateio_itens').insert(
+    const { error: errRateio } = await sb.from('rateio_itens').insert(
       rateioItens.map(r => ({ ...r, lancamento_id: lanc.id }))
     );
+    if (errRateio) toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro');
   }
 
   // Registra lancamento_id na conta a pagar local
