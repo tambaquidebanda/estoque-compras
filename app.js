@@ -4526,7 +4526,8 @@ function inicializarToggleIntegracao() {
   }
 }
 
-function abrirGerarConta(pedido_num, forn, fornId, total) {
+async function abrirGerarConta(pedido_num, forn, fornId, total) {
+  if (!cCat.length) await carregarCaches();
   document.getElementById('gc-pedido-num').value           = pedido_num;
   document.getElementById('gc-fornecedor-id').value        = fornId;
   document.getElementById('gc-pedido-label').textContent   = pedido_num;
