@@ -4542,8 +4542,10 @@ function abrirGerarConta(pedido_num, forn, fornId, total) {
   const rateioMap = {}; // chave: plano_conta_id || nome
   (g?.itens || []).forEach(it => {
     const catObj  = cCat.find(c => c.nome === it.categoria);
-    const pcId    = catObj?.plano_conta_id || null;
     const pcNome  = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
+    const pcId    = catObj?.plano_conta_id
+      || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
+      || null;
     const key     = pcId || pcNome;
     if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
     rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
