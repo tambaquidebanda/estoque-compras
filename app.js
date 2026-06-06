@@ -4540,6 +4540,9 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
 
   // Monta rateio com plano_conta_id resolvido diretamente de cCat (por categoria do item)
   const g = _pedidosGrupos[pedido_num];
+  console.log('[rateio] cCat:', cCat.map(c => `${c.nome} → ${c.plano_conta_id}`));
+  console.log('[rateio] cPlanoConta:', cPlanoConta.map(p => p.nome));
+  console.log('[rateio] itens:', g?.itens?.map(i => `${i.produto} | cat:${i.categoria} | plano:${i.plano_conta}`));
   const rateioMap = {}; // chave: plano_conta_id || nome
   (g?.itens || []).forEach(it => {
     const catObj  = cCat.find(c => c.nome === it.categoria);
@@ -4547,6 +4550,7 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
     const pcId    = catObj?.plano_conta_id
       || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
       || null;
+    console.log(`[rateio] item "${it.produto}" → catObj:`, catObj?.nome, '| pcId:', pcId);
     const key     = pcId || pcNome;
     if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
     rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
