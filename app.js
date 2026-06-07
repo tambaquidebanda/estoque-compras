@@ -745,6 +745,9 @@ async function prepararFormCompra() {
     const el = document.getElementById('prox-pedido-num');
     if (el) el.textContent = proxNum;
     document.getElementById('aviso-editando')?.classList.add('d-none');
+    // Auto-seleciona o comprador pelo nome do usuário logado
+    const nomeUsuario = user?.user_metadata?.nome || '';
+    if (nomeUsuario) compSel.value = nomeUsuario;
   }
 
   consultarPedidos();
