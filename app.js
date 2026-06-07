@@ -26,6 +26,7 @@ let ftFichasCache  = []; // fichas carregadas
 // pedido de compra multi-item (acumulados antes de finalizar)
 let _pedidoItens    = [];   // itens do pedido em construção
 let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
+let _pedidoEditando = null; // pedido_num sendo editado (null = novo pedido)
 let _rateioItensAtual = []; // itens de rateio já resolvidos (com plano_conta_id) para o modal atual
 
 // plano de contas do financeiro (para resolver IDs sem busca no banco)
@@ -702,13 +703,7 @@ function numK(v) {
 async function prepararFormCompra() {
   await carregarCaches();
   await carregarProdutosFT();
-  setHoje('c-data');
   document.getElementById('bloco-estoque').style.display = 'none';
-  // Mostra próximo número de pedido
-  const proxNum = await _gerarNumeroPedido();
-  const el = document.getElementById('prox-pedido-num');
-  if (el) el.textContent = proxNum;
-  consultarPedidos();
 
   // Populate selects
   const catSel = document.getElementById('c-cat');
@@ -728,6 +723,31 @@ async function prepararFormCompra() {
     usoSel.innerHTML = '<option value="">— Selecione —</option>' +
       cUnidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
   }
+
+  if (_pedidoEditando) {
+    // Modo edição: pré-preenche cabeçalho com dados do primeiro item
+    const primeiro = _pedidoItens[0];
+    if (primeiro) {
+      document.getElementById('c-data').value  = primeiro.data || '';
+      document.getElementById('c-forn').value  = primeiro.fornNome || '';
+      document.getElementById('c-forn-id').value = primeiro.fornId || '';
+      compSel.value = primeiro.comp || '';
+    }
+    const proxEl = document.getElementById('prox-pedido-num');
+    if (proxEl) proxEl.textContent = _pedidoEditando;
+    _renderItensPedido();
+    document.getElementById('aviso-editando')?.classList.remove('d-none');
+    document.getElementById('aviso-editando-num').textContent = _pedidoEditando;
+  } else {
+    // Modo novo pedido
+    setHoje('c-data');
+    const proxNum = await _gerarNumeroPedido();
+    const el = document.getElementById('prox-pedido-num');
+    if (el) el.textContent = proxNum;
+    document.getElementById('aviso-editando')?.classList.add('d-none');
+  }
+
+  consultarPedidos();
 
   // Warning if missing registers
   const falta = [];
@@ -1015,8 +1035,7 @@ async function finalizarPedido() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
 
-  const pedido_num = await _gerarNumeroPedido();
-  const { data: head } = _pedidoItens[0];
+  const pedido_num = _pedidoEditando || await _gerarNumeroPedido();
 
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
@@ -1037,6 +1056,10 @@ async function finalizarPedido() {
     criado_por:      user.id,
   }));
 
+  if (_pedidoEditando) {
+    await sb.from('cmp_compras').delete().eq('pedido_num', _pedidoEditando);
+  }
+
   const { error } = await sb.from('cmp_compras').insert(rows);
 
   btn.disabled = false;
@@ -1045,15 +1068,20 @@ async function finalizarPedido() {
   if (error) { toast('Erro ao salvar pedido: ' + error.message, 'erro'); return; }
 
   const total = _pedidoItens.reduce((s, it) => s + it.total, 0);
-  toast(`✅ Pedido ${pedido_num} finalizado — ${_pedidoItens.length} item(s) — ${brl(total)}`, 'ok');
+  const acao  = _pedidoEditando ? 'atualizado' : 'finalizado';
+  toast(`✅ Pedido ${pedido_num} ${acao} — ${_pedidoItens.length} item(s) — ${brl(total)}`, 'ok');
 
   cancelarPedido();
   consultarPedidos();
 }
 
 function cancelarPedido() {
-  _pedidoItens = [];
+  _pedidoItens    = [];
+  _pedidoEditando = null;
   _renderItensPedido();
+
+  // Oculta aviso de edição
+  document.getElementById('aviso-editando')?.classList.add('d-none');
 
   // Limpa cabeçalho e campos de item
   document.getElementById('c-prod').value  = '';
@@ -3960,6 +3988,14 @@ async function carregarCompras() {
     if (c.status_receb !== 'recebido') grupos[key].recebido = false;
   });
 
+  // Verifica quais pedidos foram enviados ao financeiro
+  const numeros = Object.keys(grupos);
+  const lancSet = new Set();
+  if (numeros.length) {
+    const { data: lancs } = await sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros);
+    (lancs || []).forEach(l => lancSet.add(l.numero_pedido));
+  }
+
   let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
 
   // Popula filtro fornecedor
@@ -3990,6 +4026,8 @@ async function carregarCompras() {
     const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : '—';
     const cor     = g.recebido ? '#2EC4B6' : '#FF6B35';
     const status  = g.recebido ? '✅ Recebido' : '⏳ Pendente';
+    const enviado = lancSet.has(g.pedido_num);
+    const podeEditar = !g.recebido && !enviado;
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
       <td>${dataBR}</td>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
@@ -4002,6 +4040,7 @@ async function carregarCompras() {
       <td class="text-center">
         <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
+          ${podeEditar ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="editarPedido('${g.pedido_num}')" title="Editar pedido">✏️ Editar</button>` : ''}
           ${!g.recebido ? `<button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${g.pedido_num}')" title="Receber">📬 Receber</button>` : ''}
         </div>
       </td>
@@ -4040,6 +4079,45 @@ function limparFiltrosCompras() {
   document.getElementById('cps-fim').value = '';
   document.getElementById('cps-forn').value = '';
   carregarCompras();
+}
+
+async function editarPedido(pedido_num) {
+  // Busca itens do pedido
+  const { data: itens } = await sb.from('cmp_compras')
+    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso')
+    .eq('pedido_num', pedido_num)
+    .order('id');
+
+  if (!itens || !itens.length) { toast('Pedido não encontrado.', 'erro'); return; }
+
+  // Garante caches carregados para o lookup de unidades
+  await carregarCaches();
+
+  // Constrói _pedidoItens a partir do banco
+  _pedidoItens = itens.map(it => {
+    const uniObj = cUnidades.find(u => u.nome === it.unidade_uso);
+    return {
+      data:       it.data,
+      fornNome:   it.fornecedor_nome,
+      fornId:     it.fornecedor_id,
+      comp:       it.comprador,
+      prod:       it.produto,
+      cat:        it.categoria,
+      planoConta: it.plano_conta,
+      un:         it.unidade_med,
+      custo:      it.custo_unit,
+      qtd:        it.quantidade,
+      uso:        it.unidade_uso,
+      unidadeId:  uniObj?.id || null,
+      total:      (it.custo_unit || 0) * (it.quantidade || 0),
+    };
+  });
+
+  _pedidoEditando = pedido_num;
+
+  // Navega para o formulário — prepararFormCompra() vai detectar _pedidoEditando e pré-preencher
+  const navEl = document.querySelector('.nav-sb a[onclick*="\'pedido\'"]');
+  ir('pedido', navEl);
 }
 
 

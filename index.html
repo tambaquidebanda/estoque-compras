@@ -222,6 +222,9 @@
     <section id="pg-pedido" class="pagina">
       <h1>🛒 Pedido de Compra</h1>
       <div id="aviso-cad" class="alert alert-warning d-none mb-3"></div>
+      <div id="aviso-editando" class="alert alert-info d-none mb-3">
+        ✏️ <strong>Editando Pedido <span id="aviso-editando-num"></span></strong> — os itens abaixo substituirão os atuais ao finalizar.
+      </div>
 
       <div class="card-form">
         <form id="form-compra" onsubmit="adicionarItemPedido(event)" autocomplete="off">
