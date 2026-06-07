@@ -4041,8 +4041,9 @@ async function carregarCompras() {
       : aguardando
         ? `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`
         : `<span class="badge bg-light text-muted border">Não enviado</span>`;
-    const podeEditar = !g.recebido && !enviado;
-    const editarTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
+    const podeEditar  = !g.recebido && !enviado;
+    const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
+    const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
       <td>${dataBR}</td>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
@@ -4061,6 +4062,7 @@ async function carregarCompras() {
         <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
           <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}">✏️ Editar</button>
+          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-danger' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}">🗑️</button>
         </div>
       </td>
     </tr>
@@ -4097,6 +4099,22 @@ function limparFiltrosCompras() {
   document.getElementById('cps-ini').value = '';
   document.getElementById('cps-fim').value = '';
   document.getElementById('cps-forn').value = '';
+  carregarCompras();
+}
+
+async function excluirPedidoCompras(pedido_num) {
+  const { data: lanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).maybeSingle();
+  if (lanc) {
+    toast('Pedido já enviado ao financeiro — exclua o lançamento lá primeiro.', 'erro');
+    return;
+  }
+  if (!confirm(`Excluir o pedido ${pedido_num}? Esta ação não pode ser desfeita.`)) return;
+  await Promise.all([
+    sb.from('cmp_compras').delete().eq('pedido_num', pedido_num),
+    sb.from('lancamentos_rascunho').delete().eq('pedido_num', pedido_num),
+    sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num),
+  ]);
+  toast('Pedido excluído.', 'ok');
   carregarCompras();
 }
 
