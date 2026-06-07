@@ -746,8 +746,27 @@ async function prepararFormCompra() {
     if (el) el.textContent = proxNum;
     document.getElementById('aviso-editando')?.classList.add('d-none');
     // Auto-seleciona o comprador pelo nome do usuário logado
-    const nomeUsuario = user?.user_metadata?.nome || '';
-    if (nomeUsuario) compSel.value = nomeUsuario;
+    const metaNome    = (user?.user_metadata?.nome || '').trim().toLowerCase();
+    const emailPrefixo = (user?.email || '').split('@')[0].toLowerCase();
+    const nomeUsuario  = metaNome || emailPrefixo;
+    if (nomeUsuario) {
+      const opcoes = Array.from(compSel.options);
+      // 1. Tenta match exato (case-insensitive)
+      let match = opcoes.find(o => o.value.trim().toLowerCase() === nomeUsuario);
+      // 2. Tenta match por primeiro nome
+      if (!match) {
+        const primeiroNome = nomeUsuario.split(' ')[0];
+        match = opcoes.find(o => o.value.trim().toLowerCase().startsWith(primeiroNome));
+      }
+      // 3. Tenta se algum comprador está contido no nome do usuário
+      if (!match) {
+        match = opcoes.find(o => {
+          const v = o.value.trim().toLowerCase();
+          return v && nomeUsuario.includes(v);
+        });
+      }
+      if (match) compSel.value = match.value;
+    }
   }
 
   consultarPedidos();
