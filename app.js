@@ -3988,12 +3988,17 @@ async function carregarCompras() {
     if (c.status_receb !== 'recebido') grupos[key].recebido = false;
   });
 
-  // Verifica quais pedidos foram enviados ao financeiro
+  // Verifica status financeiro de cada pedido
   const numeros = Object.keys(grupos);
-  const lancSet = new Set();
+  const lancSet     = new Set();
+  const rascunhoSet = new Set();
   if (numeros.length) {
-    const { data: lancs } = await sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros);
-    (lancs || []).forEach(l => lancSet.add(l.numero_pedido));
+    const [resLanc, resRasc] = await Promise.all([
+      sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
+      sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
+    ]);
+    (resLanc.data  || []).forEach(l => lancSet.add(l.numero_pedido));
+    (resRasc.data  || []).forEach(r => rascunhoSet.add(r.pedido_num));
   }
 
   let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
@@ -4024,9 +4029,15 @@ async function carregarCompras() {
   tbody.innerHTML = lista.map(g => {
     const dataBR  = (g.data||'').split('-').reverse().join('/');
     const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : '—';
-    const cor     = g.recebido ? '#2EC4B6' : '#FF6B35';
-    const status  = g.recebido ? '✅ Recebido' : '⏳ Pendente';
+    const corEstoque  = g.recebido ? '#2EC4B6' : '#FF6B35';
+    const statusEstoque = g.recebido ? '✅ Recebido' : '⏳ Pendente';
     const enviado = lancSet.has(g.pedido_num);
+    const aguardando = !enviado && rascunhoSet.has(g.pedido_num);
+    const badgeFinanc = enviado
+      ? `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`
+      : aguardando
+        ? `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`
+        : `<span class="badge bg-light text-muted border">Não enviado</span>`;
     const podeEditar = !g.recebido && !enviado;
     const editarTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
@@ -4037,7 +4048,12 @@ async function carregarCompras() {
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length}</span></td>
       <td class="text-center">${entregaBR}</td>
       <td class="text-center fw-bold">${brl(g.total)}</td>
-      <td class="text-center"><span class="badge" style="background:${cor}">${status}</span></td>
+      <td class="text-center">
+        <div class="d-flex flex-column gap-1 align-items-center">
+          <span class="badge" style="background:${corEstoque}">${statusEstoque}</span>
+          ${badgeFinanc}
+        </div>
+      </td>
       <td class="text-center">
         <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
