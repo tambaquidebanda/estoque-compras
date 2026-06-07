@@ -289,19 +289,24 @@ function toggleFormCad(key) {
   if (!el) return;
   el.classList.toggle('d-none');
   if (!el.classList.contains('d-none')) {
-    // Popula dropdown de plano de contas ao abrir o form de categorias
+    // Popula dropdown ao abrir o form de nova categoria
     if (key === 'cat') {
       const sel = document.getElementById('n-plano');
       if (sel) {
-        sel.innerHTML = '<option value="">Carregando...</option>';
+        sel.innerHTML = '<option value="">Carregando categorias do financeiro...</option>';
         fetchTodosPlanoContas().then(todos => {
           const grupos  = todos.filter(p => p.tipo === 'pagar' && !p.grupo_id);
           const subcats = todos.filter(p => p.tipo === 'pagar' &&  p.grupo_id);
           cPlanoContaGrupos = grupos;
           cPlanoConta = subcats;
-          sel.innerHTML = buildPlanoSelect('— Plano de contas (opcional) —', '', grupos, subcats);
+          // Mostra apenas subcategorias que ainda não existem em cmp_categorias
+          const nomesExistentes = new Set(cCat.map(c => c.nome.toLowerCase()));
+          const disponiveis = subcats.filter(p => !nomesExistentes.has(p.nome.toLowerCase()));
+          sel.innerHTML = buildPlanoSelect('— Selecione a categoria —', '', grupos, disponiveis);
+          sel.focus();
         });
       }
+      return; // não tenta focar input (foi removido)
     }
     el.querySelector('input')?.focus();
   }
@@ -1489,19 +1494,21 @@ async function addFornecedor() {
 }
 
 async function addCategoria() {
-  const nome         = (document.getElementById('n-cat').value || '').trim();
-  const planoId      = document.getElementById('n-plano').value || null;
-  const planoObj     = cPlanoConta.find(p => p.id === planoId);
-  const planoNome    = planoObj?.nome || '';
+  const planoId  = document.getElementById('n-plano').value || null;
+  const msg      = document.getElementById('msg-cad-cat');
+  if (!planoId) {
+    msg.innerHTML = '<span class="text-danger">Selecione uma categoria do plano de contas.</span>';
+    return;
+  }
+  const planoObj = cPlanoConta.find(p => p.id === planoId);
+  const nome     = planoObj?.nome || '';
   if (!nome) return;
-  const msg = document.getElementById('msg-cad-cat');
   const { error } = await sb.from('cmp_categorias').insert([{
     nome,
-    plano_conta:    planoNome,
-    plano_conta_id: planoId || null,
+    plano_conta:    nome,
+    plano_conta_id: planoId,
   }]);
   if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
-  document.getElementById('n-cat').value   = '';
   document.getElementById('n-plano').value = '';
   msg.innerHTML = '';
   toggleFormCad('cat');
