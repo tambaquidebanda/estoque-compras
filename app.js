@@ -4593,42 +4593,32 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   // Busca categorias do banco pelo nome (garante plano_conta_id mesmo com cCat vazio)
   const g = _pedidosGrupos[pedido_num];
   const catNomes = [...new Set((g?.itens || []).map(it => it.categoria).filter(Boolean))];
-  console.log('[RATEIO] catNomes:', catNomes);
-  console.log('[RATEIO] cPlanoConta (subcats apenas):', cPlanoConta.map(p => p.nome));
   const { data: catData } = catNomes.length
     ? await sb.from('cmp_categorias').select('nome,plano_conta,plano_conta_id').in('nome', catNomes)
     : { data: [] };
-  console.log('[RATEIO] catData do banco:', catData);
   const catDbMap = {};
   (catData || []).forEach(c => { catDbMap[c.nome] = c; });
 
   const rateioMap = {};
   (g?.itens || []).forEach(it => {
-    const catObj = catDbMap[it.categoria] || cCat.find(c => c.nome === it.categoria);
-    const pcNome = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
-    // Valida que o ID guardado é subcategoria (tem grupo_id). IDs de grupos-pai são rejeitados.
+    const catObj   = catDbMap[it.categoria] || cCat.find(c => c.nome === it.categoria);
+    const pcNome   = catObj?.plano_conta || it.plano_conta || it.categoria || '—';
     const storedId = catObj?.plano_conta_id;
-    const pcId   = (storedId && cPlanoConta.find(p => p.id === storedId) ? storedId : null)
+    const pcId     = (storedId && cPlanoConta.find(p => p.id === storedId) ? storedId : null)
       || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
       || null;
-    console.log(`[RATEIO] item "${it.categoria}" → pcNome="${pcNome}" storedId=${storedId} pcId=${pcId}`);
-    const key    = pcId || pcNome;
+    const key = pcId || pcNome;
     if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
     rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
   });
   _rateioItensAtual = Object.values(rateioMap);
-  console.log('[RATEIO] _rateioItensAtual antes do fallback:', JSON.stringify(_rateioItensAtual));
 
-  // Fallback final: busca subcategorias direto do banco para itens que ainda estão nulos
+  // Fallback: busca subcategorias direto do banco para itens que ainda estão sem ID
   const semId = _rateioItensAtual.filter(r => !r.plano_conta_id && r.nome !== '—');
   if (semId.length) {
-    const nomes = semId.map(r => r.nome);
-    console.log('[RATEIO] fallback DB para nomes:', nomes);
     const { data: pcRows } = await sb.from('plano_contas')
-      .select('id,nome,grupo_id').in('nome', nomes);
-    console.log('[RATEIO] plano_contas retornou (sem filtro grupo):', pcRows);
+      .select('id,nome,grupo_id').in('nome', semId.map(r => r.nome));
     const pcRowsSubcat = (pcRows || []).filter(p => p.grupo_id);
-    console.log('[RATEIO] plano_contas subcategorias:', pcRowsSubcat);
     if (pcRowsSubcat.length) {
       const pcMap = {};
       pcRowsSubcat.forEach(p => { pcMap[p.nome.toLowerCase()] = p.id; });
@@ -4637,7 +4627,6 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
       });
     }
   }
-  console.log('[RATEIO] _rateioItensAtual FINAL:', JSON.stringify(_rateioItensAtual));
 
   const temRateio = _rateioItensAtual.length > 1;
 
