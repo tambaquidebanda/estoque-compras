@@ -3041,7 +3041,7 @@ async function renderPendentes() {
   const fornSel = document.getElementById('receb-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso')
     .not('pedido_num', 'is', null)
     .neq('status_receb', 'recebido')
     .order('data', { ascending: false });
@@ -4667,14 +4667,14 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
     document.getElementById('gc-plano-label').textContent = _rateioItensAtual[0]?.nome || '—';
   }
 
-  // Popula dropdown de unidade e pré-seleciona com base nos itens do pedido
+  // Popula dropdown de unidade e pré-seleciona pelo nome salvo no pedido
   const uniSel = document.getElementById('gc-unidade');
   if (uniSel) {
     uniSel.innerHTML = '<option value="">— Nenhuma —</option>' +
       cUnidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
-    const g = _pedidosGrupos[pedido_num];
-    const primeiroItem = (g?.itens || [])[0];
-    const unidadeIdItem = primeiroItem?.unidadeId || null;
+    const gItems = (_pedidosGrupos[pedido_num]?.itens || []);
+    const usoNome = gItems[0]?.unidade_uso || gItems[0]?.uso || '';
+    const unidadeIdItem = cUnidades.find(u => u.nome.toLowerCase() === usoNome.toLowerCase())?.id || null;
     if (unidadeIdItem) uniSel.value = unidadeIdItem;
   }
 
