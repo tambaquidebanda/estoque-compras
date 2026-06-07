@@ -198,6 +198,10 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
+  if (['recebimento','inventario'].includes(nome)) {
+    document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
+    document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
+  }
   if (['usuarios','backup'].includes(nome)) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
