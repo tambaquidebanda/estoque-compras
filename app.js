@@ -4079,9 +4079,9 @@ async function carregarCompras() {
       </td>
       <td class="text-center">
         <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
-          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
           <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}">✏️ Editar</button>
-          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-danger' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}">🗑️</button>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
+          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-danger' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}">🗑️</button>
         </div>
       </td>
     </tr>
