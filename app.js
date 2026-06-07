@@ -190,7 +190,7 @@ function ir(nome, el) {
   document.getElementById('pg-' + nome).classList.add('ativa');
   if (el) el.classList.add('ativo');
   // Abre o grupo pai conforme o item
-  if (['pedido','compras'].includes(nome)) {
+  if (['pedido','compras','planejamento','historico'].includes(nome)) {
     document.getElementById('nav-grupo-compra')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-compra')?.classList.add('aberto');
   }
