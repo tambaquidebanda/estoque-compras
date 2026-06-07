@@ -4082,10 +4082,10 @@ async function carregarCompras() {
         </div>
       </td>
       <td class="text-center">
-        <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
-          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}">✏️ Editar</button>
-          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
-          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-danger' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}">🗑️</button>
+        <div class="d-flex gap-2 justify-content-center align-items-center" onclick="event.stopPropagation()">
+          <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}" style="white-space:nowrap"><i class="bi bi-pencil-fill"></i> Editar</button>
+          <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-printer-fill"></i></button>
+          <button class="btn btn-link p-0" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}" style="font-size:1.2rem;${podeEditar ? 'color:#dc3545' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-trash3-fill"></i></button>
         </div>
       </td>
     </tr>
