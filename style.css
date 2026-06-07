@@ -61,10 +61,10 @@ body {
 }
 
 .sb-brand {
-  padding: 1.2rem 1rem;
+  padding: 1rem;
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: .75rem;
   border-bottom: 1px solid rgba(255,255,255,.08);
   flex-shrink: 0;
 }
