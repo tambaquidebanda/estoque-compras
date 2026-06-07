@@ -146,6 +146,13 @@ function entrarNoSistema() {
   }
 }
 
+function initTooltips(scope) {
+  const el = scope || document;
+  el.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(t => {
+    bootstrap.Tooltip.getOrCreateInstance(t, { trigger: 'hover' });
+  });
+}
+
 function restaurarPagina(hash) {
   if (hash.startsWith('cad-')) {
     irCadSb(hash.slice(4), null);
@@ -4083,9 +4090,15 @@ async function carregarCompras() {
       </td>
       <td class="text-center">
         <div class="d-flex gap-2 justify-content-center align-items-center" onclick="event.stopPropagation()">
-          <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}" style="white-space:nowrap"><i class="bi bi-pencil-fill"></i> Editar</button>
-          <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-printer-fill"></i></button>
-          <button class="btn btn-link p-0" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} title="${excluirTitle}" style="font-size:1.2rem;${podeEditar ? 'color:#dc3545' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-trash3-fill"></i></button>
+          <span data-bs-toggle="tooltip" data-bs-title="${editarTitle}">
+            <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} style="white-space:nowrap;pointer-events:${podeEditar?'auto':'none'}"><i class="bi bi-pencil-fill"></i> Editar</button>
+          </span>
+          <span data-bs-toggle="tooltip" data-bs-title="Imprimir">
+            <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}')" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-printer-fill"></i></button>
+          </span>
+          <span data-bs-toggle="tooltip" data-bs-title="${podeEditar ? 'Excluir' : excluirTitle}">
+            <button class="btn btn-link p-0" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} style="font-size:1.2rem;${podeEditar ? 'color:#dc3545' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-trash3-fill"></i></button>
+          </span>
         </div>
       </td>
     </tr>
@@ -4108,6 +4121,8 @@ async function carregarCompras() {
       </td>
     </tr>`;
   }).join('');
+
+  initTooltips(document.getElementById('tb-compras-lista'));
 }
 
 function toggleDetalheCompra(pedido_num, tr) {
