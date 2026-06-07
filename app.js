@@ -29,7 +29,8 @@ let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
 let _rateioItensAtual = []; // itens de rateio já resolvidos (com plano_conta_id) para o modal atual
 
 // plano de contas do financeiro (para resolver IDs sem busca no banco)
-let cPlanoConta = [];   // { id, nome }
+let cPlanoConta = [];       // { id, nome, grupo_id } — apenas subcategorias (folhas)
+let cPlanoContaGrupos = []; // { id, nome } — apenas grupos-pai (para montar optgroup)
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -251,6 +252,34 @@ function irAba(aba, el) {
 }
 
 
+// Constrói o HTML de um <select> hierárquico de plano de contas
+// (grupos como <optgroup>, subcategorias como <option>)
+function buildPlanoSelect(opcaoVazia, planoAtualId) {
+  let html = `<option value="">${esc(opcaoVazia)}</option>`;
+  // Agrupa subcategorias por grupo_id
+  const subcatPorGrupo = {};
+  cPlanoConta.forEach(p => {
+    if (!subcatPorGrupo[p.grupo_id]) subcatPorGrupo[p.grupo_id] = [];
+    subcatPorGrupo[p.grupo_id].push(p);
+  });
+  // Monta optgroup para cada grupo que tenha subcategorias
+  cPlanoContaGrupos.forEach(g => {
+    const subs = subcatPorGrupo[g.id];
+    if (!subs || !subs.length) return;
+    html += `<optgroup label="${esc(g.nome)}">`;
+    subs.sort((a, b) => a.nome.localeCompare(b.nome)).forEach(p => {
+      html += `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`;
+    });
+    html += `</optgroup>`;
+  });
+  // Subcategorias sem grupo (caso existam)
+  const semGrupo = cPlanoConta.filter(p => !subcatPorGrupo[p.grupo_id] || false);
+  semGrupo.forEach(p => {
+    html += `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`;
+  });
+  return html;
+}
+
 function toggleFormCad(key) {
   const el = document.getElementById(`form-cad-${key}`);
   if (!el) return;
@@ -260,8 +289,7 @@ function toggleFormCad(key) {
     if (key === 'cat') {
       const sel = document.getElementById('n-plano');
       if (sel && cPlanoConta.length) {
-        sel.innerHTML = '<option value="">— Plano de contas (opcional) —</option>' +
-          cPlanoConta.map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+        sel.innerHTML = buildPlanoSelect('— Plano de contas (opcional) —', '');
       }
     }
     el.querySelector('input')?.focus();
@@ -365,9 +393,11 @@ async function carregarCaches() {
   cTipo       = tip.data  || [];
   cComp       = comp.data || [];
   cGrupos     = grp.data  || [];
-  // Guarda apenas subcategorias (folhas) — entradas com grupo_id preenchido.
-  // Grupos-pai (grupo_id null) não são aceitos pelo financeiro como plano_conta_id.
-  cPlanoConta = (pc.data || []).filter(p => p.grupo_id);
+  const todosPC = pc.data || [];
+  // Grupos-pai (grupo_id null) — usados apenas para montar optgroup no dropdown
+  cPlanoContaGrupos = todosPC.filter(p => !p.grupo_id);
+  // Subcategorias (folhas) — únicas aceitas pelo financeiro como plano_conta_id
+  cPlanoConta = todosPC.filter(p => p.grupo_id);
 
   // Build unique product list from past purchases — ordered DESC so first hit = last price
   const seen = new Set();
@@ -1506,14 +1536,12 @@ async function excluirCad(tabela, id, tipo) {
 }
 
 function editarPlanoCategoria(catId, catNome, planoAtualId) {
-  const opts = cPlanoConta.map(p =>
-    `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`
-  ).join('');
-
   document.getElementById('epc-titulo').textContent  = catNome;
   document.getElementById('epc-cat-id').value        = catId;
-  document.getElementById('epc-plano').innerHTML     = `<option value="">— Sem vínculo —</option>${opts}`;
-  document.getElementById('epc-plano').value         = planoAtualId || '';
+  document.getElementById('epc-plano').innerHTML     = buildPlanoSelect('— Sem vínculo —', planoAtualId);
+  // Se o ID atual é de grupo-pai (não subcategoria), não pré-seleciona nada — força nova escolha
+  const isSubcat = cPlanoConta.some(p => p.id === planoAtualId);
+  document.getElementById('epc-plano').value         = isSubcat ? (planoAtualId || '') : '';
 
   new bootstrap.Modal(document.getElementById('modal-editar-plano-cat')).show();
 }
