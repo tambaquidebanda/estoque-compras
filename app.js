@@ -3090,20 +3090,20 @@ async function renderPendentes() {
     return;
   }
 
-  // Verifica contas e rascunhos existentes para cada pedido
+  // Verifica estado de integração de cada pedido consultando as fontes diretas
   const numeros = lista.map(g => g.pedido_num);
-  const [resContas, resRascunhos] = await Promise.all([
-    sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id').in('pedido_num', numeros),
+  const [resLancamentos, resRascunhos] = await Promise.all([
+    // Consulta lancamentos do financeiro diretamente — mais confiável que cmp_contas_pagar.lancamento_id
+    sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
     sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
   ]);
-  if (resRascunhos.error) console.error('Erro ao buscar rascunhos:', resRascunhos.error);
-  const contaMap    = {};
-  const rascunhoSet = new Set();
-  (resContas.data   || []).forEach(c => { contaMap[c.pedido_num] = c.lancamento_id; });
-  (resRascunhos.data || []).forEach(r => rascunhoSet.add(r.pedido_num));
+  const lancamentosSet = new Set();
+  const rascunhoSet    = new Set();
+  (resLancamentos.data || []).forEach(l => lancamentosSet.add(l.numero_pedido));
+  (resRascunhos.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
 
   tbody.innerHTML = lista.map(g => {
-    const jaEnviado   = !!contaMap[g.pedido_num];
+    const jaEnviado   = lancamentosSet.has(g.pedido_num);
     const temRascunho = rascunhoSet.has(g.pedido_num);
     const btnFin = jaEnviado
       ? `<button class="btn btn-sm btn-outline-success py-0 px-2" disabled title="Conta já enviada ao financeiro">
