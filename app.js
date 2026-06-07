@@ -4746,7 +4746,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
   // Rateio: usa itens já resolvidos (plano_conta_id vem direto de cCat)
   const rateioItens = temRateio
-    ? rateioItensResolvidos.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.nome }))
+    ? rateioItensResolvidos.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: '' }))
     : [];
 
   const dadosBase = {
