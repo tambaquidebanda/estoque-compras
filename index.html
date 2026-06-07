@@ -321,7 +321,7 @@
             <div class="col-md-3">
               <label class="form-label">🏬 Unid. de Uso</label>
               <select class="form-select" id="c-uso">
-                <option>Loja</option><option>Delivery</option><option>Produção</option>
+                <option value="">— Selecione —</option>
               </select>
             </div>
             <div class="col-md-2 d-flex align-items-end">
@@ -1793,9 +1793,17 @@
           </div>
         </div>
 
-        <div class="mb-2">
-          <label class="form-label fw-semibold">Observações</label>
-          <input type="text" class="form-control" id="gc-obs" placeholder="Opcional">
+        <div class="row g-2 mb-2">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Unidade</label>
+            <select class="form-select" id="gc-unidade">
+              <option value="">— Nenhuma —</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Observações</label>
+            <input type="text" class="form-control" id="gc-obs" placeholder="Opcional">
+          </div>
         </div>
 
         <!-- Preview (Modo Teste) -->

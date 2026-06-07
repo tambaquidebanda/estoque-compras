@@ -32,6 +32,9 @@ let _rateioItensAtual = []; // itens de rateio já resolvidos (com plano_conta_i
 let cPlanoConta = [];       // { id, nome, grupo_id } — apenas subcategorias (folhas)
 let cPlanoContaGrupos = []; // { id, nome } — apenas grupos-pai (para montar optgroup)
 
+// unidades do financeiro (compartilhado via Supabase)
+let cUnidades = [];         // { id, nome }
+
 
 // ═══════════════════════════════════════════════════════════════
 // INIT
@@ -394,20 +397,22 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, comp, hist, grp] = await Promise.all([
+  const [f, cat, tip, comp, hist, grp, uni] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
     sb.from('cmp_categorias').select('id,nome,plano_conta,plano_conta_id').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
+    sb.from('unidades').select('id,nome').order('nome'),
   ]);
 
-  cForn   = f.data   || [];
-  cCat    = cat.data || [];
-  cTipo   = tip.data || [];
-  cComp   = comp.data || [];
-  cGrupos = grp.data  || [];
+  cForn     = f.data   || [];
+  cCat      = cat.data || [];
+  cTipo     = tip.data || [];
+  cComp     = comp.data || [];
+  cGrupos   = grp.data  || [];
+  cUnidades = uni.data  || [];
 
   // Carrega plano_contas com paginação (tabela pode ter >1000 linhas)
   const todosPC = await fetchTodosPlanoContas();
@@ -718,6 +723,12 @@ async function prepararFormCompra() {
   compSel.innerHTML = '<option value="">— Selecione —</option>' +
     cComp.map(c => `<option value="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
 
+  const usoSel = document.getElementById('c-uso');
+  if (usoSel && cUnidades.length) {
+    usoSel.innerHTML = '<option value="">— Selecione —</option>' +
+      cUnidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
+  }
+
   // Warning if missing registers
   const falta = [];
   if (!cCat.length)  falta.push('<strong>Categorias</strong>');
@@ -898,7 +909,9 @@ function adicionarItemPedido(e) {
   const un       = document.getElementById('c-un').value;
   const custo    = _parseCusto();
   const qtd      = parseFloat(document.getElementById('c-qtd').value) || 0;
-  const uso      = document.getElementById('c-uso').value;
+  const usoSel    = document.getElementById('c-uso');
+  const usoId     = usoSel?.value || null;
+  const usoNome   = usoSel?.selectedOptions[0]?.text || '';
 
   if (!data || !fornNome || !comp) {
     toast('Preencha Data, Fornecedor e Comprador.', 'erro'); return;
@@ -912,7 +925,8 @@ function adicionarItemPedido(e) {
 
   _pedidoItens.push({
     data, fornNome, fornId, comp,
-    prod, cat, planoConta, un, custo, qtd, uso,
+    prod, cat, planoConta, un, custo, qtd,
+    uso: usoNome, unidadeId: usoId,
     total: custo * qtd,
   });
 
@@ -4653,6 +4667,17 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
     document.getElementById('gc-plano-label').textContent = _rateioItensAtual[0]?.nome || '—';
   }
 
+  // Popula dropdown de unidade e pré-seleciona com base nos itens do pedido
+  const uniSel = document.getElementById('gc-unidade');
+  if (uniSel) {
+    uniSel.innerHTML = '<option value="">— Nenhuma —</option>' +
+      cUnidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
+    const g = _pedidosGrupos[pedido_num];
+    const primeiroItem = (g?.itens || [])[0];
+    const unidadeIdItem = primeiroItem?.unidadeId || null;
+    if (unidadeIdItem) uniSel.value = unidadeIdItem;
+  }
+
   const prodMode = modoIntegracaoProducao();
   document.getElementById('btn-gc-label').textContent = prodMode
     ? 'Enviar ao Financeiro' : 'Simular (Modo Teste)';
@@ -4714,11 +4739,13 @@ async function confirmarGerarConta() {
             { onConflict: 'pedido_num', ignoreDuplicates: false })
     .select().single();
 
+  const unidade_id = document.getElementById('gc-unidade')?.value || null;
+
   await gerarContaFinanceiro({
     pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
     plano_conta, nf_numero, conta_id: conta?.id || null,
     obs: obs || `Pedido ${pedido_num}`,
-    temRateio, rateioItensResolvidos,
+    temRateio, rateioItensResolvidos, unidade_id,
   });
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
@@ -4726,7 +4753,7 @@ async function confirmarGerarConta() {
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
-  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [] }) {
+  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [], unidade_id = null }) {
 
   const producao = modoIntegracaoProducao();
 
@@ -4758,6 +4785,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
     acrescimo:      0,
     desconto:       0,
     tem_rateio:     temRateio,
+    unidade_id:     unidade_id || null,
   };
 
   if (!producao) {
