@@ -919,6 +919,9 @@ function adicionarItemPedido(e) {
   if (!prod || !cat || !custo || !qtd) {
     toast('Preencha Produto, Categoria, Custo e Quantidade.', 'erro'); return;
   }
+  if (!usoId) {
+    toast('Selecione a Unidade de Uso.', 'erro'); return;
+  }
 
   const catObj     = cCat.find(c => c.nome === cat);
   const planoConta = catObj ? (catObj.plano_conta || '') : '';
