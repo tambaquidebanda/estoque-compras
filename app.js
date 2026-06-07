@@ -252,30 +252,34 @@ function irAba(aba, el) {
 }
 
 
+// Busca todos os registros de plano_contas paginando (igual ao financeiro)
+async function fetchTodosPlanoContas() {
+  const PAGE = 1000;
+  let todos = [], pagina = 0;
+  while (true) {
+    const { data: lote } = await sb.from('plano_contas')
+      .select('id,nome,grupo_id,tipo')
+      .order('nome')
+      .range(pagina * PAGE, (pagina + 1) * PAGE - 1);
+    if (!lote || !lote.length) break;
+    todos = todos.concat(lote);
+    if (lote.length < PAGE) break;
+    pagina++;
+  }
+  return todos;
+}
+
 // Constrói o HTML de um <select> hierárquico de plano de contas
-// (grupos como <optgroup>, subcategorias como <option>)
-function buildPlanoSelect(opcaoVazia, planoAtualId) {
+function buildPlanoSelect(opcaoVazia, planoAtualId, grupos, subcats) {
   let html = `<option value="">${esc(opcaoVazia)}</option>`;
-  // Agrupa subcategorias por grupo_id
-  const subcatPorGrupo = {};
-  cPlanoConta.forEach(p => {
-    if (!subcatPorGrupo[p.grupo_id]) subcatPorGrupo[p.grupo_id] = [];
-    subcatPorGrupo[p.grupo_id].push(p);
-  });
-  // Monta optgroup para cada grupo que tenha subcategorias
-  cPlanoContaGrupos.forEach(g => {
-    const subs = subcatPorGrupo[g.id];
-    if (!subs || !subs.length) return;
+  grupos.forEach(g => {
+    const subs = subcats.filter(s => s.grupo_id === g.id);
+    if (!subs.length) return;
     html += `<optgroup label="${esc(g.nome)}">`;
     subs.sort((a, b) => a.nome.localeCompare(b.nome)).forEach(p => {
       html += `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`;
     });
     html += `</optgroup>`;
-  });
-  // Subcategorias sem grupo (caso existam)
-  const semGrupo = cPlanoConta.filter(p => !subcatPorGrupo[p.grupo_id] || false);
-  semGrupo.forEach(p => {
-    html += `<option value="${p.id}"${p.id === planoAtualId ? ' selected' : ''}>${esc(p.nome)}</option>`;
   });
   return html;
 }
@@ -288,8 +292,15 @@ function toggleFormCad(key) {
     // Popula dropdown de plano de contas ao abrir o form de categorias
     if (key === 'cat') {
       const sel = document.getElementById('n-plano');
-      if (sel && cPlanoConta.length) {
-        sel.innerHTML = buildPlanoSelect('— Plano de contas (opcional) —', '');
+      if (sel) {
+        sel.innerHTML = '<option value="">Carregando...</option>';
+        fetchTodosPlanoContas().then(todos => {
+          const grupos  = todos.filter(p => p.tipo === 'pagar' && !p.grupo_id);
+          const subcats = todos.filter(p => p.tipo === 'pagar' &&  p.grupo_id);
+          cPlanoContaGrupos = grupos;
+          cPlanoConta = subcats;
+          sel.innerHTML = buildPlanoSelect('— Plano de contas (opcional) —', '', grupos, subcats);
+        });
       }
     }
     el.querySelector('input')?.focus();
@@ -378,26 +389,27 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, comp, hist, grp, pc] = await Promise.all([
+  const [f, cat, tip, comp, hist, grp] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
     sb.from('cmp_categorias').select('id,nome,plano_conta,plano_conta_id').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
-    sb.from('plano_contas').select('id,nome,grupo_id').order('nome'),
   ]);
 
-  cForn       = f.data    || [];
-  cCat        = cat.data  || [];
-  cTipo       = tip.data  || [];
-  cComp       = comp.data || [];
-  cGrupos     = grp.data  || [];
-  const todosPC = pc.data || [];
-  // Grupos-pai (grupo_id null) — usados apenas para montar optgroup no dropdown
-  cPlanoContaGrupos = todosPC.filter(p => !p.grupo_id);
-  // Subcategorias (folhas) — únicas aceitas pelo financeiro como plano_conta_id
-  cPlanoConta = todosPC.filter(p => p.grupo_id);
+  cForn   = f.data   || [];
+  cCat    = cat.data || [];
+  cTipo   = tip.data || [];
+  cComp   = comp.data || [];
+  cGrupos = grp.data  || [];
+
+  // Carrega plano_contas com paginação (tabela pode ter >1000 linhas)
+  const todosPC = await fetchTodosPlanoContas();
+  // Grupos-pai (grupo_id null) — usados para montar optgroup no dropdown
+  cPlanoContaGrupos = todosPC.filter(p => p.tipo === 'pagar' && !p.grupo_id);
+  // Subcategorias (folhas, tipo pagar) — únicas aceitas pelo financeiro como plano_conta_id
+  cPlanoConta = todosPC.filter(p => p.tipo === 'pagar' && p.grupo_id);
 
   // Build unique product list from past purchases — ordered DESC so first hit = last price
   const seen = new Set();
@@ -1535,15 +1547,25 @@ async function excluirCad(tabela, id, tipo) {
   renderListaCad(tipo);
 }
 
-function editarPlanoCategoria(catId, catNome, planoAtualId) {
-  document.getElementById('epc-titulo').textContent  = catNome;
-  document.getElementById('epc-cat-id').value        = catId;
-  document.getElementById('epc-plano').innerHTML     = buildPlanoSelect('— Sem vínculo —', planoAtualId);
-  // Se o ID atual é de grupo-pai (não subcategoria), não pré-seleciona nada — força nova escolha
-  const isSubcat = cPlanoConta.some(p => p.id === planoAtualId);
-  document.getElementById('epc-plano').value         = isSubcat ? (planoAtualId || '') : '';
+async function editarPlanoCategoria(catId, catNome, planoAtualId) {
+  document.getElementById('epc-titulo').textContent = catNome;
+  document.getElementById('epc-cat-id').value       = catId;
+  document.getElementById('epc-plano').innerHTML    = '<option value="">Carregando...</option>';
 
   new bootstrap.Modal(document.getElementById('modal-editar-plano-cat')).show();
+
+  const todos   = await fetchTodosPlanoContas();
+  const grupos  = todos.filter(p => p.tipo === 'pagar' && !p.grupo_id);
+  const subcats = todos.filter(p => p.tipo === 'pagar' &&  p.grupo_id);
+  // Atualiza o cache para que salvarPlanoCategoria encontre o nome da subcategoria
+  cPlanoContaGrupos = grupos;
+  cPlanoConta = subcats;
+
+  const sel = document.getElementById('epc-plano');
+  sel.innerHTML = buildPlanoSelect('— Sem vínculo —', planoAtualId, grupos, subcats);
+  // Se o ID salvo é grupo-pai (não subcategoria), limpa para forçar nova escolha
+  const isSubcat = subcats.some(p => p.id === planoAtualId);
+  sel.value = isSubcat ? (planoAtualId || '') : '';
 }
 
 async function salvarPlanoCategoria() {
