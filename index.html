@@ -98,6 +98,19 @@
           <i class="bi bi-clock-history"></i> Histórico
         </a>
       </div>
+      <!-- Grupo ESTOQUE -->
+      <div class="nav-grupo-btn" id="nav-grupo-estoque" onclick="toggleNavGrupo('estoque')">
+        <i class="bi bi-box-seam-fill"></i> Estoque
+        <span class="seta">▶</span>
+      </div>
+      <div class="nav-submenu" id="nav-submenu-estoque">
+        <a href="#" onclick="ir('recebimento',this)">
+          <i class="bi bi-box-seam-fill"></i> Recebimentos
+        </a>
+        <a href="#" onclick="ir('inventario',this)">
+          <i class="bi bi-clipboard-check-fill"></i> Inventários
+        </a>
+      </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
       </a>
@@ -115,19 +128,6 @@
         <a href="#" onclick="irCadSb('fornecedores',this)">🏪 Fornecedores</a>
         <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
         <a href="#" onclick="irCadSb('compradores',this)">👤 Compradores</a>
-      </div>
-      <!-- Grupo ESTOQUE -->
-      <div class="nav-grupo-btn" id="nav-grupo-estoque" onclick="toggleNavGrupo('estoque')">
-        <i class="bi bi-box-seam-fill"></i> Estoque
-        <span class="seta">▶</span>
-      </div>
-      <div class="nav-submenu" id="nav-submenu-estoque">
-        <a href="#" onclick="ir('recebimento',this)">
-          <i class="bi bi-box-seam-fill"></i> Recebimentos
-        </a>
-        <a href="#" onclick="ir('inventario',this)">
-          <i class="bi bi-clipboard-check-fill"></i> Inventários
-        </a>
       </div>
       <a href="#" onclick="ir('controlecmv',this)">
         <i class="bi bi-file-earmark-spreadsheet-fill"></i> Controle CMV
