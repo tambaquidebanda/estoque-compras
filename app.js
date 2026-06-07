@@ -3132,15 +3132,27 @@ async function renderPendentes() {
         </button>
       </td>
       <td class="text-center">
-        <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="excluirPedidoReceb('${esc(g.pedido_num)}')">
-          🗑️ Excluir
-        </button>
+        ${jaEnviado
+          ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" disabled
+               title="Pedido enviado ao financeiro — exclua o lançamento lá primeiro">
+               🔒 Excluir
+             </button>`
+          : `<button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="excluirPedidoReceb('${esc(g.pedido_num)}')">
+               🗑️ Excluir
+             </button>`
+        }
       </td>
     </tr>`;
   }).join('');
 }
 
 async function excluirPedidoReceb(pedido_num) {
+  // Verificação de segurança: bloqueia se já existe lançamento no financeiro
+  const { data: lanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).maybeSingle();
+  if (lanc) {
+    toast('Pedido já enviado ao financeiro — exclua o lançamento lá primeiro.', 'erro');
+    return;
+  }
   if (!confirm(`Excluir o pedido ${pedido_num}? Esta ação não pode ser desfeita.`)) return;
   await Promise.all([
     sb.from('cmp_compras').delete().eq('pedido_num', pedido_num),
