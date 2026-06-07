@@ -3098,7 +3098,7 @@ async function renderPendentes() {
     grupos[key].total += (c.quantidade || 0) * (c.custo_unit || 0);
   });
 
-  let lista = Object.values(grupos).sort((a,b) => b.data.localeCompare(a.data));
+  let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
 
   // Salva grupos para o modal de financeiro
   _pedidosGrupos = {};
