@@ -4028,6 +4028,7 @@ async function carregarCompras() {
     const status  = g.recebido ? '✅ Recebido' : '⏳ Pendente';
     const enviado = lancSet.has(g.pedido_num);
     const podeEditar = !g.recebido && !enviado;
+    const editarTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
       <td>${dataBR}</td>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
@@ -4040,8 +4041,7 @@ async function carregarCompras() {
       <td class="text-center">
         <div class="d-flex gap-1 justify-content-center" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="imprimirPedido('${g.pedido_num}')" title="Imprimir">🖨️</button>
-          ${podeEditar ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="editarPedido('${g.pedido_num}')" title="Editar pedido">✏️ Editar</button>` : ''}
-          ${!g.recebido ? `<button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${g.pedido_num}')" title="Receber">📬 Receber</button>` : ''}
+          <button class="btn btn-sm py-0 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} title="${editarTitle}">✏️ Editar</button>
         </div>
       </td>
     </tr>
