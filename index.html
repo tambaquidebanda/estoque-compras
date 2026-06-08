@@ -1027,16 +1027,24 @@
       <!-- Filtros -->
       <div class="card-grafico mb-3">
         <div class="row g-3 align-items-end">
-          <div class="col-md-8">
+          <div class="col-md-5">
             <label class="form-label fw-semibold">📂 Filtrar por Categoria</label>
-            <select id="inv-filtro-cat" class="form-select" multiple size="4" onchange="filtrarInventario()" style="min-height:100px">
-            </select>
-            <div class="text-muted small mt-1">Segure <kbd>Cmd</kbd> (Mac) ou <kbd>Ctrl</kbd> (Windows) para selecionar várias. Sem seleção = todas.</div>
+            <div class="position-relative" id="inv-cat-wrapper">
+              <button type="button" class="form-select text-start" id="inv-cat-btn" onclick="toggleDropCat(event)" style="cursor:pointer">
+                <span id="inv-cat-label">Todas as categorias</span>
+                <i class="bi bi-chevron-down float-end mt-1"></i>
+              </button>
+              <div id="inv-cat-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:#fff;border:1px solid #dee2e6;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;margin-top:2px">
+                <div id="inv-cat-lista" class="p-2"></div>
+              </div>
+            </div>
           </div>
           <div class="col-md-4">
             <label class="form-label fw-semibold">🔍 Buscar Produto</label>
             <input type="text" class="form-control" id="inv-busca" placeholder="Digite para filtrar..." oninput="filtrarInventario()">
-            <button class="btn btn-outline-secondary btn-sm mt-2 w-100" onclick="limparFiltrosInv()">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-outline-secondary w-100" onclick="limparFiltrosInv()">
               <i class="bi bi-x-circle"></i> Limpar Filtros
             </button>
           </div>

@@ -2142,6 +2142,9 @@ function mudarLocalInv(local) {
   document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('inv-busca').value = '';
+  // Reseta checkboxes de categoria ao trocar de local
+  document.querySelectorAll('#inv-cat-lista input[type=checkbox]').forEach(c => c.checked = false);
+  _atualizarLabelCat();
   renderInventario();
 }
 
@@ -2155,21 +2158,52 @@ function filtrarInventario() {
   renderInventario();
 }
 
+function toggleDropCat(e) {
+  e.stopPropagation();
+  const drop = document.getElementById('inv-cat-dropdown');
+  if (!drop) return;
+  const aberto = drop.style.display !== 'none';
+  drop.style.display = aberto ? 'none' : 'block';
+}
+
+// Fecha dropdown ao clicar fora
+document.addEventListener('click', () => {
+  const drop = document.getElementById('inv-cat-dropdown');
+  if (drop) drop.style.display = 'none';
+});
+
+function _getCatsSelecionadas() {
+  return Array.from(document.querySelectorAll('#inv-cat-lista input[type=checkbox]:checked')).map(c => c.value);
+}
+
+function _atualizarLabelCat() {
+  const selecionadas = _getCatsSelecionadas();
+  const label = document.getElementById('inv-cat-label');
+  if (!label) return;
+  label.textContent = selecionadas.length === 0
+    ? 'Todas as categorias'
+    : selecionadas.length === 1
+      ? selecionadas[0]
+      : `${selecionadas.length} categorias selecionadas`;
+}
+
 function _popularCatsInv() {
-  const sel = document.getElementById('inv-filtro-cat');
-  if (!sel) return;
-  const selecionadas = new Set(Array.from(sel.selectedOptions).map(o => o.value));
+  const lista = document.getElementById('inv-cat-lista');
+  if (!lista || lista.dataset.preenchido) return;
   const cats = [...new Set(
     cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo)).map(p => p.categoria).filter(Boolean)
   )].sort();
-  sel.innerHTML = cats.map(c =>
-    `<option value="${esc(c)}"${selecionadas.has(c) ? ' selected' : ''}>${esc(c)}</option>`
-  ).join('');
+  lista.innerHTML = cats.map(c => `
+    <label class="d-flex align-items-center gap-2 px-2 py-1 rounded" style="cursor:pointer" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background=''">
+      <input type="checkbox" value="${esc(c)}" onchange="_atualizarLabelCat();filtrarInventario()">
+      <span class="small">${esc(c)}</span>
+    </label>`).join('');
+  lista.dataset.preenchido = '1';
 }
 
 function limparFiltrosInv() {
-  const sel = document.getElementById('inv-filtro-cat');
-  if (sel) Array.from(sel.options).forEach(o => o.selected = false);
+  document.querySelectorAll('#inv-cat-lista input[type=checkbox]').forEach(c => c.checked = false);
+  _atualizarLabelCat();
   const busca = document.getElementById('inv-busca');
   if (busca) busca.value = '';
   renderInventario();
@@ -2178,8 +2212,7 @@ function limparFiltrosInv() {
 function renderInventario() {
   _popularCatsInv();
   const busca = (document.getElementById('inv-busca')?.value || '').toLowerCase();
-  const catSel = document.getElementById('inv-filtro-cat');
-  const catsFiltro = catSel ? Array.from(catSel.selectedOptions).map(o => o.value) : [];
+  const catsFiltro = _getCatsSelecionadas();
   let prods = cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo));
   if (catsFiltro.length) prods = prods.filter(p => catsFiltro.includes(p.categoria));
   if (busca) prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
