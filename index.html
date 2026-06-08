@@ -1010,12 +1010,7 @@
             <label class="form-label fw-semibold">👤 Responsável <span class="text-muted fw-normal small">(opcional)</span></label>
             <input type="text" class="form-control" id="inv-resp" placeholder="Nome do responsável">
           </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold small">Buscar produto</label>
-            <input type="text" class="form-control" id="inv-busca" placeholder="Digite para filtrar..."
-              oninput="filtrarInventario()">
-          </div>
-          <div class="col-md-3">
+          <div class="col-md-6">
             <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:.75rem">
               <div class="text-muted small">💰 Valor Total</div>
               <div class="fw-bold text-success fs-5" id="inv-total-geral">R$ 0,00</div>
@@ -1029,24 +1024,23 @@
         </div>
       </div>
 
-      <!-- Importar lista de produtos -->
+      <!-- Filtros -->
       <div class="card-grafico mb-3">
-        <div class="d-flex align-items-center gap-2 mb-2">
-          <h6 class="mb-0 fw-semibold">📥 Importar Lista de Produtos para este Inventário</h6>
-          <span class="badge" id="imp-inv-local-badge" style="background:#FF6B35">Centro</span>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">📂 Filtrar por Categoria</label>
+            <select id="inv-filtro-cat" class="form-select" multiple size="4" onchange="filtrarInventario()" style="min-height:100px">
+            </select>
+            <div class="text-muted small mt-1">Segure <kbd>Cmd</kbd> (Mac) ou <kbd>Ctrl</kbd> (Windows) para selecionar várias. Sem seleção = todas.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">🔍 Buscar Produto</label>
+            <input type="text" class="form-control" id="inv-busca" placeholder="Digite para filtrar..." oninput="filtrarInventario()">
+            <button class="btn btn-outline-secondary btn-sm mt-2 w-100" onclick="limparFiltrosInv()">
+              <i class="bi bi-x-circle"></i> Limpar Filtros
+            </button>
+          </div>
         </div>
-        <p class="text-muted small mb-2">Colunas esperadas: <strong>Produto · Unidade · Valor Unitário</strong> — Categoria é opcional. Preenche valores padrão nas linhas correspondentes.</p>
-        <div class="drop-zone" id="drop-inv"
-             onclick="document.getElementById('imp-inv-file').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="this.classList.remove('drag-over');handleDropInvFile(event)"
-             style="cursor:pointer;border:2px dashed #dee2e6;border-radius:10px;padding:1rem;text-align:center">
-          <input type="file" id="imp-inv-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarProdutosInv(event)">
-          <div style="font-size:1.8rem">📂</div>
-          <div class="small mt-1">Clique ou arraste o arquivo Excel / CSV</div>
-        </div>
-        <div id="msg-imp-inv" class="mt-2"></div>
       </div>
 
       <!-- Tabela de produtos -->

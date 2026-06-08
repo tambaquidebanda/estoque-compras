@@ -2136,11 +2136,9 @@ let _invProdutos = [];  // produtos filtrados atualmente na tela
 
 function mudarLocalInv(local) {
   _invLocal = local;
-  document.getElementById('inv-local-badge').textContent    = local;
+  document.getElementById('inv-local-badge').textContent = local;
   const e2 = document.getElementById('inv-local-badge2');
-  const e3 = document.getElementById('imp-inv-local-badge');
   if (e2) e2.textContent = local;
-  if (e3) e3.textContent = local;
   document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('inv-busca').value = '';
@@ -2157,9 +2155,33 @@ function filtrarInventario() {
   renderInventario();
 }
 
+function _popularCatsInv() {
+  const sel = document.getElementById('inv-filtro-cat');
+  if (!sel) return;
+  const selecionadas = new Set(Array.from(sel.selectedOptions).map(o => o.value));
+  const cats = [...new Set(
+    cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo)).map(p => p.categoria).filter(Boolean)
+  )].sort();
+  sel.innerHTML = cats.map(c =>
+    `<option value="${esc(c)}"${selecionadas.has(c) ? ' selected' : ''}>${esc(c)}</option>`
+  ).join('');
+}
+
+function limparFiltrosInv() {
+  const sel = document.getElementById('inv-filtro-cat');
+  if (sel) Array.from(sel.options).forEach(o => o.selected = false);
+  const busca = document.getElementById('inv-busca');
+  if (busca) busca.value = '';
+  renderInventario();
+}
+
 function renderInventario() {
+  _popularCatsInv();
   const busca = (document.getElementById('inv-busca')?.value || '').toLowerCase();
+  const catSel = document.getElementById('inv-filtro-cat');
+  const catsFiltro = catSel ? Array.from(catSel.selectedOptions).map(o => o.value) : [];
   let prods = cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo));
+  if (catsFiltro.length) prods = prods.filter(p => catsFiltro.includes(p.categoria));
   if (busca) prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
   _invProdutos = prods;
 
