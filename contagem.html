@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Contagem de Estoque — Tambaqui de Banda</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #1a1f2e;
+      --card:     #242938;
+      --borda:    #2e3548;
+      --verde:    #2EC4B6;
+      --laranja:  #FF6B35;
+      --txt:      #e8eaf0;
+      --txt2:     #8892a4;
+      --input-bg: #1a1f2e;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100dvh;
+    }
+
+    /* ── LOGIN ── */
+    #tela-login {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      padding: 1.5rem;
+    }
+    .login-card {
+      background: var(--card);
+      border: 1px solid var(--borda);
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      width: 100%;
+      max-width: 380px;
+    }
+    .login-logo {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+    .login-logo img { max-width: 160px; }
+    .login-logo h2 { font-size: 1.1rem; color: var(--txt2); margin-top: .5rem; }
+
+    /* ── INPUTS ── */
+    label { display: block; font-size: .8rem; color: var(--txt2); margin-bottom: .4rem; font-weight: 500; }
+    input[type=email], input[type=password], input[type=date], select, input[type=text] {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--borda);
+      border-radius: 10px;
+      color: var(--txt);
+      font-size: 1rem;
+      padding: .75rem 1rem;
+      margin-bottom: 1rem;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    input:focus, select:focus { border-color: var(--verde); }
+    select option { background: var(--card); }
+
+    /* ── BOTÕES ── */
+    .btn-primary {
+      width: 100%;
+      background: var(--verde);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      padding: .85rem;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn-primary:active { opacity: .8; }
+    .btn-primary:disabled { opacity: .5; cursor: default; }
+
+    .erro { color: #ff6b6b; font-size: .85rem; margin-top: .5rem; text-align: center; }
+
+    /* ── TELA PRINCIPAL ── */
+    #tela-principal { display: none; flex-direction: column; min-height: 100dvh; }
+
+    /* Header fixo */
+    .cabecalho {
+      background: var(--card);
+      border-bottom: 1px solid var(--borda);
+      padding: .75rem 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .cabecalho-topo {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: .6rem;
+    }
+    .cabecalho-topo img { height: 32px; }
+    .btn-sair {
+      background: none;
+      border: 1px solid var(--borda);
+      color: var(--txt2);
+      border-radius: 8px;
+      padding: .3rem .7rem;
+      font-size: .8rem;
+      cursor: pointer;
+    }
+
+    /* Seletor de local */
+    .local-pills { display: flex; gap: .5rem; margin-bottom: .6rem; }
+    .pill {
+      flex: 1;
+      text-align: center;
+      padding: .55rem;
+      border-radius: 8px;
+      border: 1px solid var(--borda);
+      color: var(--txt2);
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--input-bg);
+      transition: all .15s;
+    }
+    .pill.ativo { background: var(--verde); border-color: var(--verde); color: #fff; }
+
+    /* Info linha */
+    .info-linha {
+      display: flex;
+      gap: .5rem;
+      align-items: center;
+      font-size: .78rem;
+      color: var(--txt2);
+    }
+    .info-linha strong { color: var(--txt); }
+
+    /* Busca */
+    .busca-wrap { padding: .75rem 1rem; }
+    .busca-wrap input {
+      background: var(--card);
+      border: 1px solid var(--borda);
+      border-radius: 10px;
+      color: var(--txt);
+      font-size: 1rem;
+      padding: .7rem 1rem;
+      width: 100%;
+      outline: none;
+      margin: 0;
+    }
+    .busca-wrap input:focus { border-color: var(--verde); }
+
+    /* Lista de produtos */
+    .lista-produtos { padding: 0 1rem 6rem; }
+
+    .grupo-cat {
+      margin-bottom: .5rem;
+    }
+    .grupo-cat-titulo {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--verde);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: .5rem 0 .3rem;
+      border-bottom: 1px solid var(--borda);
+      margin-bottom: .3rem;
+    }
+
+    .item-produto {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      background: var(--card);
+      border: 1px solid var(--borda);
+      border-radius: 10px;
+      padding: .65rem .75rem;
+      margin-bottom: .4rem;
+    }
+    .item-nome {
+      flex: 1;
+      min-width: 0;
+    }
+    .item-nome strong {
+      display: block;
+      font-size: .88rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .item-nome small { font-size: .72rem; color: var(--txt2); }
+    .item-un {
+      font-size: .75rem;
+      color: var(--txt2);
+      min-width: 28px;
+      text-align: center;
+    }
+    .item-qtd {
+      width: 88px;
+      background: var(--input-bg);
+      border: 1.5px solid var(--borda);
+      border-radius: 8px;
+      color: var(--txt);
+      font-size: 1.1rem;
+      font-weight: 600;
+      text-align: center;
+      padding: .5rem .4rem;
+      -webkit-appearance: none;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .item-qtd:focus { border-color: var(--verde); outline: none; }
+    .item-qtd.tem-valor { border-color: var(--verde); background: #1e3535; color: var(--verde); }
+
+    /* Botão salvar fixo */
+    .rodape-fixo {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      padding: .75rem 1rem;
+      background: var(--bg);
+      border-top: 1px solid var(--borda);
+    }
+    .btn-salvar {
+      width: 100%;
+      background: var(--verde);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      padding: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .5rem;
+    }
+    .btn-salvar:active { opacity: .85; }
+    .btn-salvar:disabled { background: #2e3548; color: var(--txt2); cursor: default; }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: #fff;
+      padding: .65rem 1.2rem;
+      border-radius: 20px;
+      font-size: .9rem;
+      display: none;
+      z-index: 999;
+      white-space: nowrap;
+      max-width: 90vw;
+    }
+    #toast.ok  { background: var(--verde); }
+    #toast.err { background: #e74c3c; }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .vazio { text-align: center; color: var(--txt2); padding: 2rem 0; font-size: .9rem; }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="tela-login">
+  <div class="login-card">
+    <div class="login-logo">
+      <img src="logo.png" alt="Tambaqui de Banda">
+      <h2>Contagem de Estoque</h2>
+    </div>
+    <label>E-mail</label>
+    <input type="email" id="login-email" placeholder="seu@email.com"
+      onkeydown="if(event.key==='Enter') document.getElementById('login-senha').focus()">
+    <label>Senha</label>
+    <input type="password" id="login-senha" placeholder="••••••••"
+      onkeydown="if(event.key==='Enter') fazerLogin()">
+    <button class="btn-primary" id="btn-login" onclick="fazerLogin()">Entrar</button>
+    <div class="erro" id="login-erro"></div>
+  </div>
+</div>
+
+<!-- PRINCIPAL -->
+<div id="tela-principal">
+
+  <!-- Cabeçalho fixo -->
+  <div class="cabecalho">
+    <div class="cabecalho-topo">
+      <img src="logo.png" alt="Tambaqui">
+      <button class="btn-sair" onclick="sair()">Sair</button>
+    </div>
+
+    <div class="local-pills">
+      <div class="pill ativo" id="pill-centro" onclick="selecionarLocal('Centro')">🏢 Centro</div>
+      <div class="pill" id="pill-p10" onclick="selecionarLocal('P10')">🏭 P10</div>
+    </div>
+
+    <div class="info-linha">
+      <span>📅 <strong id="exibe-data">—</strong></span>
+      <span style="color:var(--borda)">|</span>
+      <span>👤 <strong id="exibe-resp">—</strong></span>
+      <span style="color:var(--borda)">|</span>
+      <span id="exibe-contagem" style="color:var(--verde)">0 itens preenchidos</span>
+    </div>
+  </div>
+
+  <!-- Busca -->
+  <div class="busca-wrap">
+    <input type="text" id="busca-prod" placeholder="🔍  Buscar produto..."
+      oninput="filtrarProdutos()" autocomplete="off" autocorrect="off" spellcheck="false">
+  </div>
+
+  <!-- Lista -->
+  <div class="lista-produtos" id="lista-produtos">
+    <div class="vazio">Carregando produtos...</div>
+  </div>
+
+  <!-- Salvar -->
+  <div class="rodape-fixo">
+    <button class="btn-salvar" id="btn-salvar" onclick="salvarContagem()">
+      💾 Salvar Contagem
+    </button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+let sb   = null;
+let user = null;
+let local = 'Centro';
+let produtos = [];   // todos os produtos carregados
+let visiveis = [];   // produtos filtrados
+
+function norm(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function toast(msg, tipo) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = tipo === 'ok' ? 'ok' : 'err';
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+
+// ── AUTH ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  sb = supabase.createClient(SB_URL, SB_KEY);
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) { user = session.user; entrar(); }
+});
+
+async function fazerLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const senha  = document.getElementById('login-senha').value;
+  const btn    = document.getElementById('btn-login');
+  const erro   = document.getElementById('login-erro');
+  if (!email || !senha) { erro.textContent = 'Preencha e-mail e senha.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Entrando...';
+  erro.textContent = '';
+
+  if (!sb) sb = supabase.createClient(SB_URL, SB_KEY);
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
+
+  if (error) {
+    erro.textContent = 'E-mail ou senha incorretos.';
+    btn.disabled = false;
+    btn.textContent = 'Entrar';
+    return;
+  }
+  user = data.user;
+  entrar();
+}
+
+function entrar() {
+  document.getElementById('tela-login').style.display = 'none';
+  document.getElementById('tela-principal').style.display = 'flex';
+  document.getElementById('tela-principal').style.flexDirection = 'column';
+
+  const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  document.getElementById('exibe-resp').textContent = nome;
+
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  document.getElementById('exibe-data').textContent = hoje;
+
+  carregarProdutos();
+}
+
+async function sair() {
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// ── LOCAL ─────────────────────────────────────────────────────────
+function selecionarLocal(l) {
+  local = l;
+  document.getElementById('pill-centro').className = 'pill' + (l === 'Centro' ? ' ativo' : '');
+  document.getElementById('pill-p10').className    = 'pill' + (l === 'P10'    ? ' ativo' : '');
+  // limpa quantidades ao trocar local
+  document.querySelectorAll('.item-qtd').forEach(el => {
+    el.value = '';
+    el.classList.remove('tem-valor');
+  });
+  atualizarContagem();
+}
+
+// ── PRODUTOS ─────────────────────────────────────────────────────
+async function carregarProdutos() {
+  document.getElementById('lista-produtos').innerHTML = '<div class="vazio">Carregando produtos...</div>';
+
+  const { data, error } = await sb
+    .from('est_produtos')
+    .select('id,nome,tipo,categoria,unidade_uso')
+    .in('tipo', ['MP', 'SA', 'MC'])
+    .eq('ativo', true)
+    .order('categoria')
+    .order('nome');
+
+  if (error || !data?.length) {
+    document.getElementById('lista-produtos').innerHTML = '<div class="vazio">Nenhum produto encontrado.</div>';
+    return;
+  }
+
+  produtos = data;
+  visiveis = [...produtos];
+  renderProdutos(visiveis);
+}
+
+function filtrarProdutos() {
+  const q = norm(document.getElementById('busca-prod').value);
+  visiveis = q ? produtos.filter(p => norm(p.nome).includes(q) || norm(p.categoria).includes(q)) : [...produtos];
+  renderProdutos(visiveis);
+}
+
+function renderProdutos(lista) {
+  const cont = document.getElementById('lista-produtos');
+  if (!lista.length) {
+    cont.innerHTML = '<div class="vazio">Nenhum produto encontrado.</div>';
+    return;
+  }
+
+  // Agrupa por categoria
+  const grupos = {};
+  lista.forEach(p => {
+    const cat = p.categoria || '—';
+    if (!grupos[cat]) grupos[cat] = [];
+    grupos[cat].push(p);
+  });
+
+  cont.innerHTML = Object.entries(grupos).map(([cat, prods]) => `
+    <div class="grupo-cat">
+      <div class="grupo-cat-titulo">${cat}</div>
+      ${prods.map(p => `
+        <div class="item-produto">
+          <div class="item-nome">
+            <strong>${p.nome}</strong>
+          </div>
+          <div class="item-un">${p.unidade_uso || 'UN'}</div>
+          <input type="number" class="item-qtd" id="qtd-${p.id}"
+            min="0" step="any" placeholder="0"
+            oninput="onQtdChange(this)"
+            inputmode="decimal">
+        </div>`).join('')}
+    </div>`).join('');
+
+  atualizarContagem();
+}
+
+function onQtdChange(el) {
+  const val = parseFloat(el.value);
+  el.classList.toggle('tem-valor', !isNaN(val) && val > 0);
+  atualizarContagem();
+}
+
+function atualizarContagem() {
+  const count = document.querySelectorAll('.item-qtd.tem-valor').length;
+  document.getElementById('exibe-contagem').textContent =
+    count === 0 ? '0 itens preenchidos' : `${count} item${count > 1 ? 's' : ''} preenchido${count > 1 ? 's' : ''}`;
+}
+
+// ── SALVAR ────────────────────────────────────────────────────────
+async function salvarContagem() {
+  const btn = document.getElementById('btn-salvar');
+
+  // Coleta itens preenchidos
+  const itens = [];
+  visiveis.forEach(p => {
+    const el  = document.getElementById(`qtd-${p.id}`);
+    const qtd = parseFloat(el?.value);
+    if (!isNaN(qtd) && qtd >= 0) {
+      itens.push({
+        produto_id:     p.id,
+        nome:           p.nome,
+        estoque:        qtd,
+        cozinha_bar:    0,
+        outros:         0,
+        total:          qtd,
+        unidade:        p.unidade_uso || 'UN',
+        valor_unitario: 0,
+        soma_total:     0,
+      });
+    }
+  });
+
+  if (!itens.length) { toast('Preencha ao menos uma quantidade.', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Salvando...';
+
+  // Número sequencial
+  const { data: ultInvs } = await sb.from('est_inventarios')
+    .select('num_inv').order('criado_em', { ascending: false }).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
+  const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+
+  const { data: inv, error } = await sb.from('est_inventarios')
+    .insert([{ num_inv, data: hoje, local, responsavel: resp, total_geral: 0 }])
+    .select().single();
+
+  if (error) {
+    toast('Erro ao salvar: ' + error.message, 'err');
+    btn.disabled = false;
+    btn.innerHTML = '💾 Salvar Contagem';
+    return;
+  }
+
+  const itensComId = itens.map(it => ({ ...it, inventario_id: inv.id }));
+  const { error: err2 } = await sb.from('est_inventario_itens').insert(itensComId);
+
+  if (err2) {
+    toast('Erro nos itens: ' + err2.message, 'err');
+    btn.disabled = false;
+    btn.innerHTML = '💾 Salvar Contagem';
+    return;
+  }
+
+  toast(`✅ ${num_inv} salvo com ${itens.length} produto(s)!`, 'ok');
+
+  // Limpa campos
+  document.querySelectorAll('.item-qtd').forEach(el => {
+    el.value = '';
+    el.classList.remove('tem-valor');
+  });
+  atualizarContagem();
+
+  btn.disabled = false;
+  btn.innerHTML = '💾 Salvar Contagem';
+}
+</script>
+</body>
+</html>
