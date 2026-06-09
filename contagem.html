@@ -275,6 +275,45 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .vazio { text-align: center; color: var(--txt2); padding: 2rem 0; font-size: .9rem; }
+
+    /* Data inline no cabeçalho */
+    .data-input {
+      background: var(--input-bg);
+      border: 1px solid var(--borda);
+      border-radius: 6px;
+      color: var(--txt);
+      font-size: .78rem;
+      padding: .2rem .4rem;
+      margin: 0;
+      width: auto;
+      -webkit-appearance: none;
+    }
+    .data-input:focus { border-color: var(--verde); outline: none; }
+
+    /* Chips de categoria */
+    .cats-wrap {
+      display: flex;
+      gap: .4rem;
+      padding: .5rem 1rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .cats-wrap::-webkit-scrollbar { display: none; }
+    .chip {
+      flex-shrink: 0;
+      padding: .35rem .75rem;
+      border-radius: 20px;
+      border: 1px solid var(--borda);
+      background: var(--card);
+      color: var(--txt2);
+      font-size: .78rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all .15s;
+    }
+    .chip.ativo { background: var(--verde); border-color: var(--verde); color: #fff; }
   </style>
 </head>
 <body>
@@ -313,7 +352,8 @@
     </div>
 
     <div class="info-linha">
-      <span>📅 <strong id="exibe-data">—</strong></span>
+      <span>📅</span>
+      <input type="date" id="data-inv" class="data-input">
       <span style="color:var(--borda)">|</span>
       <span>👤 <strong id="exibe-resp">—</strong></span>
       <span style="color:var(--borda)">|</span>
@@ -326,6 +366,9 @@
     <input type="text" id="busca-prod" placeholder="🔍  Buscar produto..."
       oninput="filtrarProdutos()" autocomplete="off" autocorrect="off" spellcheck="false">
   </div>
+
+  <!-- Chips de categoria -->
+  <div class="cats-wrap" id="cats-wrap"></div>
 
   <!-- Lista -->
   <div class="lista-produtos" id="lista-produtos">
@@ -348,8 +391,9 @@
 let sb   = null;
 let user = null;
 let local = 'Centro';
-let produtos = [];   // todos os produtos carregados
-let visiveis = [];   // produtos filtrados
+let produtos  = [];   // todos os produtos carregados
+let visiveis  = [];   // produtos filtrados
+let catAtiva  = null; // categoria selecionada (null = todas)
 
 function norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -402,8 +446,8 @@ function entrar() {
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
 
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  document.getElementById('exibe-data').textContent = hoje;
+  const hoje = new Date().toISOString().slice(0, 10);
+  document.getElementById('data-inv').value = hoje;
 
   carregarProdutos();
 }
@@ -444,14 +488,39 @@ async function carregarProdutos() {
   }
 
   produtos = data;
-  visiveis = [...produtos];
+  popularChips();
+  aplicarFiltros();
+}
+
+function popularChips() {
+  const cats = [...new Set(produtos.map(p => p.categoria).filter(Boolean))].sort();
+  const wrap  = document.getElementById('cats-wrap');
+  wrap.innerHTML = `<div class="chip ativo" id="chip-todas" onclick="selecionarCat(null)">Todas</div>` +
+    cats.map(c => `<div class="chip" id="chip-${CSS.escape(c)}" onclick="selecionarCat('${c.replace(/'/g,"\\'")}')">
+      ${c}
+    </div>`).join('');
+}
+
+function selecionarCat(cat) {
+  catAtiva = cat;
+  document.querySelectorAll('.chip').forEach(el => el.classList.remove('ativo'));
+  const id = cat ? `chip-${CSS.escape(cat)}` : 'chip-todas';
+  document.getElementById(id)?.classList.add('ativo');
+  aplicarFiltros();
+}
+
+function aplicarFiltros() {
+  const q = norm(document.getElementById('busca-prod').value);
+  visiveis = produtos.filter(p => {
+    const passaCat  = !catAtiva || p.categoria === catAtiva;
+    const passaBusca = !q || norm(p.nome).includes(q) || norm(p.categoria).includes(q);
+    return passaCat && passaBusca;
+  });
   renderProdutos(visiveis);
 }
 
 function filtrarProdutos() {
-  const q = norm(document.getElementById('busca-prod').value);
-  visiveis = q ? produtos.filter(p => norm(p.nome).includes(q) || norm(p.categoria).includes(q)) : [...produtos];
-  renderProdutos(visiveis);
+  aplicarFiltros();
 }
 
 function renderProdutos(lista) {
@@ -535,7 +604,7 @@ async function salvarContagem() {
   const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
   const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = document.getElementById('data-inv').value || new Date().toISOString().slice(0, 10);
   const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
 
   const { data: inv, error } = await sb.from('est_inventarios')
