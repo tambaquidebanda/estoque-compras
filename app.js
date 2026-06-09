@@ -1004,15 +1004,18 @@ function _renderItensPedido() {
   btnCanc.style.display = '';
 
   tbody.innerHTML = _pedidoItens.map((it, idx) => `
-    <tr>
+    <tr id="item-row-${idx}">
       <td><strong>${esc(it.prod)}</strong></td>
       <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
       <td class="text-center">${it.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
       <td class="text-center">${esc(it.un)}</td>
       <td class="text-end">${brl(it.custo)}</td>
       <td class="text-end fw-bold">${brl(it.total)}</td>
-      <td class="text-center">
-        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removerItemPedido(${idx})">
+      <td class="text-center" style="white-space:nowrap">
+        <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1 me-1" onclick="editarItemPedido(${idx})" title="Editar">
+          <i class="bi bi-pencil-fill"></i>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removerItemPedido(${idx})" title="Excluir">
           <i class="bi bi-trash"></i>
         </button>
       </td>
@@ -1036,6 +1039,53 @@ function _renderItensPedido() {
 
 function removerItemPedido(idx) {
   _pedidoItens.splice(idx, 1);
+  _renderItensPedido();
+}
+
+function editarItemPedido(idx) {
+  const it  = _pedidoItens[idx];
+  const row = document.getElementById(`item-row-${idx}`);
+  if (!row) return;
+  const custoFmt = it.custo.toFixed(2).replace('.', ',');
+  row.innerHTML = `
+    <td><strong>${esc(it.prod)}</strong></td>
+    <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
+    <td class="text-center" style="min-width:80px">
+      <input type="number" class="form-control form-control-sm text-center p-1" id="edit-qtd-${idx}"
+        value="${it.qtd}" min="0.001" step="any" oninput="atualizarTotalInline(${idx})">
+    </td>
+    <td class="text-center">${esc(it.un)}</td>
+    <td class="text-end" style="min-width:110px">
+      <input type="text" class="form-control form-control-sm text-end p-1" id="edit-custo-${idx}"
+        value="${custoFmt}" oninput="mascaraMoeda(this); atualizarTotalInline(${idx})">
+    </td>
+    <td class="text-end fw-bold" id="edit-total-${idx}">${brl(it.total)}</td>
+    <td class="text-center" style="white-space:nowrap">
+      <button type="button" class="btn btn-sm btn-success py-0 px-1 me-1" onclick="confirmarEdicaoItem(${idx})" title="Confirmar">
+        <i class="bi bi-check-lg"></i>
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="_renderItensPedido()" title="Cancelar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </td>`;
+  document.getElementById(`edit-qtd-${idx}`)?.focus();
+}
+
+function atualizarTotalInline(idx) {
+  const qtd   = parseFloat(document.getElementById(`edit-qtd-${idx}`)?.value || 0);
+  const custo = parseMoeda(`edit-custo-${idx}`);
+  const el    = document.getElementById(`edit-total-${idx}`);
+  if (el) el.textContent = brl(qtd * custo);
+}
+
+function confirmarEdicaoItem(idx) {
+  const qtd   = parseFloat(document.getElementById(`edit-qtd-${idx}`)?.value || 0);
+  const custo = parseMoeda(`edit-custo-${idx}`);
+  if (!qtd || qtd <= 0) { toast('Quantidade inválida.', 'erro'); return; }
+  if (custo <= 0)        { toast('Custo inválido.', 'erro'); return; }
+  _pedidoItens[idx].qtd   = qtd;
+  _pedidoItens[idx].custo = custo;
+  _pedidoItens[idx].total = qtd * custo;
   _renderItensPedido();
 }
 
