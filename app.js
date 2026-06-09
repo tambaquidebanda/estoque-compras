@@ -11,7 +11,6 @@ let user = null;   // logged-in user
 let cForn   = [];    // fornecedores
 let cCat    = [];    // categorias
 let cTipo   = [];    // tipos_produto
-let cComp   = [];    // compradores
 let cProd   = [];    // product names learned from past purchases
 let cGrupos = [];    // grupos de produto (est_grupos_produto)
 
@@ -241,7 +240,7 @@ function irCad(tab, el) {
 
 const _nomesCad = {
   fornecedores: '🏪 Fornecedores', categorias: '📂 Categorias',
-  tipos: '🏷️ Destinos', compradores: '👤 Compradores',
+  tipos: '🏷️ Destinos',
   grupos: '🗂️ Grupos de Produto', produtos: '📦 Produtos'
 };
 
@@ -409,11 +408,10 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, comp, hist, grp, uni] = await Promise.all([
+  const [f, cat, tip, hist, grp, uni] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
     sb.from('cmp_categorias').select('id,nome,plano_conta,plano_conta_id').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
-    sb.from('cmp_compradores').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
     sb.from('unidades').select('id,nome').order('nome'),
@@ -422,7 +420,6 @@ async function carregarCaches() {
   cForn     = f.data   || [];
   cCat      = cat.data || [];
   cTipo     = tip.data || [];
-  cComp     = comp.data || [];
   cGrupos   = grp.data  || [];
   cUnidades = uni.data  || [];
 
@@ -726,8 +723,6 @@ async function prepararFormCompra() {
     cTipo.map(t => `<option value="${esc(t.nome)}">${esc(t.nome)}</option>`).join('');
 
   const compSel = document.getElementById('c-comp');
-  compSel.innerHTML = '<option value="">— Selecione —</option>' +
-    cComp.map(c => `<option value="${esc(c.nome)}">${esc(c.nome)}</option>`).join('');
 
   const usoSel = document.getElementById('c-uso');
   if (usoSel && cUnidades.length) {
@@ -742,7 +737,7 @@ async function prepararFormCompra() {
       document.getElementById('c-data').value  = primeiro.data || '';
       document.getElementById('c-forn').value  = primeiro.fornNome || '';
       document.getElementById('c-forn-id').value = primeiro.fornId || '';
-      compSel.value = primeiro.comp || '';
+      if (compSel) compSel.value = primeiro.comp || '';
     }
     const proxEl = document.getElementById('prox-pedido-num');
     if (proxEl) proxEl.textContent = _pedidoEditando;
@@ -750,34 +745,14 @@ async function prepararFormCompra() {
     document.getElementById('aviso-editando')?.classList.remove('d-none');
     document.getElementById('aviso-editando-num').textContent = _pedidoEditando;
   } else {
-    // Modo novo pedido
+    // Modo novo pedido — comprador = usuário logado
     setHoje('c-data');
     const proxNum = await _gerarNumeroPedido();
     const el = document.getElementById('prox-pedido-num');
     if (el) el.textContent = proxNum;
     document.getElementById('aviso-editando')?.classList.add('d-none');
-    // Auto-seleciona o comprador pelo nome do usuário logado
-    const metaNome    = (user?.user_metadata?.nome || '').trim().toLowerCase();
-    const emailPrefixo = (user?.email || '').split('@')[0].toLowerCase();
-    const nomeUsuario  = metaNome || emailPrefixo;
-    if (nomeUsuario) {
-      const opcoes = Array.from(compSel.options);
-      // 1. Tenta match exato (case-insensitive)
-      let match = opcoes.find(o => o.value.trim().toLowerCase() === nomeUsuario);
-      // 2. Tenta match por primeiro nome
-      if (!match) {
-        const primeiroNome = nomeUsuario.split(' ')[0];
-        match = opcoes.find(o => o.value.trim().toLowerCase().startsWith(primeiroNome));
-      }
-      // 3. Tenta se algum comprador está contido no nome do usuário
-      if (!match) {
-        match = opcoes.find(o => {
-          const v = o.value.trim().toLowerCase();
-          return v && nomeUsuario.includes(v);
-        });
-      }
-      if (match) compSel.value = match.value;
-    }
+    const nomeComp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
+    if (compSel) compSel.value = nomeComp;
   }
 
   consultarPedidos();
@@ -786,7 +761,6 @@ async function prepararFormCompra() {
   const falta = [];
   if (!cCat.length)  falta.push('<strong>Categorias</strong>');
   if (!cTipo.length) falta.push('<strong>Destinos</strong>');
-  if (!cComp.length) falta.push('<strong>Compradores</strong>');
 
   const av = document.getElementById('aviso-cad');
   if (falta.length) {
@@ -1529,7 +1503,6 @@ async function renderListaCad(tipo) {
     fornecedores: { tbl: 'fornecedores',      el: 'lst-fornecedores', extra: null },
     categorias:   { tbl: 'cmp_categorias',    el: 'lst-categorias',   extra: r => r.plano_conta ? `<small class="text-muted ms-2">→ ${esc(r.plano_conta)}</small>` : '<small class="text-warning ms-2">sem plano</small>' },
     tipos:        { tbl: 'cmp_tipos_produto', el: 'lst-tipos',        extra: null },
-    compradores:  { tbl: 'cmp_compradores',   el: 'lst-compradores',  extra: null },
   };
 
   const c = cfg[tipo];
@@ -1609,19 +1582,6 @@ async function addTipo() {
   renderListaCad('tipos');
 }
 
-async function addComprador() {
-  const nome = (document.getElementById('n-comp').value || '').trim();
-  if (!nome) return;
-  const msg = document.getElementById('msg-cad-comp');
-  const { error } = await sb.from('cmp_compradores').insert([{ nome }]);
-  if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
-  document.getElementById('n-comp').value = '';
-  msg.innerHTML = '';
-  toggleFormCad('comp');
-  toast('Comprador adicionado!', 'ok');
-  await carregarCaches();
-  renderListaCad('compradores');
-}
 
 async function excluirCad(tabela, id, tipo) {
   if (!confirm('Excluir este item?')) return;
@@ -2450,14 +2410,13 @@ async function carregarPlanejamento() {
   setHoje('plan-data');
   setHoje('plan-data-entrega');
 
-  if (!cForn.length || !cComp.length) await carregarCaches();
+  if (!cForn.length) await carregarCaches();
 
-  const compHtml = '<option value="">— selecione —</option>' +
-    cComp.map(c => `<option>${esc(c.nome)}</option>`).join('');
+  const nomeComp   = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
   const compEl     = document.getElementById('plan-comp');
   const compFornEl = document.getElementById('plan-comp-forn');
-  if (compEl)     compEl.innerHTML     = compHtml;
-  if (compFornEl) compFornEl.innerHTML = compHtml;
+  if (compEl)     compEl.value     = nomeComp;
+  if (compFornEl) compFornEl.value = nomeComp;
 
   await _popularSelectInvPlan();
 

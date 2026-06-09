@@ -123,7 +123,6 @@
         <a href="#" onclick="irCadSb('grupos',this)">🗂️ Grupos de Produto</a>
         <a href="#" onclick="irCadSb('fornecedores',this)">🏪 Fornecedores</a>
         <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
-        <a href="#" onclick="irCadSb('compradores',this)">👤 Compradores</a>
       </div>
       <a href="#" onclick="ir('controlecmv',this)">
         <i class="bi bi-file-earmark-spreadsheet-fill"></i> Controle CMV
@@ -251,7 +250,7 @@
             </div>
             <div class="col-md-4">
               <label class="form-label">👤 Comprador</label>
-              <select class="form-select" id="c-comp" required></select>
+              <input type="text" class="form-control" id="c-comp" readonly>
             </div>
           </div>
 
@@ -807,9 +806,6 @@
         <li class="nav-item">
           <a class="nav-link" href="#" onclick="irCad('categorias',this)">📂 Categorias</a>
         </li>
-        <li class="nav-item">
-          <a class="nav-link" href="#" onclick="irCad('compradores',this)">👤 Compradores</a>
-        </li>
       </ul>
 
       <!-- Fornecedores -->
@@ -861,26 +857,6 @@
       </div>
 
       <!-- Tipos / Destinos -->
-      <!-- Compradores -->
-      <div id="cad-compradores" class="tab-cad">
-        <div class="d-flex justify-content-end mb-3">
-          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('comp')">
-            <i class="bi bi-plus-circle"></i> Novo Comprador
-          </button>
-        </div>
-        <div id="form-cad-comp" class="card-form mb-3 d-none">
-          <div class="d-flex gap-2">
-            <input type="text" class="form-control" id="n-comp" placeholder="Nome do comprador"
-              onkeydown="if(event.key==='Enter') addComprador()">
-            <button class="btn btn-primary" onclick="addComprador()">Adicionar</button>
-            <button class="btn btn-outline-secondary" onclick="toggleFormCad('comp')">Cancelar</button>
-          </div>
-          <div id="msg-cad-comp" class="mt-2 small"></div>
-        </div>
-        <div class="card-form">
-          <div id="lst-compradores" class="lista-cad">Carregando...</div>
-        </div>
-      </div>
       <!-- Grupos de Produto -->
       <div id="cad-grupos" class="tab-cad">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -1179,9 +1155,7 @@
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold">👤 Comprador</label>
-            <select class="form-select" id="plan-comp">
-              <option value="">— selecione —</option>
-            </select>
+            <input type="text" class="form-control" id="plan-comp" readonly>
           </div>
           <div class="col-md-3 d-flex align-items-end gap-2">
             <button class="btn btn-outline-secondary w-100" onclick="renderPlanejamento()">🔄 Recalcular</button>
@@ -1245,9 +1219,7 @@
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold small mb-1">👤 Comprador</label>
-            <select class="form-select form-select-sm" id="plan-comp-forn">
-              <option value="">— selecione —</option>
-            </select>
+            <input type="text" class="form-control form-control-sm" id="plan-comp-forn" readonly>
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold small mb-1">🚚 Data de Entrega</label>
