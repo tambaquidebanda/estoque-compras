@@ -385,6 +385,10 @@ function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function norm(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
 function mesCurto(mesStr) {
   const [y, m] = mesStr.split('-');
   return new Date(+y, +m - 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
@@ -776,7 +780,7 @@ function acForn(val) {
   const lista = document.getElementById('ac-forn');
   if (!val) { lista.classList.remove('aberta'); return; }
 
-  const hits = cForn.filter(f => f.nome.toLowerCase().includes(val.toLowerCase())).slice(0, 8);
+  const hits = cForn.filter(f => norm(f.nome).includes(norm(val))).slice(0, 8);
   if (!hits.length) { lista.classList.remove('aberta'); return; }
 
   lista.innerHTML = hits.map(f =>
@@ -795,13 +799,13 @@ function selecionarForn(nome, id) {
 function acProd(val) {
   const lista = document.getElementById('ac-prod');
   if (!val) { lista.classList.remove('aberta'); return; }
-  const q = val.toLowerCase();
+  const q = norm(val);
 
   // Combina histórico de compras (cProd) com catálogo (cProdutosFT)
   const vistos = new Set();
   const hits = [];
   [...cProd, ...cProdutosFT.map(p => ({ nome: p.nome, un: p.unidade_uso, cat: p.categoria }))].forEach(p => {
-    if (p.nome.toLowerCase().includes(q) && !vistos.has(p.nome.toLowerCase())) {
+    if (norm(p.nome).includes(q) && !vistos.has(p.nome.toLowerCase())) {
       vistos.add(p.nome.toLowerCase());
       hits.push(p);
     }
@@ -1720,7 +1724,7 @@ async function carregarProdutosFT(forcar = false) {
 async function carregarFichas() {
   await carregarProdutosFT();
 
-  const busca  = (document.getElementById('ft-busca')?.value  || '').toLowerCase();
+  const busca  = norm(document.getElementById('ft-busca')?.value);
   const tipo   = document.getElementById('ft-tipo')?.value   || '';
   const cat    = document.getElementById('ft-cat')?.value    || '';
   const status = document.getElementById('ft-status')?.value ?? '';
@@ -1748,7 +1752,7 @@ async function carregarFichas() {
 
   if (tipo)   prods = prods.filter(p => p.tipo === tipo);
   if (cat)    prods = prods.filter(p => p.categoria === cat);
-  if (busca)  prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
+  if (busca)  prods = prods.filter(p => norm(p.nome).includes(busca));
   if (status === 'com') prods = prods.filter(p => fichaByProd[p.id]);
   if (status === 'sem') prods = prods.filter(p => !fichaByProd[p.id]);
 
@@ -1857,7 +1861,7 @@ function acFichaProduto(val) {
 
   const hits = cProdutosFT.filter(p =>
     ['VENDA','PPB','PPC','PPP','SA'].includes(p.tipo) &&
-    p.nome.toLowerCase().includes(val.toLowerCase())
+    norm(p.nome).includes(norm(val))
   ).slice(0, 8);
 
   if (!hits.length) { lista.classList.remove('aberta'); return; }
@@ -1888,7 +1892,7 @@ function acIngrediente(val) {
   // Ingredients can be MP, SA, PPB, PPC, PPP (not VENDA, not MC)
   const hits = cProdutosFT.filter(p =>
     ['MP','SA','PPB','PPC','PPP'].includes(p.tipo) &&
-    p.nome.toLowerCase().includes(val.toLowerCase())
+    norm(p.nome).includes(norm(val))
   ).slice(0, 10);
 
   if (!hits.length) { lista.classList.remove('aberta'); return; }
@@ -2171,11 +2175,11 @@ function limparFiltrosInv() {
 
 function renderInventario() {
   _popularCatsInv();
-  const busca = (document.getElementById('inv-busca')?.value || '').toLowerCase();
+  const busca = norm(document.getElementById('inv-busca')?.value);
   const catsFiltro = _getCatsSelecionadas();
   let prods = cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo));
   if (catsFiltro.length) prods = prods.filter(p => catsFiltro.includes(p.categoria));
-  if (busca) prods = prods.filter(p => p.nome.toLowerCase().includes(busca));
+  if (busca) prods = prods.filter(p => norm(p.nome).includes(busca));
   _invProdutos = prods;
 
   const tbody = document.getElementById('lst-inventario');
