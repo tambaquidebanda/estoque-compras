@@ -4161,6 +4161,9 @@ async function carregarCompras() {
           <span data-bs-toggle="tooltip" data-bs-title="${editarTitle}">
             <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} style="white-space:nowrap;pointer-events:${podeEditar?'auto':'none'}"><i class="bi bi-pencil-fill"></i> Editar</button>
           </span>
+          <span data-bs-toggle="tooltip" data-bs-title="${podeEditar ? 'Dividir entre unidades' : 'Não é possível dividir'}">
+            <button class="btn btn-link p-0" ${podeEditar ? `onclick="dividirPedido('${g.pedido_num}')"` : 'disabled'} style="font-size:1.1rem;${podeEditar ? 'color:#fd7e14' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-scissors"></i></button>
+          </span>
           <span data-bs-toggle="tooltip" data-bs-title="Imprimir">
             <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}')" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-printer-fill"></i></button>
           </span>
@@ -4221,6 +4224,121 @@ async function excluirPedidoCompras(pedido_num) {
     sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num),
   ]);
   toast('Pedido excluído.', 'ok');
+  carregarCompras();
+}
+
+// ── DIVIDIR PEDIDO ──────────────────────────────────────────────
+let _divItens = [];
+let _divPedidoNum = null;
+
+async function dividirPedido(pedido_num) {
+  if (!cUnidades.length) await carregarCaches();
+
+  const { data: itens } = await sb.from('cmp_compras')
+    .select('*').eq('pedido_num', pedido_num).order('id');
+  if (!itens?.length) { toast('Pedido não encontrado.', 'erro'); return; }
+
+  _divPedidoNum = pedido_num;
+  _divItens = itens;
+
+  document.getElementById('div-pedido-num').textContent = '#' + pedido_num;
+
+  const optsUni = '<option value="">— Selecione —</option>' +
+    cUnidades.map(u => `<option value="${u.id}" data-nome="${esc(u.nome)}">${esc(u.nome)}</option>`).join('');
+  document.getElementById('div-unid-a').innerHTML = optsUni;
+  document.getElementById('div-unid-b').innerHTML = optsUni;
+  document.getElementById('div-aviso').classList.add('d-none');
+
+  const tbody = document.getElementById('div-itens-tbody');
+  tbody.innerHTML = itens.map((it, i) => `
+    <tr>
+      <td><strong>${esc(it.produto)}</strong><br><small class="text-muted">${esc(it.categoria||'')}</small></td>
+      <td class="text-center fw-bold">${(it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})}</td>
+      <td class="text-center text-muted">${esc(it.unidade_med||'')}</td>
+      <td class="text-center" style="width:110px">
+        <input type="number" class="form-control form-control-sm text-center" id="div-a-${i}"
+          min="0" max="${it.quantidade}" step="any" value="${it.quantidade}"
+          oninput="calcDivB(${i},${it.quantidade})">
+      </td>
+      <td class="text-center" style="width:110px">
+        <input type="number" class="form-control form-control-sm text-center bg-light" id="div-b-${i}"
+          min="0" max="${it.quantidade}" step="any" value="0" readonly>
+      </td>
+      <td class="text-end text-muted">${brl(it.custo_unit||0)}</td>
+    </tr>`).join('');
+
+  atualizarTotaisDivisao();
+  new bootstrap.Modal(document.getElementById('modal-dividir')).show();
+}
+
+function calcDivB(idx, totalQtd) {
+  const a  = parseFloat(document.getElementById(`div-a-${idx}`)?.value) || 0;
+  const b  = Math.max(0, totalQtd - a);
+  const elB = document.getElementById(`div-b-${idx}`);
+  if (elB) elB.value = parseFloat(b.toFixed(3));
+  atualizarTotaisDivisao();
+}
+
+function atualizarTotaisDivisao() {
+  let totalA = 0, totalB = 0;
+  _divItens.forEach((it, i) => {
+    const a = parseFloat(document.getElementById(`div-a-${i}`)?.value) || 0;
+    const b = parseFloat(document.getElementById(`div-b-${i}`)?.value) || 0;
+    totalA += a * (it.custo_unit || 0);
+    totalB += b * (it.custo_unit || 0);
+  });
+  const nomeA = document.getElementById('div-unid-a')?.selectedOptions[0]?.dataset?.nome || 'Unidade A';
+  const nomeB = document.getElementById('div-unid-b')?.selectedOptions[0]?.dataset?.nome || 'Unidade B';
+  document.getElementById('div-totais-tfoot').innerHTML = `
+    <tr class="table-primary"><td colspan="3" class="text-end fw-semibold">Total ${esc(nomeA)}</td>
+      <td class="text-center fw-bold" style="color:#0d6efd">${brl(totalA)}</td><td colspan="2"></td></tr>
+    <tr class="table-success"><td colspan="3" class="text-end fw-semibold">Total ${esc(nomeB)}</td>
+      <td></td><td class="text-center fw-bold" style="color:#198754">${brl(totalB)}</td><td></td></tr>`;
+}
+
+async function confirmarDivisao() {
+  const unidAId   = document.getElementById('div-unid-a').value;
+  const unidBId   = document.getElementById('div-unid-b').value;
+  const unidANome = document.getElementById('div-unid-a').selectedOptions[0]?.dataset?.nome || '';
+  const unidBNome = document.getElementById('div-unid-b').selectedOptions[0]?.dataset?.nome || '';
+  const aviso     = document.getElementById('div-aviso');
+
+  if (!unidAId || !unidBId) { aviso.textContent = 'Selecione as duas unidades.'; aviso.classList.remove('d-none'); return; }
+  if (unidAId === unidBId)  { aviso.textContent = 'As duas unidades devem ser diferentes.'; aviso.classList.remove('d-none'); return; }
+
+  // Valida que qtdA + qtdB = total para cada item
+  let valido = true;
+  _divItens.forEach((it, i) => {
+    const a   = parseFloat(document.getElementById(`div-a-${i}`)?.value) || 0;
+    const b   = parseFloat(document.getElementById(`div-b-${i}`)?.value) || 0;
+    const tot = it.quantidade || 0;
+    if (Math.abs(a + b - tot) > 0.001) valido = false;
+  });
+  if (!valido) { aviso.textContent = 'As quantidades de A + B devem somar o total de cada item.'; aviso.classList.remove('d-none'); return; }
+
+  aviso.classList.add('d-none');
+
+  const pedidoA = _divPedidoNum + '-A';
+  const pedidoB = _divPedidoNum + '-B';
+
+  const rowsA = [], rowsB = [];
+  _divItens.forEach((it, i) => {
+    const qA = parseFloat(document.getElementById(`div-a-${i}`)?.value) || 0;
+    const qB = parseFloat(document.getElementById(`div-b-${i}`)?.value) || 0;
+    const base = { ...it, id: undefined };
+    if (qA > 0) rowsA.push({ ...base, pedido_num: pedidoA, quantidade: qA, total: qA * (it.custo_unit||0), unidade_uso: unidANome });
+    if (qB > 0) rowsB.push({ ...base, pedido_num: pedidoB, quantidade: qB, total: qB * (it.custo_unit||0), unidade_uso: unidBNome });
+  });
+
+  if (!rowsA.length && !rowsB.length) { aviso.textContent = 'Nenhum item com quantidade maior que zero.'; aviso.classList.remove('d-none'); return; }
+
+  // Exclui pedido original e insere os dois novos
+  await sb.from('cmp_compras').delete().eq('pedido_num', _divPedidoNum);
+  if (rowsA.length) await sb.from('cmp_compras').insert(rowsA);
+  if (rowsB.length) await sb.from('cmp_compras').insert(rowsB);
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-dividir'))?.hide();
+  toast(`Pedido dividido: ${pedidoA} e ${pedidoB}`, 'ok');
   carregarCompras();
 }
 

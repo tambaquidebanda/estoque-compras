@@ -1974,6 +1974,60 @@
   </div>
 </div>
 
+<!-- ── MODAL DIVIDIR PEDIDO ── -->
+<div class="modal fade" id="modal-dividir" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">✂️ Dividir Pedido <span id="div-pedido-num" class="text-warning"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Seleção de unidades -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">🏢 Unidade A</label>
+            <select class="form-select" id="div-unid-a" onchange="atualizarTotaisDivisao()">
+              <option value="">— Selecione —</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">🏭 Unidade B</label>
+            <select class="form-select" id="div-unid-b" onchange="atualizarTotaisDivisao()">
+              <option value="">— Selecione —</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Tabela de itens -->
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Produto</th>
+                <th class="text-center">Total</th>
+                <th class="text-center">UN</th>
+                <th class="text-center" style="color:#0d6efd">Qtd A</th>
+                <th class="text-center" style="color:#198754">Qtd B</th>
+                <th class="text-end">Unit.</th>
+              </tr>
+            </thead>
+            <tbody id="div-itens-tbody"></tbody>
+            <tfoot id="div-totais-tfoot"></tfoot>
+          </table>
+        </div>
+        <div id="div-aviso" class="alert alert-warning d-none small py-2 mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning fw-bold" onclick="confirmarDivisao()">
+          ✂️ Dividir em dois pedidos
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast-box" style="position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;min-width:260px"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
