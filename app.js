@@ -714,7 +714,7 @@ function numK(v) {
 // ═══════════════════════════════════════════════════════════════
 async function prepararFormCompra() {
   await carregarCaches();
-  await carregarProdutosFT();
+  await carregarProdutosFT(true); // força recarregar para pegar atualizações do cadastro
   document.getElementById('bloco-estoque').style.display = 'none';
 
   // Populate selects
@@ -826,7 +826,7 @@ function selecionarProd(nome, un, cat) {
   const prodLista = cProd.find(p => p.nome.toLowerCase() === nome.toLowerCase());
   const prodCat   = cProdutosFT.find(p => p.nome.toLowerCase() === nome.toLowerCase());
 
-  const unFinal  = prodLista?.un  || prodCat?.unidade_uso || un;
+  const unFinal  = prodCat?.unidade_comp || prodLista?.un || prodCat?.unidade_uso || un;
   const catFinal = prodLista?.cat || prodCat?.categoria   || cat;
 
   const unEl = document.getElementById('c-un');
@@ -845,10 +845,10 @@ function selecionarProd(nome, un, cat) {
   }
   fechaAC('ac-prod');
 
-  // Preenche custo: último preço de compra > custo_comp do catálogo > custo_uso
-  const custo = prodLista?.custo_unit > 0
-    ? prodLista.custo_unit
-    : (prodCat?.custo_comp || prodCat?.custo_uso || 0);
+  // Preenche custo: custo_comp do catálogo (mais atualizado) > último preço de compra > custo_uso
+  const custo = prodCat?.custo_comp > 0
+    ? prodCat.custo_comp
+    : (prodLista?.custo_unit > 0 ? prodLista.custo_unit : (prodCat?.custo_uso || 0));
   if (custo > 0) {
     document.getElementById('c-custo').value = custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     calcTot();
