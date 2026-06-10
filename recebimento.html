@@ -551,9 +551,22 @@ async function confirmarRecebimento() {
     .insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
   if (errItens) console.error('Itens:', errItens.message);
 
-  // 3. Marca só os itens recebidos agora (recebimento parcial é possível)
-  const idsRecebidos = itensIncluidos.map(it => it.id);
-  await sb.from('cmp_compras').update({ status_receb: 'recebido' }).in('id', idsRecebidos);
+  // 3. Atualiza cada item incluído individualmente
+  //    - Se recebeu a quantidade completa → fecha (status_receb = 'recebido')
+  //    - Se recebeu menos → atualiza a quantidade para o restante e mantém pendente
+  for (const ir of itensReceb) {
+    const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
+    if (restante <= 0.001) {
+      // Entrega completa deste item
+      await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('id', ir.compra_id);
+    } else {
+      // Entrega parcial: reduz quantidade pendente para o restante
+      await sb.from('cmp_compras').update({
+        quantidade: Math.max(restante, 0),
+        status_receb: 'pendente',
+      }).eq('id', ir.compra_id);
+    }
+  }
 
   // 4. Atualiza conta a pagar se existir
   const { data: conta } = await sb.from('cmp_contas_pagar')
