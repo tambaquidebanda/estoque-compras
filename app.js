@@ -744,8 +744,7 @@ async function prepararFormCompra() {
       document.getElementById('c-forn-id').value = primeiro.fornId || '';
       if (compSel) compSel.value = primeiro.comp || '';
     }
-    const acrEl = document.getElementById('c-acrescimo');
-    if (acrEl) acrEl.value = _pedidoAcrescimo || 0;
+    setMoeda('c-acrescimo', _pedidoAcrescimo || 0);
     const proxEl = document.getElementById('prox-pedido-num');
     if (proxEl) proxEl.textContent = _pedidoEditando;
     _renderItensPedido();
@@ -1031,7 +1030,7 @@ function _renderItensPedido() {
     grupos[k] = (grupos[k] || 0) + it.total;
   });
   const totalItens  = _pedidoItens.reduce((s, it) => s + it.total, 0);
-  const acrescimo   = parseFloat(document.getElementById('c-acrescimo')?.value) || 0;
+  const acrescimo   = parseMoeda('c-acrescimo');
   const totalGeral  = totalItens + acrescimo;
 
   const linhasGrupo = Object.entries(grupos).map(([k, v]) =>
@@ -1106,7 +1105,7 @@ async function finalizarPedido() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
 
   const pedido_num = _pedidoEditando || await _gerarNumeroPedido();
-  const acrescimo  = parseFloat(document.getElementById('c-acrescimo')?.value) || 0;
+  const acrescimo  = parseMoeda('c-acrescimo');
 
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
@@ -1151,8 +1150,7 @@ function cancelarPedido() {
   _pedidoItens     = [];
   _pedidoEditando  = null;
   _pedidoAcrescimo = 0;
-  const acrEl = document.getElementById('c-acrescimo');
-  if (acrEl) acrEl.value = 0;
+  setMoeda('c-acrescimo', 0);
   _renderItensPedido();
 
   // Oculta aviso de edição
@@ -3325,7 +3323,7 @@ async function abrirModalReceber(pedido_num) {
   document.getElementById('receb-vencimento').value        = '';
   document.getElementById('receb-responsavel').value       = '';
   document.getElementById('receb-nf').value                = '';
-  document.getElementById('receb-acrescimo').value         = parseFloat(itens[0]?.acrescimo) || 0;
+  setMoeda('receb-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
   document.getElementById('alerta-diverg').style.display   = 'none';
 
   document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
@@ -3399,7 +3397,7 @@ function calcTotalReceb() {
     const txt = (document.getElementById(`tot-rec-${id}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
     total += parseFloat(txt) || 0;
   });
-  const acrescimo = parseFloat(document.getElementById('receb-acrescimo')?.value) || 0;
+  const acrescimo = parseMoeda('receb-acrescimo');
   const el = document.getElementById('receb-total-modal');
   if (el) el.textContent = brl(total + acrescimo);
 }
@@ -3413,7 +3411,7 @@ async function confirmarRecebimento() {
   if (!responsavel) { toast('Informe o responsável.', 'erro'); return; }
   if (!vencimento)  { toast('Informe a data de vencimento.', 'erro'); return; }
 
-  const acrescimo     = parseFloat(document.getElementById('receb-acrescimo')?.value) || 0;
+  const acrescimo     = parseMoeda('receb-acrescimo');
 
   // Apenas itens marcados para receber agora
   const incluidos = _recebItensAbertos.filter(x => document.getElementById(`inc-rec-${x.id}`)?.checked);
