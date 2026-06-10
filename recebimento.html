@@ -392,7 +392,13 @@ async function abrirPedido(pedido_num) {
 
   document.getElementById('rec-itens').innerHTML = itens.map(it =>
     `<div class="item-card" id="ic-${it.id}">
-      <div class="item-nome">${esc(it.produto)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.1rem">
+        <div class="item-nome">${esc(it.produto)}</div>
+        <div style="text-align:right;flex-shrink:0;margin-left:.5rem">
+          <div style="font-size:.82rem;color:var(--verde);font-weight:700">${brl((it.quantidade||0)*(it.custo_unit||0))}</div>
+          <div style="font-size:.68rem;color:var(--txt2)">${brl(it.custo_unit||0)}/un</div>
+        </div>
+      </div>
       <div class="item-cat">${esc(it.categoria || '')}</div>
       <div class="qtd-row">
         <span class="qtd-label">Pedido:</span>
