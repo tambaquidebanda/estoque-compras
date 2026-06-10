@@ -995,17 +995,14 @@ function _renderItensPedido() {
   const btnFin  = document.getElementById('btn-finalizar-pedido');
   const btnCanc = document.getElementById('btn-cancelar-pedido');
 
-  const blocoAcr = document.getElementById('bloco-acrescimo');
   if (!_pedidoItens.length) {
     bloco.style.display   = 'none';
-    if (blocoAcr) blocoAcr.style.display = 'none';
     btnFin.disabled       = true;
     btnCanc.style.display = 'none';
     return;
   }
 
   bloco.style.display   = '';
-  if (blocoAcr) blocoAcr.style.display = '';
   btnFin.disabled       = false;
   btnCanc.style.display = '';
 

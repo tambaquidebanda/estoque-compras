@@ -230,7 +230,7 @@
           <!-- CABEÇALHO DO PEDIDO -->
           <div class="sec-titulo">Cabeçalho do Pedido</div>
           <div class="row g-3 mb-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label">📅 Data</label>
               <input type="date" class="form-control" id="c-data" required>
             </div>
@@ -245,9 +245,15 @@
               </div>
               <input type="hidden" id="c-forn-id">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label">👤 Comprador</label>
               <input type="text" class="form-control" id="c-comp" readonly>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">➕ Acréscimo (R$)</label>
+              <input type="number" class="form-control text-end" id="c-acrescimo"
+                value="0" min="0" step="0.01" placeholder="0,00"
+                oninput="_renderItensPedido()">
             </div>
           </div>
 
@@ -352,20 +358,6 @@
                 <tbody id="tb-itens-pedido"></tbody>
                 <tfoot id="tfoot-itens-pedido"></tfoot>
               </table>
-            </div>
-          </div>
-
-          <!-- ACRÉSCIMO -->
-          <div id="bloco-acrescimo" style="display:none" class="mb-3">
-            <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:#fff7ed;border:1px dashed #FFD0B0">
-              <label class="form-label small mb-0 text-muted flex-grow-1" for="c-acrescimo">
-                <i class="bi bi-plus-circle"></i> Acréscimo (frete, taxa, etc.)
-              </label>
-              <div style="max-width:150px">
-                <input type="number" class="form-control form-control-sm text-end" id="c-acrescimo"
-                  value="0" min="0" step="0.01" placeholder="0,00"
-                  oninput="_renderItensPedido()">
-              </div>
             </div>
           </div>
 
