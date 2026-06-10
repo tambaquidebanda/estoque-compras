@@ -3315,9 +3315,9 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,categoria,unidade_med,quantidade,custo_unit,fornecedor_nome,comprador')
+    .select('id,produto,categoria,unidade_med,quantidade,custo_unit,fornecedor_nome,comprador,acrescimo')
     .eq('pedido_num', pedido_num)
-    .neq('status_receb', 'recebido');
+    .or('status_receb.neq.recebido,status_receb.is.null');
 
   if (!itens?.length) { toast('Itens não encontrados.', 'erro'); return; }
   _recebItensAbertos = itens;
@@ -3327,19 +3327,31 @@ async function abrirModalReceber(pedido_num) {
   document.getElementById('receb-data-rec').value          = new Date().toISOString().split('T')[0];
   document.getElementById('receb-vencimento').value        = '';
   document.getElementById('receb-responsavel').value       = '';
+  document.getElementById('receb-nf').value                = '';
+  document.getElementById('receb-acrescimo').value         = parseFloat(itens[0]?.acrescimo) || 0;
   document.getElementById('alerta-diverg').style.display   = 'none';
 
   document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
     <tr id="row-rec-${x.id}">
+      <td class="text-center">
+        <div class="form-check form-switch d-flex justify-content-center">
+          <input class="form-check-input" type="checkbox" id="inc-rec-${x.id}" checked
+            onchange="togIncluirReceb('${x.id}')">
+        </div>
+      </td>
       <td><strong>${esc(x.produto)}</strong></td>
       <td><small class="text-muted">${esc(x.categoria||'—')}</small></td>
       <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center" style="width:90px;margin:auto"
           id="qtd-rec-${x.id}" value="${x.quantidade||0}" min="0" step="0.001"
-          oninput="recalcReceb('${x.id}',${x.custo_unit||0},${x.quantidade||0})">
+          oninput="recalcReceb('${x.id}',${x.quantidade||0})">
       </td>
-      <td class="text-center">${brl(x.custo_unit||0)}</td>
+      <td class="text-center">
+        <input type="number" class="form-control form-control-sm text-end" style="width:100px;margin:auto"
+          id="vlr-rec-${x.id}" value="${x.custo_unit||0}" min="0" step="0.01"
+          oninput="recalcReceb('${x.id}',${x.quantidade||0})">
+      </td>
       <td class="text-center fw-bold" id="tot-rec-${x.id}">${brl((x.quantidade||0)*(x.custo_unit||0))}</td>
       <td class="text-center">
         <div class="form-check form-switch d-flex justify-content-center">
@@ -3354,13 +3366,20 @@ async function abrirModalReceber(pedido_num) {
   new bootstrap.Modal(document.getElementById('modal-receber')).show();
 }
 
-function recalcReceb(id, vlrUnit, qtdPedida) {
+function togIncluirReceb(id) {
+  const inc = document.getElementById(`inc-rec-${id}`);
+  const row = document.getElementById(`row-rec-${id}`);
+  if (row) row.style.opacity = inc?.checked ? '' : '.35';
+  calcTotalReceb();
+}
+
+function recalcReceb(id, qtdPedida) {
   const qtdRec = parseFloat(document.getElementById(`qtd-rec-${id}`)?.value) || 0;
-  const tot    = qtdRec * vlrUnit;
+  const vlr    = parseFloat(document.getElementById(`vlr-rec-${id}`)?.value) || 0;
   const totEl  = document.getElementById(`tot-rec-${id}`);
-  if (totEl) totEl.textContent = brl(tot);
+  if (totEl) totEl.textContent = brl(qtdRec * vlr);
   const divEl = document.getElementById(`div-rec-${id}`);
-  if (divEl && qtdRec !== qtdPedida) { divEl.checked = true; marcarDiverg(id); }
+  if (divEl && Math.abs(qtdRec - qtdPedida) > 0.001) { divEl.checked = true; marcarDiverg(id); }
   calcTotalReceb();
 }
 
@@ -3377,12 +3396,15 @@ function marcarDiverg(id) {
 function calcTotalReceb() {
   let total = 0;
   document.querySelectorAll('[id^="qtd-rec-"]').forEach(el => {
-    const id = el.id.replace('qtd-rec-', '');
+    const id  = el.id.replace('qtd-rec-', '');
+    const inc = document.getElementById(`inc-rec-${id}`);
+    if (!inc?.checked) return;
     const txt = (document.getElementById(`tot-rec-${id}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
     total += parseFloat(txt) || 0;
   });
+  const acrescimo = parseFloat(document.getElementById('receb-acrescimo')?.value) || 0;
   const el = document.getElementById('receb-total-modal');
-  if (el) el.textContent = brl(total);
+  if (el) el.textContent = brl(total + acrescimo);
 }
 
 async function confirmarRecebimento() {
@@ -3394,21 +3416,29 @@ async function confirmarRecebimento() {
   if (!responsavel) { toast('Informe o responsável.', 'erro'); return; }
   if (!vencimento)  { toast('Informe a data de vencimento.', 'erro'); return; }
 
-  const ref = _recebItensAbertos[0];
-  const itensReceb = _recebItensAbertos.map(x => {
+  const acrescimo     = parseFloat(document.getElementById('receb-acrescimo')?.value) || 0;
+
+  // Apenas itens marcados para receber agora
+  const incluidos = _recebItensAbertos.filter(x => document.getElementById(`inc-rec-${x.id}`)?.checked);
+  if (!incluidos.length) { toast('Selecione ao menos um item para receber.', 'erro'); return; }
+
+  const ref = incluidos[0];
+  const itensReceb = incluidos.map(x => {
     const qtdRec = parseFloat(document.getElementById(`qtd-rec-${x.id}`)?.value) || 0;
+    const vlr    = parseFloat(document.getElementById(`vlr-rec-${x.id}`)?.value) || x.custo_unit || 0;
     const diverg = document.getElementById(`div-rec-${x.id}`)?.checked || false;
     const obs    = document.getElementById(`obs-rec-${x.id}`)?.value || '';
     return {
       compra_id: x.id, produto: x.produto, categoria: x.categoria || '',
       unidade: x.unidade_med || '', qtd_pedida: x.quantidade || 0,
-      qtd_recebida: qtdRec, valor_unitario: x.custo_unit || 0,
-      total_recebido: qtdRec * (x.custo_unit || 0),
+      qtd_recebida: qtdRec, valor_unitario: vlr,
+      total_recebido: qtdRec * vlr,
       divergencia: diverg, obs_divergencia: obs,
     };
   });
 
-  const totalRecebido = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  const totalItens    = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
   // Salva recebimento cabeçalho
@@ -3457,8 +3487,19 @@ async function confirmarRecebimento() {
     }
   }
 
-  // Marca itens como recebidos
-  await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('pedido_num', pedido_num);
+  // Marca cada item: se qtd completa → recebido; se parcial → atualiza quantidade restante
+  for (const ir of itensReceb) {
+    const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
+    if (restante <= 0.001) {
+      await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('id', ir.compra_id);
+    } else {
+      await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente' }).eq('id', ir.compra_id);
+    }
+  }
+  // Persiste acréscimo atualizado
+  if (acrescimo !== (parseFloat(_recebItensAbertos[0]?.acrescimo) || 0)) {
+    await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
+  }
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
   toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');

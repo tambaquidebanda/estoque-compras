@@ -1567,17 +1567,26 @@
       </div>
       <div class="modal-body">
         <div class="row g-3 mb-3">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label fw-semibold">📅 Data do Recebimento</label>
             <input type="date" class="form-control" id="receb-data-rec">
           </div>
-          <div class="col-md-4">
-            <label class="form-label fw-semibold">👤 Responsável pelo Recebimento</label>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">👤 Responsável</label>
             <input type="text" class="form-control" id="receb-responsavel" placeholder="Nome do estoquista">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label fw-semibold">📅 Vencimento (Contas a Pagar)</label>
             <input type="date" class="form-control" id="receb-vencimento">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label fw-semibold">🧾 NF</label>
+            <input type="text" class="form-control" id="receb-nf" placeholder="Nº">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">➕ Acréscimo (R$)</label>
+            <input type="number" class="form-control text-end" id="receb-acrescimo"
+              value="0" min="0" step="0.01" placeholder="0,00" oninput="calcTotalReceb()">
           </div>
         </div>
         <input type="hidden" id="receb-pedido-num-hidden">
@@ -1585,9 +1594,11 @@
           <table class="table table-sm align-middle" id="tb-modal-receber">
             <thead style="background:#f8f9fa;font-size:.82rem">
               <tr>
+                <th class="text-center" style="width:60px">Receber</th>
                 <th>Produto</th><th>Categoria</th><th class="text-center">Qtd Pedida</th>
                 <th class="text-center" style="min-width:100px">Qtd Recebida</th>
-                <th class="text-center">Vlr Unit.</th><th class="text-center">Total</th>
+                <th class="text-center" style="min-width:110px">Vlr Unit.</th>
+                <th class="text-center">Total</th>
                 <th class="text-center">Divergência</th><th style="min-width:160px">Observação</th>
               </tr>
             </thead>
