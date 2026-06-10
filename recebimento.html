@@ -108,8 +108,10 @@
     .item-card {
       background: var(--card); border: 1px solid var(--borda);
       border-radius: 10px; padding: .75rem; margin-bottom: .5rem;
+      transition: opacity .2s;
     }
-    .item-card.diverg { border-color: var(--warn); }
+    .item-card.diverg  { border-color: var(--warn); }
+    .item-card.excluido { opacity: .4; }
     .item-nome  { font-size: .88rem; font-weight: 700; }
     .item-cat   { font-size: .72rem; color: var(--txt2); margin-bottom: .45rem; }
 
@@ -126,8 +128,10 @@
     .qtd-un { font-size: .75rem; color: var(--txt2); min-width: 28px; }
 
     /* Toggle */
-    .tog-row  { display: flex; align-items: center; gap: .5rem; }
-    .tog-lbl  { font-size: .74rem; color: var(--warn); flex: 1; }
+    .tog-row  { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
+    .tog-lbl  { font-size: .74rem; flex: 1; }
+    .tog-lbl.warn { color: var(--warn); }
+    .tog-lbl.rec  { color: var(--verde); font-weight: 600; }
     .toggle   { position: relative; width: 38px; height: 22px; flex-shrink: 0; display: inline-block; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .tog-track {
@@ -140,6 +144,8 @@
     }
     .toggle input:checked + .tog-track { background: var(--warn); }
     .toggle input:checked + .tog-track::before { transform: translateX(16px); }
+    .toggle.verde input:checked + .tog-track { background: var(--verde); }
+    .toggle.verde input:not(:checked) + .tog-track { background: var(--borda); }
 
     .obs-input-item {
       display: none; width: 100%; background: var(--bg); border: 1px solid var(--borda);
@@ -390,34 +396,57 @@ async function abrirPedido(pedido_num) {
   document.getElementById('rec-venc').value = '';
   document.getElementById('rec-nf').value   = '';
 
-  document.getElementById('rec-itens').innerHTML = itens.map(it =>
-    `<div class="item-card" id="ic-${it.id}">
+  document.getElementById('rec-itens').innerHTML = itens.map(it => {
+    const qtdFmt = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
+    const total  = (it.quantidade||0) * (it.custo_unit||0);
+    return `<div class="item-card" id="ic-${it.id}">
+      <!-- Nome + total dinâmico -->
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.1rem">
-        <div class="item-nome">${esc(it.produto)}</div>
+        <div>
+          <div class="item-nome">${esc(it.produto)}</div>
+          <div class="item-cat">${esc(it.categoria || '')}</div>
+        </div>
         <div style="text-align:right;flex-shrink:0;margin-left:.5rem">
-          <div style="font-size:.82rem;color:var(--verde);font-weight:700">${brl((it.quantidade||0)*(it.custo_unit||0))}</div>
-          <div style="font-size:.68rem;color:var(--txt2)">${brl(it.custo_unit||0)}/un</div>
+          <div id="tot-${it.id}" style="font-size:.88rem;color:var(--verde);font-weight:700">${brl(total)}</div>
         </div>
       </div>
-      <div class="item-cat">${esc(it.categoria || '')}</div>
-      <div class="qtd-row">
-        <span class="qtd-label">Pedido:</span>
-        <span class="qtd-pedida">${(it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(it.unidade_med||'')}</span>
-        <span class="qtd-label">Recebido:</span>
-        <input type="number" id="qr-${it.id}" value="${it.quantidade}" min="0" step="any" inputmode="decimal"
-          oninput="checkDiverg(${it.id},${it.quantidade})">
-        <span class="qtd-un">${esc(it.unidade_med||'')}</span>
-      </div>
+
+      <!-- Toggle: Receber agora -->
       <div class="tog-row">
-        <span class="tog-lbl">⚠️ Divergência</span>
-        <label class="toggle">
-          <input type="checkbox" id="dt-${it.id}" onchange="togObs(${it.id})">
+        <span class="tog-lbl rec">✅ Receber agora</span>
+        <label class="toggle verde">
+          <input type="checkbox" id="inc-${it.id}" checked onchange="togIncluir(${it.id})">
           <span class="tog-track"></span>
         </label>
       </div>
-      <input type="text" class="obs-input-item" id="ob-${it.id}" placeholder="Descreva a divergência...">
-    </div>`
-  ).join('');
+
+      <!-- Qtd + preço (ocultos quando excluído) -->
+      <div id="campos-${it.id}">
+        <div class="qtd-row">
+          <span class="qtd-label">Pedido:</span>
+          <span class="qtd-pedida">${qtdFmt} ${esc(it.unidade_med||'')}</span>
+          <span class="qtd-label">Recebido:</span>
+          <input type="number" id="qr-${it.id}" value="${it.quantidade}" min="0" step="any" inputmode="decimal"
+            oninput="atualizarTotal(${it.id},${it.quantidade})">
+          <span class="qtd-un">${esc(it.unidade_med||'')}</span>
+        </div>
+        <div class="qtd-row">
+          <span class="qtd-label">Preço/un:</span>
+          <input type="number" id="pu-${it.id}" value="${it.custo_unit||0}" min="0" step="0.01" inputmode="decimal"
+            oninput="atualizarTotal(${it.id},${it.quantidade})">
+          <span class="qtd-un">R$</span>
+        </div>
+        <div class="tog-row" style="margin-top:.1rem">
+          <span class="tog-lbl warn">⚠️ Divergência de quantidade</span>
+          <label class="toggle">
+            <input type="checkbox" id="dt-${it.id}" onchange="togObs(${it.id})">
+            <span class="tog-track"></span>
+          </label>
+        </div>
+        <input type="text" class="obs-input-item" id="ob-${it.id}" placeholder="Descreva a divergência...">
+      </div>
+    </div>`;
+  }).join('');
 
   mostrar('tela-pedido');
   window.scrollTo(0, 0);
@@ -428,8 +457,24 @@ function voltarLista() {
   irParaLista();
 }
 
-function checkDiverg(id, qtdPedida) {
+function togIncluir(id) {
+  const inc    = document.getElementById(`inc-${id}`);
+  const card   = document.getElementById(`ic-${id}`);
+  const campos = document.getElementById(`campos-${id}`);
+  const totEl  = document.getElementById(`tot-${id}`);
+  if (!inc || !card) return;
+  const ativo = inc.checked;
+  card.classList.toggle('excluido', !ativo);
+  if (campos) campos.style.display = ativo ? '' : 'none';
+  if (totEl)  totEl.style.color    = ativo ? 'var(--verde)' : 'var(--txt2)';
+}
+
+function atualizarTotal(id, qtdPedida) {
   const qtdRec = parseFloat(document.getElementById(`qr-${id}`)?.value) || 0;
+  const preco  = parseFloat(document.getElementById(`pu-${id}`)?.value) || 0;
+  const totEl  = document.getElementById(`tot-${id}`);
+  if (totEl) totEl.textContent = brl(qtdRec * preco);
+  // acende divergência automaticamente se qtd diferente
   if (Math.abs(qtdRec - qtdPedida) > 0.001) {
     const tog = document.getElementById(`dt-${id}`);
     if (tog && !tog.checked) { tog.checked = true; togObs(id); }
@@ -460,17 +505,26 @@ async function confirmarRecebimento() {
 
   const { pedido_num, itens } = _pedidoAtual;
   const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  const ref  = itens[0];
 
-  const itensReceb = itens.map(it => {
+  // Apenas itens marcados como "Receber agora"
+  const itensIncluidos = itens.filter(it => document.getElementById(`inc-${it.id}`)?.checked);
+  if (!itensIncluidos.length) {
+    toast('Selecione ao menos um item para receber.', 'err');
+    btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
+    return;
+  }
+  const ref = itensIncluidos[0];
+
+  const itensReceb = itensIncluidos.map(it => {
     const qtdRec = parseFloat(document.getElementById(`qr-${it.id}`)?.value) || 0;
+    const preco  = parseFloat(document.getElementById(`pu-${it.id}`)?.value) || it.custo_unit || 0;
     const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
     const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
       compra_id: it.id, produto: it.produto, categoria: it.categoria || '',
       unidade: it.unidade_med || '', qtd_pedida: it.quantidade || 0,
-      qtd_recebida: qtdRec, valor_unitario: it.custo_unit || 0,
-      total_recebido: qtdRec * (it.custo_unit || 0),
+      qtd_recebida: qtdRec, valor_unitario: preco,
+      total_recebido: qtdRec * preco,
       divergencia: diverg, obs_divergencia: obs,
     };
   });
@@ -497,8 +551,9 @@ async function confirmarRecebimento() {
     .insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
   if (errItens) console.error('Itens:', errItens.message);
 
-  // 3. Marca como recebido
-  await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('pedido_num', pedido_num);
+  // 3. Marca só os itens recebidos agora (recebimento parcial é possível)
+  const idsRecebidos = itensIncluidos.map(it => it.id);
+  await sb.from('cmp_compras').update({ status_receb: 'recebido' }).in('id', idsRecebidos);
 
   // 4. Atualiza conta a pagar se existir
   const { data: conta } = await sb.from('cmp_contas_pagar')
