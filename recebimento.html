@@ -21,192 +21,230 @@
       --warn:    #f39c12;
     }
 
-    body { background: var(--bg); color: var(--txt); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100dvh; }
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100dvh;
+    }
 
-    /* ── AUTH ── */
-    #tela-login { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 1.5rem; }
-    .login-card { background: var(--card); border: 1px solid var(--borda); border-radius: 16px; padding: 2rem 1.5rem; width: 100%; max-width: 380px; }
+    /* ── TELAS ── */
+    #tela-login,
+    #tela-lista,
+    #tela-pedido { display: none; flex-direction: column; min-height: 100dvh; }
+    #tela-login { align-items: center; justify-content: center; padding: 1.5rem; }
+
+    /* ── LOGIN ── */
+    .login-card {
+      background: var(--card);
+      border: 1px solid var(--borda);
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      width: 100%;
+      max-width: 380px;
+    }
     .login-logo { text-align: center; margin-bottom: 1.5rem; }
     .login-logo img { max-width: 160px; }
     .login-logo h2 { font-size: 1.1rem; color: var(--txt2); margin-top: .5rem; }
+    .login-label { display: block; font-size: .8rem; color: var(--txt2); margin-bottom: .4rem; font-weight: 500; }
+    input[type=email], input[type=password] {
+      width: 100%; background: var(--bg); border: 1px solid var(--borda);
+      border-radius: 10px; color: var(--txt); font-size: 1rem;
+      padding: .75rem 1rem; margin-bottom: 1rem; outline: none; -webkit-appearance: none;
+    }
+    input[type=email]:focus, input[type=password]:focus { border-color: var(--verde); }
+    .btn-entrar {
+      width: 100%; background: var(--verde); color: #fff; border: none;
+      border-radius: 10px; font-size: 1rem; font-weight: 600; padding: .85rem; cursor: pointer;
+    }
+    .btn-entrar:disabled { opacity: .5; }
+    .login-erro { color: #ff6b6b; font-size: .85rem; margin-top: .5rem; text-align: center; }
 
-    /* ── INPUTS ── */
-    label { display: block; font-size: .8rem; color: var(--txt2); margin-bottom: .4rem; font-weight: 500; }
-    input, select { width: 100%; background: var(--bg); border: 1px solid var(--borda); border-radius: 10px; color: var(--txt); font-size: 1rem; padding: .75rem 1rem; margin-bottom: 1rem; outline: none; -webkit-appearance: none; }
-    input:focus, select:focus { border-color: var(--verde); }
-    select option { background: var(--card); }
-
-    /* ── BOTÕES ── */
-    .btn-primary { width: 100%; background: var(--verde); color: #fff; border: none; border-radius: 10px; font-size: 1rem; font-weight: 600; padding: .85rem; cursor: pointer; }
-    .btn-primary:active { opacity: .8; }
-    .btn-primary:disabled { opacity: .5; cursor: default; }
-    .erro { color: #ff6b6b; font-size: .85rem; margin-top: .5rem; text-align: center; }
-
-    /* ── PRINCIPAL ── */
-    #tela-principal { display: none; flex-direction: column; min-height: 100dvh; }
-
-    /* Header */
-    .cabecalho { background: var(--card); border-bottom: 1px solid var(--borda); padding: .75rem 1rem; position: sticky; top: 0; z-index: 50; }
-    .cabecalho-topo { display: flex; align-items: center; gap: .75rem; }
-    .cabecalho-topo img { height: 32px; }
-    .cabecalho-topo h1 { font-size: 1rem; font-weight: 700; flex: 1; }
+    /* ── CABEÇALHO ── */
+    .cabecalho {
+      background: var(--card);
+      border-bottom: 1px solid var(--borda);
+      padding: .75rem 1rem;
+      position: sticky; top: 0; z-index: 50;
+    }
+    .cab-row { display: flex; align-items: center; gap: .75rem; }
+    .cab-row img { height: 32px; }
+    .cab-row h1 { font-size: 1rem; font-weight: 700; flex: 1; }
     .btn-sair { background: none; border: 1px solid var(--borda); color: var(--txt2); border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; cursor: pointer; }
-    .btn-voltar { background: none; border: none; color: var(--verde); font-size: .9rem; font-weight: 600; cursor: pointer; padding: 0; display: flex; align-items: center; gap: .3rem; }
+    .btn-voltar { background: none; border: none; color: var(--verde); font-size: .9rem; font-weight: 600; cursor: pointer; padding: 0; }
 
-    /* ── TELA LISTA ── */
-    #tela-lista { padding: 1rem; padding-bottom: 2rem; }
+    /* ── LISTA ── */
+    .lista-body { padding: 1rem; padding-bottom: 5rem; flex: 1; }
     .lista-vazia { text-align: center; color: var(--txt2); padding: 3rem 1rem; }
-    .lista-vazia div { font-size: 2.5rem; margin-bottom: .75rem; }
+    .lista-vazia .ico { font-size: 2.5rem; margin-bottom: .75rem; }
 
     .pedido-card {
-      background: var(--card);
-      border: 1px solid var(--borda);
-      border-radius: 12px;
-      padding: 1rem;
-      margin-bottom: .75rem;
-      cursor: pointer;
-      transition: border-color .15s;
+      background: var(--card); border: 1px solid var(--borda);
+      border-radius: 12px; padding: 1rem; margin-bottom: .75rem; cursor: pointer;
     }
     .pedido-card:active { border-color: var(--verde); }
-    .pedido-card-topo { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .4rem; }
-    .pedido-num { font-size: 1.1rem; font-weight: 700; color: var(--laranja); }
-    .pedido-total { font-size: 1rem; font-weight: 700; color: var(--verde); }
-    .pedido-forn { font-size: .9rem; color: var(--txt); font-weight: 600; margin-bottom: .2rem; }
-    .pedido-info { font-size: .75rem; color: var(--txt2); display: flex; gap: .75rem; }
+    .pc-topo { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .3rem; }
+    .pc-num  { font-size: 1.05rem; font-weight: 700; color: var(--laranja); }
+    .pc-tot  { font-size: .95rem; font-weight: 700; color: var(--verde); }
+    .pc-forn { font-size: .88rem; font-weight: 600; margin-bottom: .2rem; }
+    .pc-info { font-size: .74rem; color: var(--txt2); display: flex; gap: .75rem; flex-wrap: wrap; }
 
-    /* ── TELA PEDIDO ── */
-    #tela-pedido { display: none; flex-direction: column; min-height: 100dvh; }
-
-    .pedido-header { background: var(--card); padding: .75rem 1rem; border-bottom: 1px solid var(--borda); }
-    .pedido-titulo { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; }
-    .pedido-titulo h2 { font-size: 1rem; font-weight: 700; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    .campos-receb { padding: .75rem 1rem; background: var(--card); border-bottom: 1px solid var(--borda); display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
-    .campos-receb .campo-full { grid-column: 1 / -1; }
-    .campo-sm label { font-size: .72rem; }
-    .campo-sm input { font-size: .88rem; padding: .55rem .75rem; margin-bottom: 0; }
-
-    .itens-lista { padding: .75rem 1rem 7rem; }
-    .item-receb {
-      background: var(--card);
-      border: 1px solid var(--borda);
-      border-radius: 10px;
-      padding: .75rem;
-      margin-bottom: .5rem;
+    /* ── FORMULÁRIO DE RECEBIMENTO ── */
+    .campos-bloco {
+      background: var(--card); border-bottom: 1px solid var(--borda);
+      padding: .75rem 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: .5rem;
     }
-    .item-receb.divergencia { border-color: var(--warn); }
-    .item-nome-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .5rem; }
-    .item-nome { font-size: .88rem; font-weight: 700; flex: 1; }
-    .item-cat { font-size: .72rem; color: var(--txt2); }
+    .campo-full { grid-column: 1 / -1; }
+    .campo-lbl { display: block; font-size: .72rem; color: var(--txt2); margin-bottom: .3rem; font-weight: 500; }
+    input[type=date], input[type=text] {
+      width: 100%; background: var(--bg); border: 1px solid var(--borda);
+      border-radius: 8px; color: var(--txt); font-size: .88rem;
+      padding: .55rem .75rem; outline: none; -webkit-appearance: none;
+    }
+    input[type=date]:focus, input[type=text]:focus { border-color: var(--verde); }
 
-    .item-qtd-row { display: flex; align-items: center; gap: .5rem; }
-    .qtd-label { font-size: .75rem; color: var(--txt2); min-width: 70px; }
-    .qtd-pedida { font-size: .88rem; color: var(--txt2); min-width: 60px; }
-    .qtd-input { flex: 1; background: var(--bg); border: 1.5px solid var(--borda); border-radius: 8px; color: var(--txt); font-size: 1.05rem; font-weight: 600; text-align: center; padding: .45rem .3rem; -webkit-appearance: none; margin: 0; }
-    .qtd-input:focus { border-color: var(--verde); outline: none; }
-    .qtd-un { font-size: .78rem; color: var(--txt2); min-width: 30px; }
+    /* ── ITENS ── */
+    .itens-corpo { padding: .75rem 1rem 7rem; flex: 1; }
+    .item-card {
+      background: var(--card); border: 1px solid var(--borda);
+      border-radius: 10px; padding: .75rem; margin-bottom: .5rem;
+    }
+    .item-card.diverg { border-color: var(--warn); }
+    .item-nome  { font-size: .88rem; font-weight: 700; }
+    .item-cat   { font-size: .72rem; color: var(--txt2); margin-bottom: .45rem; }
 
-    /* Toggle divergência */
-    .div-toggle-row { display: flex; align-items: center; gap: .5rem; margin-top: .5rem; }
-    .div-toggle-row label { font-size: .75rem; color: var(--warn); margin: 0; flex: 1; }
-    .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle-slider { position: absolute; inset: 0; background: var(--borda); border-radius: 22px; cursor: pointer; transition: .2s; }
-    .toggle-slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
-    .toggle input:checked + .toggle-slider { background: var(--warn); }
-    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+    .qtd-row    { display: flex; align-items: center; gap: .4rem; margin-bottom: .4rem; }
+    .qtd-label  { font-size: .72rem; color: var(--txt2); white-space: nowrap; }
+    .qtd-pedida { font-size: .82rem; color: var(--txt2); min-width: 55px; }
+    input[type=number] {
+      flex: 1; background: var(--bg); border: 1.5px solid var(--borda);
+      border-radius: 8px; color: var(--txt); font-size: 1rem; font-weight: 600;
+      text-align: center; padding: .45rem .3rem; outline: none; -webkit-appearance: none;
+      -moz-appearance: textfield;
+    }
+    input[type=number]:focus { border-color: var(--verde); }
+    .qtd-un { font-size: .75rem; color: var(--txt2); min-width: 28px; }
 
-    .obs-input { width: 100%; background: var(--bg); border: 1px solid var(--borda); border-radius: 8px; color: var(--txt); font-size: .85rem; padding: .45rem .6rem; margin-top: .4rem; display: none; outline: none; }
-    .obs-input:focus { border-color: var(--warn); }
+    /* Toggle */
+    .tog-row  { display: flex; align-items: center; gap: .5rem; }
+    .tog-lbl  { font-size: .74rem; color: var(--warn); flex: 1; }
+    .toggle   { position: relative; width: 38px; height: 22px; flex-shrink: 0; display: inline-block; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .tog-track {
+      position: absolute; inset: 0; background: var(--borda);
+      border-radius: 22px; cursor: pointer; transition: .2s;
+    }
+    .tog-track::before {
+      content: ''; position: absolute; width: 16px; height: 16px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s;
+    }
+    .toggle input:checked + .tog-track { background: var(--warn); }
+    .toggle input:checked + .tog-track::before { transform: translateX(16px); }
+
+    .obs-input-item {
+      display: none; width: 100%; background: var(--bg); border: 1px solid var(--borda);
+      border-radius: 8px; color: var(--txt); font-size: .82rem;
+      padding: .45rem .6rem; margin-top: .4rem; outline: none;
+    }
+    .obs-input-item:focus { border-color: var(--warn); }
 
     /* Rodapé */
-    .rodape-fixo { position: fixed; bottom: 0; left: 0; right: 0; padding: .75rem 1rem; background: var(--bg); border-top: 1px solid var(--borda); }
-    .btn-confirmar { width: 100%; background: var(--verde); color: #fff; border: none; border-radius: 12px; font-size: 1.05rem; font-weight: 700; padding: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: .5rem; }
-    .btn-confirmar:active { opacity: .85; }
-    .btn-confirmar:disabled { background: #2e3548; color: var(--txt2); cursor: default; }
+    .rodape-fixo {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: .75rem 1rem; background: var(--bg); border-top: 1px solid var(--borda);
+    }
+    .btn-confirmar {
+      width: 100%; background: var(--verde); color: #fff; border: none;
+      border-radius: 12px; font-size: 1.05rem; font-weight: 700;
+      padding: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: .5rem;
+    }
+    .btn-confirmar:active  { opacity: .85; }
+    .btn-confirmar:disabled { background: var(--borda); color: var(--txt2); cursor: default; }
 
     /* Toast */
-    #toast { position: fixed; bottom: 5rem; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: .65rem 1.2rem; border-radius: 20px; font-size: .9rem; display: none; z-index: 999; white-space: nowrap; max-width: 90vw; }
+    #toast {
+      position: fixed; bottom: 5rem; left: 50%; transform: translateX(-50%);
+      background: #333; color: #fff; padding: .65rem 1.2rem;
+      border-radius: 20px; font-size: .9rem; display: none; z-index: 999;
+      white-space: nowrap; max-width: 90vw;
+    }
     #toast.ok  { background: var(--verde); }
     #toast.err { background: var(--danger); }
 
-    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin {
+      display: inline-block; width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+      border-radius: 50%; animation: s .7s linear infinite;
+    }
+    @keyframes s { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
 
-<!-- LOGIN -->
+<!-- ══ TELA LOGIN ══ -->
 <div id="tela-login">
   <div class="login-card">
     <div class="login-logo">
       <img src="logo.png" alt="Tambaqui de Banda">
       <h2>Recebimento de Pedidos</h2>
     </div>
-    <label>E-mail</label>
+    <label class="login-label">E-mail</label>
     <input type="email" id="login-email" placeholder="seu@email.com"
       onkeydown="if(event.key==='Enter') document.getElementById('login-senha').focus()">
-    <label>Senha</label>
+    <label class="login-label">Senha</label>
     <input type="password" id="login-senha" placeholder="••••••••"
       onkeydown="if(event.key==='Enter') fazerLogin()">
-    <button class="btn-primary" id="btn-login" onclick="fazerLogin()">Entrar</button>
-    <div class="erro" id="login-erro"></div>
+    <button class="btn-entrar" id="btn-login" onclick="fazerLogin()">Entrar</button>
+    <div class="login-erro" id="login-erro"></div>
   </div>
 </div>
 
-<!-- PRINCIPAL -->
-<div id="tela-principal">
-
-  <!-- TELA LISTA -->
-  <div id="tela-lista" style="display:none;flex-direction:column;min-height:100dvh">
-    <div class="cabecalho">
-      <div class="cabecalho-topo">
-        <img src="logo.png" alt="">
-        <h1>Recebimentos Pendentes</h1>
-        <button class="btn-sair" onclick="sair()">Sair</button>
-      </div>
+<!-- ══ TELA LISTA ══ -->
+<div id="tela-lista">
+  <div class="cabecalho">
+    <div class="cab-row">
+      <img src="logo.png" alt="">
+      <h1>Pendentes de Recebimento</h1>
+      <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
-    <div id="lista-pedidos" style="padding:1rem;padding-bottom:2rem">
-      <div class="lista-vazia"><div>⏳</div>Carregando pedidos...</div>
+  </div>
+  <div class="lista-body" id="lista-pedidos">
+    <div class="lista-vazia"><div class="ico">⏳</div>Carregando...</div>
+  </div>
+</div>
+
+<!-- ══ TELA PEDIDO ══ -->
+<div id="tela-pedido">
+  <div class="cabecalho">
+    <div class="cab-row">
+      <button class="btn-voltar" onclick="voltarLista()">← Voltar</button>
+      <h1 id="ped-titulo">Pedido</h1>
+    </div>
+    <div style="font-size:.78rem;color:var(--txt2);margin-top:.2rem;padding-left:.2rem" id="ped-info"></div>
+  </div>
+
+  <div class="campos-bloco">
+    <div>
+      <label class="campo-lbl">📅 Data Recebimento *</label>
+      <input type="date" id="rec-data">
+    </div>
+    <div>
+      <label class="campo-lbl">📆 Vencimento *</label>
+      <input type="date" id="rec-venc">
+    </div>
+    <div class="campo-full">
+      <label class="campo-lbl">🧾 Nº NF / Documento</label>
+      <input type="text" id="rec-nf" placeholder="Opcional">
     </div>
   </div>
 
-  <!-- TELA PEDIDO -->
-  <div id="tela-pedido" style="display:none;flex-direction:column;min-height:100dvh">
-    <div class="cabecalho">
-      <div class="pedido-titulo">
-        <button class="btn-voltar" onclick="voltarLista()">← Voltar</button>
-        <h2 id="ped-titulo">Pedido</h2>
-        <span id="ped-forn" style="font-size:.78rem;color:var(--txt2)"></span>
-      </div>
-    </div>
+  <div class="itens-corpo" id="rec-itens"></div>
 
-    <!-- Campos de cabeçalho do recebimento -->
-    <div class="campos-receb">
-      <div class="campo-sm">
-        <label>📅 Data Recebimento *</label>
-        <input type="date" id="rec-data" style="margin:0">
-      </div>
-      <div class="campo-sm">
-        <label>📆 Vencimento *</label>
-        <input type="date" id="rec-venc" style="margin:0">
-      </div>
-      <div class="campo-sm campo-full">
-        <label>🧾 Nº NF / Documento</label>
-        <input type="text" id="rec-nf" placeholder="Opcional" style="margin:0">
-      </div>
-    </div>
-
-    <!-- Itens -->
-    <div class="itens-lista" id="rec-itens"></div>
-
-    <div class="rodape-fixo">
-      <button class="btn-confirmar" id="btn-confirmar" onclick="confirmarRecebimento()">
-        ✅ Confirmar Recebimento
-      </button>
-    </div>
+  <div class="rodape-fixo">
+    <button class="btn-confirmar" id="btn-confirmar" onclick="confirmarRecebimento()">
+      ✅ Confirmar Recebimento
+    </button>
   </div>
-
 </div>
 
 <div id="toast"></div>
@@ -216,7 +254,15 @@
 
 let sb   = null;
 let user = null;
-let _pedidoAtual = null; // { pedido_num, itens[] }
+let _pedidoAtual = null;
+
+function mostrar(id) {
+  ['tela-login','tela-lista','tela-pedido'].forEach(t => {
+    const el = document.getElementById(t);
+    el.style.display = (t === id) ? 'flex' : 'none';
+    if (t === id) el.style.flexDirection = 'column';
+  });
+}
 
 function toast(msg, tipo) {
   const el = document.getElementById('toast');
@@ -232,33 +278,34 @@ function brl(v) {
 
 // ── AUTH ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  sb = supabase.createClient(SB_URL, SB_KEY);
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) { user = session.user; entrar(); }
+  mostrar('tela-login');
+  try {
+    sb = supabase.createClient(SB_URL, SB_KEY);
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) { user = session.user; irParaLista(); return; }
+  } catch(e) {
+    console.error('Supabase init error:', e);
+  }
 });
 
 async function fazerLogin() {
   const email = document.getElementById('login-email').value.trim();
   const senha  = document.getElementById('login-senha').value;
   const btn    = document.getElementById('btn-login');
-  const erro   = document.getElementById('login-erro');
-  if (!email || !senha) { erro.textContent = 'Preencha e-mail e senha.'; return; }
+  const erroEl = document.getElementById('login-erro');
+  if (!email || !senha) { erroEl.textContent = 'Preencha e-mail e senha.'; return; }
 
-  btn.disabled = true; btn.textContent = 'Entrando...'; erro.textContent = '';
+  btn.disabled = true; btn.textContent = 'Entrando...'; erroEl.textContent = '';
   if (!sb) sb = supabase.createClient(SB_URL, SB_KEY);
 
   const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
-  if (error) { erro.textContent = 'E-mail ou senha incorretos.'; btn.disabled = false; btn.textContent = 'Entrar'; return; }
+  if (error) {
+    erroEl.textContent = 'E-mail ou senha incorretos.';
+    btn.disabled = false; btn.textContent = 'Entrar';
+    return;
+  }
   user = data.user;
-  entrar();
-}
-
-function entrar() {
-  document.getElementById('tela-login').style.display = 'none';
-  const tp = document.getElementById('tela-principal');
-  tp.style.display = 'flex';
-  tp.style.flexDirection = 'column';
-  mostrarLista();
+  irParaLista();
 }
 
 async function sair() {
@@ -266,142 +313,135 @@ async function sair() {
   location.reload();
 }
 
-// ── LISTA DE PEDIDOS ──────────────────────────────────────────────
-function mostrarLista() {
-  document.getElementById('tela-lista').style.display = 'flex';
-  document.getElementById('tela-pedido').style.display = 'none';
-  carregarPedidosPendentes();
+// ── LISTA ────────────────────────────────────────────────────────
+async function irParaLista() {
+  mostrar('tela-lista');
+  document.getElementById('lista-pedidos').innerHTML =
+    '<div class="lista-vazia"><div class="ico">⏳</div>Carregando...</div>';
+  await carregarPedidosPendentes();
 }
 
 async function carregarPedidosPendentes() {
-  const cont = document.getElementById('lista-pedidos');
-  cont.innerHTML = '<div class="lista-vazia"><div>⏳</div>Carregando...</div>';
-
   const { data, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_nome,comprador,produto,categoria,unidade_med,quantidade,custo_unit,status_receb')
-    .neq('status_receb', 'recebido')
+    .select('id,pedido_num,data,data_entrega,fornecedor_nome,produto,categoria,unidade_med,quantidade,custo_unit,status_receb')
+    .or('status_receb.neq.recebido,status_receb.is.null')
     .order('pedido_num', { ascending: false });
 
-  if (error || !data?.length) {
-    cont.innerHTML = '<div class="lista-vazia"><div>✅</div>Nenhum pedido pendente de recebimento.</div>';
+  const cont = document.getElementById('lista-pedidos');
+  if (error) { cont.innerHTML = `<div class="lista-vazia">Erro: ${error.message}</div>`; return; }
+  if (!data?.length) {
+    cont.innerHTML = '<div class="lista-vazia"><div class="ico">✅</div>Nenhum pedido pendente.</div>';
     return;
   }
 
-  // Agrupa por pedido_num
   const grupos = {};
   data.forEach(it => {
     if (!grupos[it.pedido_num]) {
-      grupos[it.pedido_num] = { pedido_num: it.pedido_num, data: it.data, data_entrega: it.data_entrega,
-        forn: it.fornecedor_nome, comp: it.comprador, itens: [], total: 0 };
+      grupos[it.pedido_num] = {
+        pedido_num: it.pedido_num, data: it.data, data_entrega: it.data_entrega,
+        forn: it.fornecedor_nome, itens: [], total: 0,
+      };
     }
     grupos[it.pedido_num].itens.push(it);
     grupos[it.pedido_num].total += (it.quantidade || 0) * (it.custo_unit || 0);
   });
 
   cont.innerHTML = Object.values(grupos).map(g => {
-    const dataBR  = (g.data || '').split('-').reverse().join('/');
-    const entrega = g.data_entrega ? `Entrega: ${g.data_entrega.split('-').reverse().join('/')}` : '';
-    return `
-      <div class="pedido-card" onclick="abrirPedido('${g.pedido_num}')">
-        <div class="pedido-card-topo">
-          <span class="pedido-num">#${g.pedido_num}</span>
-          <span class="pedido-total">${brl(g.total)}</span>
-        </div>
-        <div class="pedido-forn">${g.forn || '—'}</div>
-        <div class="pedido-info">
-          <span>📅 ${dataBR}</span>
-          ${entrega ? `<span>🚚 ${entrega}</span>` : ''}
-          <span>📦 ${g.itens.length} item(ns)</span>
-        </div>
-      </div>`;
+    const dataBR   = (g.data || '').split('-').reverse().join('/');
+    const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : null;
+    return `<div class="pedido-card" onclick="abrirPedido('${esc(g.pedido_num)}')">
+      <div class="pc-topo">
+        <span class="pc-num">#${esc(g.pedido_num)}</span>
+        <span class="pc-tot">${brl(g.total)}</span>
+      </div>
+      <div class="pc-forn">${esc(g.forn || '—')}</div>
+      <div class="pc-info">
+        <span>📅 ${dataBR}</span>
+        ${entregaBR ? `<span>🚚 ${entregaBR}</span>` : ''}
+        <span>📦 ${g.itens.length} item(ns)</span>
+      </div>
+    </div>`;
   }).join('');
 }
 
-// ── TELA DO PEDIDO ────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── PEDIDO ───────────────────────────────────────────────────────
 async function abrirPedido(pedido_num) {
-  const { data: itens } = await sb
+  const { data: itens, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb')
+    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb')
     .eq('pedido_num', pedido_num)
-    .neq('status_receb', 'recebido')
+    .or('status_receb.neq.recebido,status_receb.is.null')
     .order('id');
 
-  if (!itens?.length) { toast('Pedido não encontrado.', 'err'); return; }
+  if (error || !itens?.length) { toast('Pedido não encontrado.', 'err'); return; }
 
   _pedidoAtual = { pedido_num, itens };
 
   document.getElementById('ped-titulo').textContent = `Pedido #${pedido_num}`;
-  document.getElementById('ped-forn').textContent   = itens[0].fornecedor_nome || '';
+  document.getElementById('ped-info').textContent = itens[0].fornecedor_nome || '';
 
-  // Datas padrão
   const hoje = new Date().toISOString().slice(0, 10);
   document.getElementById('rec-data').value = hoje;
   document.getElementById('rec-venc').value = '';
   document.getElementById('rec-nf').value   = '';
 
-  // Renderiza itens
-  document.getElementById('rec-itens').innerHTML = itens.map(it => `
-    <div class="item-receb" id="item-card-${it.id}">
-      <div class="item-nome-row">
-        <div>
-          <div class="item-nome">${it.produto}</div>
-          <div class="item-cat">${it.categoria || ''}</div>
-        </div>
-      </div>
-      <div class="item-qtd-row">
+  document.getElementById('rec-itens').innerHTML = itens.map(it =>
+    `<div class="item-card" id="ic-${it.id}">
+      <div class="item-nome">${esc(it.produto)}</div>
+      <div class="item-cat">${esc(it.categoria || '')}</div>
+      <div class="qtd-row">
         <span class="qtd-label">Pedido:</span>
-        <span class="qtd-pedida">${(it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${it.unidade_med||''}</span>
-        <span class="qtd-label" style="text-align:right">Recebido:</span>
-        <input type="number" class="qtd-input" id="qrec-${it.id}"
-          value="${it.quantidade}" min="0" step="any" inputmode="decimal"
-          oninput="verificarDivergencia(${it.id}, ${it.quantidade})">
-        <span class="qtd-un">${it.unidade_med||''}</span>
+        <span class="qtd-pedida">${(it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(it.unidade_med||'')}</span>
+        <span class="qtd-label">Recebido:</span>
+        <input type="number" id="qr-${it.id}" value="${it.quantidade}" min="0" step="any" inputmode="decimal"
+          oninput="checkDiverg(${it.id},${it.quantidade})">
+        <span class="qtd-un">${esc(it.unidade_med||'')}</span>
       </div>
-      <div class="div-toggle-row">
-        <label for="div-tog-${it.id}">⚠️ Divergência</label>
+      <div class="tog-row">
+        <span class="tog-lbl">⚠️ Divergência</span>
         <label class="toggle">
-          <input type="checkbox" id="div-tog-${it.id}"
-            onchange="toggleObs(${it.id})">
-          <span class="toggle-slider"></span>
+          <input type="checkbox" id="dt-${it.id}" onchange="togObs(${it.id})">
+          <span class="tog-track"></span>
         </label>
       </div>
-      <input type="text" class="obs-input" id="obs-${it.id}" placeholder="Descreva a divergência...">
-    </div>`).join('');
+      <input type="text" class="obs-input-item" id="ob-${it.id}" placeholder="Descreva a divergência...">
+    </div>`
+  ).join('');
 
-  document.getElementById('tela-lista').style.display  = 'none';
-  document.getElementById('tela-pedido').style.display = 'flex';
+  mostrar('tela-pedido');
   window.scrollTo(0, 0);
 }
 
 function voltarLista() {
-  document.getElementById('tela-pedido').style.display = 'none';
-  document.getElementById('tela-lista').style.display  = 'flex';
   _pedidoAtual = null;
+  irParaLista();
 }
 
-function verificarDivergencia(id, qtdPedida) {
-  const qtdRec = parseFloat(document.getElementById(`qrec-${id}`)?.value) || 0;
-  const tog    = document.getElementById(`div-tog-${id}`);
-  const card   = document.getElementById(`item-card-${id}`);
+function checkDiverg(id, qtdPedida) {
+  const qtdRec = parseFloat(document.getElementById(`qr-${id}`)?.value) || 0;
   if (Math.abs(qtdRec - qtdPedida) > 0.001) {
-    tog.checked = true;
-    card.classList.add('divergencia');
-    document.getElementById(`obs-${id}`).style.display = 'block';
+    const tog = document.getElementById(`dt-${id}`);
+    if (tog && !tog.checked) { tog.checked = true; togObs(id); }
   }
 }
 
-function toggleObs(id) {
-  const tog  = document.getElementById(`div-tog-${id}`);
-  const obs  = document.getElementById(`obs-${id}`);
-  const card = document.getElementById(`item-card-${id}`);
+function togObs(id) {
+  const tog  = document.getElementById(`dt-${id}`);
+  const obs  = document.getElementById(`ob-${id}`);
+  const card = document.getElementById(`ic-${id}`);
+  if (!tog || !obs || !card) return;
   obs.style.display = tog.checked ? 'block' : 'none';
-  card.classList.toggle('divergencia', tog.checked);
+  card.classList.toggle('diverg', tog.checked);
 }
 
-// ── CONFIRMAR RECEBIMENTO ─────────────────────────────────────────
+// ── CONFIRMAR ────────────────────────────────────────────────────
 async function confirmarRecebimento() {
-  const btn = document.getElementById('btn-confirmar');
+  const btn     = document.getElementById('btn-confirmar');
   const dataRec = document.getElementById('rec-data').value;
   const venc    = document.getElementById('rec-venc').value;
   const nf      = document.getElementById('rec-nf').value.trim() || null;
@@ -410,16 +450,16 @@ async function confirmarRecebimento() {
   if (!venc)    { toast('Informe a data de vencimento.', 'err'); return; }
 
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Salvando...';
+  btn.innerHTML = '<span class="spin"></span> Salvando...';
 
   const { pedido_num, itens } = _pedidoAtual;
   const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const ref  = itens[0];
 
   const itensReceb = itens.map(it => {
-    const qtdRec = parseFloat(document.getElementById(`qrec-${it.id}`)?.value) || 0;
-    const diverg = document.getElementById(`div-tog-${it.id}`)?.checked || false;
-    const obs    = document.getElementById(`obs-${it.id}`)?.value || '';
+    const qtdRec = parseFloat(document.getElementById(`qr-${it.id}`)?.value) || 0;
+    const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
+    const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
       compra_id: it.id, produto: it.produto, categoria: it.categoria || '',
       unidade: it.unidade_med || '', qtd_pedida: it.quantidade || 0,
@@ -432,7 +472,7 @@ async function confirmarRecebimento() {
   const totalRecebido = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
-  // 1. Salva cabeçalho do recebimento
+  // 1. Cabeçalho do recebimento
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel: resp,
     fornecedor: ref?.fornecedor_nome || '', comprador: ref?.comprador || '',
@@ -441,31 +481,30 @@ async function confirmarRecebimento() {
   }]).select().single();
 
   if (errReceb) {
-    toast('Erro ao salvar: ' + errReceb.message, 'err');
+    toast('Erro: ' + errReceb.message, 'err');
     btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
     return;
   }
 
-  // 2. Salva itens do recebimento
-  await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+  // 2. Itens do recebimento
+  const { error: errItens } = await sb.from('cmp_recebimento_itens')
+    .insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+  if (errItens) console.error('Itens:', errItens.message);
 
-  // 3. Marca pedido como recebido
+  // 3. Marca como recebido
   await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('pedido_num', pedido_num);
 
-  // 4. Atualiza cmp_contas_pagar se existir
+  // 4. Atualiza conta a pagar se existir
   const { data: conta } = await sb.from('cmp_contas_pagar')
     .select('id').eq('pedido_num', pedido_num).maybeSingle();
   if (conta) {
     await sb.from('cmp_contas_pagar').update({
       recebimento_id: receb.id, data_receb: dataRec,
-      vencimento: venc, valor: totalRecebido,
-      nf_numero: nf,
+      vencimento: venc, valor: totalRecebido, nf_numero: nf,
     }).eq('id', conta.id);
   }
 
-  const msg = `✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}`;
-  toast(msg, 'ok');
-
+  toast(`✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
   setTimeout(() => {
     btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
     voltarLista();
