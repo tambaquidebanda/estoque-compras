@@ -238,9 +238,14 @@
       <label class="campo-lbl">📆 Vencimento *</label>
       <input type="date" id="rec-venc">
     </div>
-    <div class="campo-full">
+    <div>
       <label class="campo-lbl">🧾 Nº NF / Documento</label>
       <input type="text" id="rec-nf" placeholder="Opcional">
+    </div>
+    <div>
+      <label class="campo-lbl">➕ Acréscimo (R$)</label>
+      <input type="number" id="rec-acrescimo" value="0" min="0" step="0.01" inputmode="decimal"
+        oninput="atualizarTotalAcrescimo()">
     </div>
   </div>
 
@@ -379,7 +384,7 @@ function esc(s) {
 async function abrirPedido(pedido_num) {
   const { data: itens, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb')
+    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo')
     .eq('pedido_num', pedido_num)
     .or('status_receb.neq.recebido,status_receb.is.null')
     .order('id');
@@ -392,9 +397,10 @@ async function abrirPedido(pedido_num) {
   document.getElementById('ped-info').textContent = itens[0].fornecedor_nome || '';
 
   const hoje = new Date().toISOString().slice(0, 10);
-  document.getElementById('rec-data').value = hoje;
-  document.getElementById('rec-venc').value = '';
-  document.getElementById('rec-nf').value   = '';
+  document.getElementById('rec-data').value      = hoje;
+  document.getElementById('rec-venc').value      = '';
+  document.getElementById('rec-nf').value        = '';
+  document.getElementById('rec-acrescimo').value = parseFloat(itens[0]?.acrescimo) || 0;
 
   document.getElementById('rec-itens').innerHTML = itens.map(it => {
     const qtdFmt = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
@@ -490,12 +496,15 @@ function togObs(id) {
   card.classList.toggle('diverg', tog.checked);
 }
 
+function atualizarTotalAcrescimo() { /* acréscimo reflete no confirmar — sem display separado */ }
+
 // ── CONFIRMAR ────────────────────────────────────────────────────
 async function confirmarRecebimento() {
-  const btn     = document.getElementById('btn-confirmar');
-  const dataRec = document.getElementById('rec-data').value;
-  const venc    = document.getElementById('rec-venc').value;
-  const nf      = document.getElementById('rec-nf').value.trim() || null;
+  const btn       = document.getElementById('btn-confirmar');
+  const dataRec   = document.getElementById('rec-data').value;
+  const venc      = document.getElementById('rec-venc').value;
+  const nf        = document.getElementById('rec-nf').value.trim() || null;
+  const acrescimo = parseFloat(document.getElementById('rec-acrescimo')?.value) || 0;
 
   if (!dataRec) { toast('Informe a data do recebimento.', 'err'); return; }
   if (!venc)    { toast('Informe a data de vencimento.', 'err'); return; }
@@ -529,7 +538,8 @@ async function confirmarRecebimento() {
     };
   });
 
-  const totalRecebido = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  const totalItens    = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
   // 1. Cabeçalho do recebimento
@@ -568,7 +578,12 @@ async function confirmarRecebimento() {
     }
   }
 
-  // 4. Atualiza conta a pagar se existir
+  // 4. Persiste acréscimo atualizado em todos os itens do pedido
+  if (acrescimo !== (parseFloat(_pedidoAtual.itens[0]?.acrescimo) || 0)) {
+    await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
+  }
+
+  // 5. Atualiza conta a pagar se existir
   const { data: conta } = await sb.from('cmp_contas_pagar')
     .select('id').eq('pedido_num', pedido_num).maybeSingle();
   if (conta) {

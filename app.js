@@ -26,6 +26,7 @@ let ftFichasCache  = []; // fichas carregadas
 let _pedidoItens    = [];   // itens do pedido em construção
 let _pedidosGrupos  = {};   // { pedido_num: g } usado pelo modal financeiro
 let _pedidoEditando = null; // pedido_num sendo editado (null = novo pedido)
+let _pedidoAcrescimo = 0;   // acréscimo (frete/taxa) do pedido atual
 let _rateioItensAtual = []; // itens de rateio já resolvidos (com plano_conta_id) para o modal atual
 
 // plano de contas do financeiro (para resolver IDs sem busca no banco)
@@ -743,6 +744,8 @@ async function prepararFormCompra() {
       document.getElementById('c-forn-id').value = primeiro.fornId || '';
       if (compSel) compSel.value = primeiro.comp || '';
     }
+    const acrEl = document.getElementById('c-acrescimo');
+    if (acrEl) acrEl.value = _pedidoAcrescimo || 0;
     const proxEl = document.getElementById('prox-pedido-num');
     if (proxEl) proxEl.textContent = _pedidoEditando;
     _renderItensPedido();
@@ -992,14 +995,17 @@ function _renderItensPedido() {
   const btnFin  = document.getElementById('btn-finalizar-pedido');
   const btnCanc = document.getElementById('btn-cancelar-pedido');
 
+  const blocoAcr = document.getElementById('bloco-acrescimo');
   if (!_pedidoItens.length) {
     bloco.style.display   = 'none';
+    if (blocoAcr) blocoAcr.style.display = 'none';
     btnFin.disabled       = true;
     btnCanc.style.display = 'none';
     return;
   }
 
   bloco.style.display   = '';
+  if (blocoAcr) blocoAcr.style.display = '';
   btnFin.disabled       = false;
   btnCanc.style.display = '';
 
@@ -1027,13 +1033,19 @@ function _renderItensPedido() {
     const k = it.planoConta || it.cat || '—';
     grupos[k] = (grupos[k] || 0) + it.total;
   });
-  const totalGeral = _pedidoItens.reduce((s, it) => s + it.total, 0);
+  const totalItens  = _pedidoItens.reduce((s, it) => s + it.total, 0);
+  const acrescimo   = parseFloat(document.getElementById('c-acrescimo')?.value) || 0;
+  const totalGeral  = totalItens + acrescimo;
 
   const linhasGrupo = Object.entries(grupos).map(([k, v]) =>
     `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td></td></tr>`
   ).join('');
 
-  tfoot.innerHTML = linhasGrupo +
+  const linhaAcr = acrescimo > 0
+    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Acréscimo (frete/taxa)</td><td class="text-end fw-semibold" style="color:#FF6B35">${brl(acrescimo)}</td><td></td></tr>`
+    : '';
+
+  tfoot.innerHTML = linhasGrupo + linhaAcr +
     `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total do Pedido</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td></td></tr>`;
 }
 
@@ -1097,6 +1109,7 @@ async function finalizarPedido() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
 
   const pedido_num = _pedidoEditando || await _gerarNumeroPedido();
+  const acrescimo  = parseFloat(document.getElementById('c-acrescimo')?.value) || 0;
 
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
@@ -1113,6 +1126,7 @@ async function finalizarPedido() {
     comprador:       it.comp,
     unidade_uso:     it.uso,
     observacao:      null,
+    acrescimo,
     status_receb:    'pendente',
     criado_por:      user.id,
   }));
@@ -1137,8 +1151,11 @@ async function finalizarPedido() {
 }
 
 function cancelarPedido() {
-  _pedidoItens    = [];
-  _pedidoEditando = null;
+  _pedidoItens     = [];
+  _pedidoEditando  = null;
+  _pedidoAcrescimo = 0;
+  const acrEl = document.getElementById('c-acrescimo');
+  if (acrEl) acrEl.value = 0;
   _renderItensPedido();
 
   // Oculta aviso de edição
@@ -3173,7 +3190,7 @@ async function renderPendentes() {
   const fornSel = document.getElementById('receb-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso,acrescimo')
     .not('pedido_num', 'is', null)
     .neq('status_receb', 'recebido')
     .order('data', { ascending: false });
@@ -3190,11 +3207,15 @@ async function renderPendentes() {
     if (!grupos[key]) grupos[key] = {
       pedido_num: key, data: c.data, forn: c.fornecedor_nome,
       fornecedor_id: c.fornecedor_id, plano_conta: c.plano_conta,
-      comp: c.comprador, itens: [], total: 0
+      comp: c.comprador, itens: [], total: 0,
+      acrescimo: parseFloat(c.acrescimo) || 0,
     };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade || 0) * (c.custo_unit || 0);
   });
+
+  // Inclui acréscimo no total de cada grupo
+  Object.values(grupos).forEach(g => { g.total += g.acrescimo; });
 
   let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
 
@@ -4345,7 +4366,7 @@ async function confirmarDivisao() {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso')
+    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -4374,7 +4395,8 @@ async function editarPedido(pedido_num) {
     };
   });
 
-  _pedidoEditando = pedido_num;
+  _pedidoEditando  = pedido_num;
+  _pedidoAcrescimo = parseFloat(itens[0]?.acrescimo) || 0;
 
   // Navega para o formulário — prepararFormCompra() vai detectar _pedidoEditando e pré-preencher
   const navEl = document.querySelector('.nav-sb a[onclick*="\'pedido\'"]');
