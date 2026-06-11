@@ -414,3 +414,29 @@ h1 {
   #main { margin-left: 0; padding: 1rem; }
   .kpi-val { font-size: 1.1rem; }
 }
+
+/* ─── BOTÃO CHECK DE RECEBIMENTO ───────────────────────────── */
+.btn-check-receber {
+  width: 34px; height: 34px;
+  border: 2px solid #d1d5db;
+  background: #fff;
+  border-radius: 5px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  color: transparent;
+  transition: background .15s, border-color .15s, color .15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-check-receber.checked {
+  background: #22c55e;
+  border-color: #16a34a;
+  color: #fff;
+}
+.btn-check-receber:hover:not(.checked) {
+  border-color: #22c55e;
+  background: #f0fdf4;
+}

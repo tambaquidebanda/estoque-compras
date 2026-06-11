@@ -3373,12 +3373,6 @@ async function abrirModalReceber(pedido_num) {
 
   document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
     <tr id="row-rec-${x.id}">
-      <td class="text-center">
-        <div class="form-check form-switch d-flex justify-content-center">
-          <input class="form-check-input" type="checkbox" id="inc-rec-${x.id}" checked
-            onchange="togIncluirReceb('${x.id}')">
-        </div>
-      </td>
       <td><strong>${esc(x.produto)}</strong></td>
       <td><small class="text-muted">${esc(x.categoria||'—')}</small></td>
       <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
@@ -3394,6 +3388,10 @@ async function abrirModalReceber(pedido_num) {
       </td>
       <td class="text-center fw-bold" id="tot-rec-${x.id}">${brl((x.quantidade||0)*(x.custo_unit||0))}</td>
       <td class="text-center">
+        <button type="button" class="btn-check-receber checked" id="inc-rec-${x.id}"
+          onclick="togIncluirReceb('${x.id}')">✓</button>
+      </td>
+      <td class="text-center">
         <div class="form-check form-switch d-flex justify-content-center">
           <input class="form-check-input" type="checkbox" id="div-rec-${x.id}" onchange="marcarDiverg('${x.id}')">
         </div>
@@ -3407,9 +3405,11 @@ async function abrirModalReceber(pedido_num) {
 }
 
 function togIncluirReceb(id) {
-  const inc = document.getElementById(`inc-rec-${id}`);
+  const btn = document.getElementById(`inc-rec-${id}`);
   const row = document.getElementById(`row-rec-${id}`);
-  if (row) row.style.opacity = inc?.checked ? '' : '.35';
+  btn.classList.toggle('checked');
+  const ativo = btn.classList.contains('checked');
+  if (row) row.style.opacity = ativo ? '' : '.35';
   calcTotalReceb();
 }
 
@@ -3438,7 +3438,7 @@ function calcTotalReceb() {
   document.querySelectorAll('[id^="qtd-rec-"]').forEach(el => {
     const id  = el.id.replace('qtd-rec-', '');
     const inc = document.getElementById(`inc-rec-${id}`);
-    if (!inc?.checked) return;
+    if (!inc?.classList.contains('checked')) return;
     const txt = (document.getElementById(`tot-rec-${id}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
     total += parseFloat(txt) || 0;
   });
@@ -3459,7 +3459,7 @@ async function confirmarRecebimento() {
   const acrescimo     = parseMoeda('receb-acrescimo');
 
   // Apenas itens marcados para receber agora
-  const incluidos = _recebItensAbertos.filter(x => document.getElementById(`inc-rec-${x.id}`)?.checked);
+  const incluidos = _recebItensAbertos.filter(x => document.getElementById(`inc-rec-${x.id}`)?.classList.contains('checked'));
   if (!incluidos.length) { toast('Selecione ao menos um item para receber.', 'erro'); return; }
 
   const ref = incluidos[0];
