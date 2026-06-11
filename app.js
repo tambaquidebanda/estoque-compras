@@ -5077,15 +5077,36 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   document.getElementById('gc-nf').value         = '';
   document.getElementById('gc-preview').classList.add('d-none');
 
-  // Busca forma_pagamento do pedido para exibir no modal e pré-preencher obs
-  const { data: pgtoRow } = await sb.from('cmp_compras')
-    .select('forma_pagamento').eq('pedido_num', pedido_num).limit(1).single();
-  const formaPgto = pgtoRow?.forma_pagamento || '';
+  // Busca dados do pedido (forma_pagamento + itens para quando _pedidosGrupos estiver vazio)
+  const { data: pedRows } = await sb.from('cmp_compras')
+    .select('forma_pagamento,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome')
+    .eq('pedido_num', pedido_num);
+  const pedRow0    = pedRows?.[0] || {};
+  const formaPgto  = pedRow0.forma_pagamento || '';
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
   document.getElementById('gc-obs').value = formaPgto
     ? `Pedido ${pedido_num} — ${formaPgto}`
     : `Pedido ${pedido_num}`;
+
+  // Se fornId não veio (null/vazio), resolve pelo nome ou pela linha do banco
+  if (!fornId) {
+    const idNoBanco  = pedRow0.fornecedor_id || null;
+    const idPorNome  = !idNoBanco ? (cForn.find(f => f.nome === forn)?.id || null) : null;
+    const resolvedId = idNoBanco || idPorNome || '';
+    document.getElementById('gc-fornecedor-id').value = resolvedId;
+  }
+
+  // Garante que _pedidosGrupos tem os itens necessários para resolver categoria
+  if (!_pedidosGrupos[pedido_num]?.itens?.length && pedRows?.length) {
+    _pedidosGrupos[pedido_num] = {
+      pedido_num, forn, fornecedor_id: fornId || pedRow0.fornecedor_id || '',
+      itens: pedRows.map(r => ({
+        categoria: r.categoria, plano_conta: r.plano_conta,
+        quantidade: r.quantidade, custo_unit: r.custo_unit, unidade_uso: r.unidade_uso,
+      })),
+    };
+  }
 
   // Busca categorias do banco pelo nome (garante plano_conta_id mesmo com cCat vazio)
   const g = _pedidosGrupos[pedido_num];
