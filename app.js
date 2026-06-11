@@ -3359,7 +3359,7 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,categoria,unidade_med,quantidade,custo_unit,fornecedor_nome,comprador,acrescimo')
+    .select('id,produto,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso')
     .eq('pedido_num', pedido_num)
     .or('status_receb.neq.recebido,status_receb.is.null');
 
@@ -3516,6 +3516,10 @@ async function confirmarRecebimento() {
 
     if (novaConta) {
       const nf = document.getElementById('receb-nf')?.value?.trim() || null;
+      // Resolve unidade_id pelo nome salvo em unidade_uso
+      if (!cUnidades.length) await carregarCaches();
+      const uniNome = ref?.unidade_uso || '';
+      const unidade_id = cUnidades.find(u => u.nome.toLowerCase() === uniNome.toLowerCase())?.id || null;
       await gerarContaFinanceiro({
         pedido_num, vencimento, valor: totalRecebido,
         fornecedor_id: ref?.fornecedor_id || null,
@@ -3523,7 +3527,8 @@ async function confirmarRecebimento() {
         plano_conta: ref?.plano_conta || '',
         nf_numero: nf,
         conta_id: novaConta.id,
-        obs: `Pedido ${pedido_num}`,
+        unidade_id,
+        obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
       });
     }
   }
@@ -4211,12 +4216,18 @@ async function carregarCompras() {
   const lancSet     = new Set();
   const rascunhoSet = new Set();
   if (numeros.length) {
-    const [resLanc, resRasc] = await Promise.all([
+    const [resLanc, resRasc, resContas] = await Promise.all([
       sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
       sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
+      // Fonte adicional: cmp_contas_pagar com lancamento_id vinculado (cobre quando numero_pedido é NF)
+      sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id').in('pedido_num', numeros),
     ]);
-    (resLanc.data  || []).forEach(l => lancSet.add(l.numero_pedido));
-    (resRasc.data  || []).forEach(r => rascunhoSet.add(r.pedido_num));
+    (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
+    (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
+    (resContas.data || []).forEach(c => {
+      if (c.lancamento_id) lancSet.add(c.pedido_num);
+      else if (!lancSet.has(c.pedido_num)) rascunhoSet.add(c.pedido_num);
+    });
   }
 
   let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
