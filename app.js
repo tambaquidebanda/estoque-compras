@@ -3388,7 +3388,7 @@ async function abrirModalReceber(pedido_num) {
       </td>
       <td class="text-center fw-bold" id="tot-rec-${x.id}">${brl((x.quantidade||0)*(x.custo_unit||0))}</td>
       <td class="text-center">
-        <button type="button" class="btn-check-receber checked" id="inc-rec-${x.id}"
+        <button type="button" class="btn-check-receber" id="inc-rec-${x.id}"
           onclick="togIncluirReceb('${x.id}')">✓</button>
       </td>
       <td class="text-center">
@@ -3406,10 +3406,7 @@ async function abrirModalReceber(pedido_num) {
 
 function togIncluirReceb(id) {
   const btn = document.getElementById(`inc-rec-${id}`);
-  const row = document.getElementById(`row-rec-${id}`);
   btn.classList.toggle('checked');
-  const ativo = btn.classList.contains('checked');
-  if (row) row.style.opacity = ativo ? '' : '.35';
   calcTotalReceb();
 }
 
