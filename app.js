@@ -4262,7 +4262,8 @@ async function carregarCompras() {
                <i class="bi bi-arrow-left-right"></i> Gerar Conta
              </button>`
           : `<span class="badge bg-light text-muted border">Não enviado</span>`;
-    const podeEditar  = !g.recebido && !enviado;
+    const podeEditar   = !g.recebido && !enviado;
+    const podeReabrir  = g.recebido && !enviado && !aguardando;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
@@ -4284,6 +4285,10 @@ async function carregarCompras() {
       </td>
       <td class="text-center">
         <div class="d-flex gap-2 justify-content-center align-items-center" onclick="event.stopPropagation()">
+          ${podeReabrir ? `
+          <span data-bs-toggle="tooltip" data-bs-title="Reabrir para edição">
+            <button class="btn btn-sm btn-outline-warning py-1 px-2" onclick="event.stopPropagation();reabrirPedido('${g.pedido_num}')" style="white-space:nowrap"><i class="bi bi-arrow-counterclockwise"></i> Reabrir</button>
+          </span>` : ''}
           <span data-bs-toggle="tooltip" data-bs-title="${editarTitle}">
             <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} style="white-space:nowrap;pointer-events:${podeEditar?'auto':'none'}"><i class="bi bi-pencil-fill"></i> Editar</button>
           </span>
@@ -4465,6 +4470,23 @@ async function confirmarDivisao() {
 
   bootstrap.Modal.getInstance(document.getElementById('modal-dividir'))?.hide();
   toast(`Pedido dividido: ${pedidoA} e ${pedidoB}`, 'ok');
+  carregarCompras();
+}
+
+async function reabrirPedido(pedido_num) {
+  if (!confirm(`Reabrir pedido ${pedido_num}?\n\nO recebimento será desfeito e o pedido voltará para pendente, liberando a edição.`)) return;
+
+  // Volta todos os itens para pendente e restaura quantidades originais via recebimento_itens
+  const { data: recebimentos } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  if (recebimentos?.length) {
+    const ids = recebimentos.map(r => r.id);
+    await sb.from('cmp_recebimento_itens').delete().in('recebimento_id', ids);
+    await sb.from('cmp_recebimentos').delete().in('id', ids);
+  }
+  await sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num);
+  await sb.from('cmp_compras').update({ status_receb: 'pendente' }).eq('pedido_num', pedido_num);
+
+  toast(`Pedido ${pedido_num} reaberto. Edite e receba novamente.`, 'ok');
   carregarCompras();
 }
 
