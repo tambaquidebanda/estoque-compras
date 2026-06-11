@@ -4043,9 +4043,11 @@ async function imprimirPedido(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
     .select('*').eq('pedido_num', pedido_num);
   if (!itens?.length) return;
-  const ref = itens[0];
-  const dataBR = (ref.data||'').split('-').reverse().join('/');
-  const total  = itens.reduce((s,c) => s + (c.quantidade||0)*(c.custo_unit||0), 0);
+  const ref       = itens[0];
+  const dataBR    = (ref.data||'').split('-').reverse().join('/');
+  const subtotal  = itens.reduce((s,c) => s + (c.quantidade||0)*(c.custo_unit||0), 0);
+  const acrescimo = parseFloat(ref.acrescimo) || 0;
+  const total     = subtotal + acrescimo;
 
   const linhas = itens.map((c,i) => `<tr>
     <td>${i+1}</td>
@@ -4086,10 +4088,16 @@ async function imprimirPedido(pedido_num) {
     <th style="text-align:center">Quantidade</th><th style="text-align:center">Valor Unit.</th>
     <th style="text-align:center">Total</th></tr></thead>
   <tbody>${linhas}</tbody>
-  <tfoot><tr class="tot">
-    <td colspan="6" style="text-align:right;padding-right:8px">TOTAL DO PEDIDO</td>
-    <td style="text-align:center">${brl(total)}</td>
-  </tr></tfoot></table>
+  <tfoot>
+    ${acrescimo > 0 ? `<tr style="font-size:.9rem;color:#c2410c">
+      <td colspan="6" style="text-align:right;padding-right:8px">Acréscimo (frete/taxa)</td>
+      <td style="text-align:center">${brl(acrescimo)}</td>
+    </tr>` : ''}
+    <tr class="tot">
+      <td colspan="6" style="text-align:right;padding-right:8px">TOTAL DO PEDIDO</td>
+      <td style="text-align:center">${brl(total)}</td>
+    </tr>
+  </tfoot></table>
   <div style="margin-top:3rem;display:flex;gap:4rem">
     <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Comprador</div>
     <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Fornecedor</div>
@@ -4166,7 +4174,7 @@ async function carregarCompras() {
   const fornSel = document.getElementById('cps-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor,acrescimo')
     .not('pedido_num','is',null)
     .order('data', { ascending: false })
     .order('pedido_num', { ascending: false });
@@ -4183,12 +4191,16 @@ async function carregarCompras() {
     if (!grupos[key]) grupos[key] = {
       pedido_num: key, data: c.data, data_entrega: c.data_entrega,
       forn: c.fornecedor_nome, comp: c.comprador, fornecedor_id: c.fornecedor_id || '',
-      setor: c.setor || '', itens: [], total: 0, recebido: c.status_receb === 'recebido'
+      setor: c.setor || '', itens: [], total: 0, acrescimo: parseFloat(c.acrescimo) || 0,
+      recebido: c.status_receb === 'recebido'
     };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
     if (c.status_receb !== 'recebido') grupos[key].recebido = false;
   });
+
+  // Inclui acréscimo no total de cada grupo
+  Object.values(grupos).forEach(g => { g.total += g.acrescimo; });
 
   // Verifica status financeiro de cada pedido
   const numeros = Object.keys(grupos);
@@ -5077,12 +5089,19 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   document.getElementById('gc-nf').value         = '';
   document.getElementById('gc-preview').classList.add('d-none');
 
-  // Busca dados do pedido (forma_pagamento + itens para quando _pedidosGrupos estiver vazio)
+  // Busca dados do pedido (forma_pagamento + itens + acréscimo para quando _pedidosGrupos estiver vazio)
   const { data: pedRows } = await sb.from('cmp_compras')
-    .select('forma_pagamento,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome')
+    .select('forma_pagamento,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome,acrescimo')
     .eq('pedido_num', pedido_num);
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
+
+  // Recalcula total com acréscimo direto do banco (garante valor correto independente de quem chamou)
+  if (pedRows?.length) {
+    const subtotalDB  = pedRows.reduce((s, r) => s + (r.quantidade||0) * (r.custo_unit||0), 0);
+    const acrescimoDB = parseFloat(pedRow0.acrescimo) || 0;
+    setMoeda('gc-valor', subtotalDB + acrescimoDB);
+  }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
   document.getElementById('gc-obs').value = formaPgto
