@@ -522,12 +522,10 @@ function voltarLista() {
 
 function togIncluir(id) {
   const btn  = document.getElementById(`inc-${id}`);
-  const card = document.getElementById(`ic-${id}`);
   const totEl = document.getElementById(`tot-${id}`);
-  if (!btn || !card) return;
+  if (!btn) return;
   btn.classList.toggle('checked');
   const ativo = btn.classList.contains('checked');
-  card.classList.toggle('excluido', !ativo);
   if (totEl) totEl.style.color = ativo ? 'var(--verde)' : 'var(--txt2)';
 }
 
