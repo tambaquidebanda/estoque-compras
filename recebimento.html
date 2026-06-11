@@ -158,19 +158,19 @@
     .toggle input:checked + .tog-track { background: var(--warn); }
     .toggle input:checked + .tog-track::before { transform: translateX(16px); }
 
-    /* Botão check de recebimento */
-    .btn-check-rec {
-      width: 36px; height: 36px;
-      border: 2px solid #d1d5db; background: #fff;
-      border-radius: 6px; font-size: 1.2rem; font-weight: 700; line-height: 1;
-      cursor: pointer; color: transparent;
-      transition: background .15s, border-color .15s, color .15s;
-      display: inline-flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
+    /* Check de recebimento — checkbox nativo estilizado (confiável no iOS) */
+    input.check-rec {
+      -webkit-appearance: none; appearance: none;
+      width: 36px; height: 36px; flex-shrink: 0;
+      border: 2px solid #6b7280; border-radius: 6px;
+      background: transparent; cursor: pointer;
+      transition: background .15s, border-color .15s;
     }
-    .btn-check-rec.checked { background: #22c55e; border-color: #16a34a; color: #fff; }
-    .rec-row { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
-    .rec-row-lbl { font-size: .78rem; color: var(--txt2); flex: 1; }
+    input.check-rec:checked {
+      background: #22c55e; border-color: #16a34a;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: center; background-size: 22px;
+    }
 
     .obs-input-item {
       display: none; width: 100%; background: var(--bg); border: 1px solid var(--borda);
@@ -446,7 +446,7 @@ async function abrirPedido(pedido_num) {
 
   _pedidoAtual = { pedido_num, itens };
 
-  document.getElementById('ped-titulo').textContent = `Pedido #${pedido_num}`;
+  document.getElementById('ped-titulo').textContent = `Pedido ${pedido_num}`;
   document.getElementById('ped-info').textContent = itens[0].fornecedor_nome || '';
 
   const hoje = new Date().toISOString().slice(0, 10);
@@ -468,8 +468,9 @@ async function abrirPedido(pedido_num) {
         </div>
         <div class="item-header-right">
           <div id="tot-${sid}" class="item-total">${brl(total)}</div>
-          <button type="button" class="btn-check-rec" id="inc-${sid}"
-            onclick="togIncluir('${sid}')">✓</button>
+          <input type="checkbox" class="check-rec" id="inc-${sid}"
+            onchange="togIncluir('${sid}')"
+            title="Receber este item">
         </div>
       </div>
 
@@ -521,12 +522,10 @@ function voltarLista() {
 }
 
 function togIncluir(id) {
-  const btn  = document.getElementById(`inc-${id}`);
+  const chk   = document.getElementById(`inc-${id}`);
   const totEl = document.getElementById(`tot-${id}`);
-  if (!btn) return;
-  btn.classList.toggle('checked');
-  const ativo = btn.classList.contains('checked');
-  if (totEl) totEl.style.color = ativo ? 'var(--verde)' : 'var(--txt2)';
+  if (!totEl) return;
+  totEl.style.color = chk?.checked ? 'var(--verde)' : 'var(--txt2)';
 }
 
 function atualizarTotal(id, qtdPedida) {
@@ -569,7 +568,7 @@ async function confirmarRecebimento() {
   const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
 
   // Apenas itens marcados como "Receber agora"
-  const itensIncluidos = itens.filter(it => document.getElementById(`inc-${it.id}`)?.classList.contains('checked'));
+  const itensIncluidos = itens.filter(it => document.getElementById(`inc-${it.id}`)?.checked);
   if (!itensIncluidos.length) {
     toast('Selecione ao menos um item para receber.', 'err');
     btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
