@@ -8,11 +8,12 @@ let sbAdmin = null;   // supabase client (service_role)
 let user = null;   // logged-in user
 
 // caches
-let cForn   = [];    // fornecedores
-let cCat    = [];    // categorias
-let cTipo   = [];    // tipos_produto
-let cProd   = [];    // product names learned from past purchases
-let cGrupos = [];    // grupos de produto (est_grupos_produto)
+let cForn    = [];    // fornecedores
+let cCat     = [];    // categorias
+let cTipo    = [];    // tipos_produto
+let cProd    = [];    // product names learned from past purchases
+let cGrupos  = [];    // grupos de produto (est_grupos_produto)
+let cSetores = [];    // setores
 
 // chart instances (destroyed before re-render)
 let chMensal, chCmvMensal, chFornDash, chCatDash, chCmvEvolucao;
@@ -413,13 +414,14 @@ function toast(msg, tipo = '') {
 // CACHES
 // ═══════════════════════════════════════════════════════════════
 async function carregarCaches() {
-  const [f, cat, tip, hist, grp, uni] = await Promise.all([
+  const [f, cat, tip, hist, grp, uni, set] = await Promise.all([
     sb.from('fornecedores').select('id,nome').order('nome'),
     sb.from('cmp_categorias').select('id,nome,plano_conta,plano_conta_id').eq('ativo', true).order('nome'),
     sb.from('cmp_tipos_produto').select('id,nome').order('nome'),
     sb.from('cmp_compras').select('produto,unidade_med,categoria,custo_unit,data').order('data', { ascending: false }),
     sb.from('est_grupos_produto').select('id,nome').order('nome'),
     sb.from('unidades').select('id,nome').order('nome'),
+    sb.from('cmp_setores').select('id,nome').eq('ativo', true).order('nome'),
   ]);
 
   cForn     = f.data   || [];
@@ -427,6 +429,7 @@ async function carregarCaches() {
   cTipo     = tip.data || [];
   cGrupos   = grp.data  || [];
   cUnidades = uni.data  || [];
+  cSetores  = set.data  || [];
 
   // Carrega plano_contas com paginação (tabela pode ter >1000 linhas)
   const todosPC = await fetchTodosPlanoContas();
@@ -729,6 +732,12 @@ async function prepararFormCompra() {
 
   const compSel = document.getElementById('c-comp');
 
+  const setorSel = document.getElementById('c-setor');
+  if (setorSel) {
+    setorSel.innerHTML = '<option value="">— Nenhum —</option>' +
+      cSetores.map(s => `<option value="${esc(s.nome)}">${esc(s.nome)}</option>`).join('');
+  }
+
   const usoSel = document.getElementById('c-uso');
   if (usoSel && cUnidades.length) {
     usoSel.innerHTML = '<option value="">— Selecione —</option>' +
@@ -743,6 +752,7 @@ async function prepararFormCompra() {
       document.getElementById('c-forn').value  = primeiro.fornNome || '';
       document.getElementById('c-forn-id').value = primeiro.fornId || '';
       if (compSel) compSel.value = primeiro.comp || '';
+      if (setorSel) setorSel.value = primeiro.setor || '';
     }
     setMoeda('c-acrescimo', _pedidoAcrescimo || 0);
     const proxEl = document.getElementById('prox-pedido-num');
@@ -1106,6 +1116,7 @@ async function finalizarPedido() {
 
   const pedido_num = _pedidoEditando || await _gerarNumeroPedido();
   const acrescimo  = parseMoeda('c-acrescimo');
+  const setor      = document.getElementById('c-setor')?.value || '';
 
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
@@ -1123,6 +1134,7 @@ async function finalizarPedido() {
     unidade_uso:     it.uso,
     observacao:      null,
     acrescimo,
+    setor,
     status_receb:    'pendente',
     criado_por:      user.id,
   }));
@@ -1151,6 +1163,8 @@ function cancelarPedido() {
   _pedidoEditando  = null;
   _pedidoAcrescimo = 0;
   setMoeda('c-acrescimo', 0);
+  const setorSel = document.getElementById('c-setor');
+  if (setorSel) setorSel.value = '';
   _renderItensPedido();
 
   // Oculta aviso de edição
@@ -1569,6 +1583,7 @@ async function renderListaCad(tipo) {
     fornecedores: { tbl: 'fornecedores',      el: 'lst-fornecedores', extra: null },
     categorias:   { tbl: 'cmp_categorias',    el: 'lst-categorias',   extra: r => r.plano_conta ? `<small class="text-muted ms-2">→ ${esc(r.plano_conta)}</small>` : '<small class="text-warning ms-2">sem plano</small>' },
     tipos:        { tbl: 'cmp_tipos_produto', el: 'lst-tipos',        extra: null },
+    setores:      { tbl: 'cmp_setores',       el: 'lst-setores',      extra: null },
   };
 
   const c = cfg[tipo];
@@ -1648,6 +1663,20 @@ async function addTipo() {
   renderListaCad('tipos');
 }
 
+
+async function addSetor() {
+  const nome = (document.getElementById('n-setor').value || '').trim();
+  if (!nome) return;
+  const msg = document.getElementById('msg-cad-setor');
+  const { error } = await sb.from('cmp_setores').insert([{ nome }]);
+  if (error) { msg.innerHTML = `<span class="text-danger">Já existe ou erro: ${error.message}</span>`; return; }
+  document.getElementById('n-setor').value = '';
+  msg.innerHTML = '';
+  toggleFormCad('setor');
+  toast('Setor adicionado!', 'ok');
+  await carregarCaches();
+  renderListaCad('setores');
+}
 
 async function excluirCad(tabela, id, tipo) {
   if (!confirm('Excluir este item?')) return;
@@ -3185,7 +3214,7 @@ async function renderPendentes() {
   const fornSel = document.getElementById('receb-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso,acrescimo')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso,acrescimo,setor')
     .not('pedido_num', 'is', null)
     .neq('status_receb', 'recebido')
     .order('data', { ascending: false });
@@ -3202,7 +3231,7 @@ async function renderPendentes() {
     if (!grupos[key]) grupos[key] = {
       pedido_num: key, data: c.data, forn: c.fornecedor_nome,
       fornecedor_id: c.fornecedor_id, plano_conta: c.plano_conta,
-      comp: c.comprador, itens: [], total: 0,
+      comp: c.comprador, setor: c.setor || '', itens: [], total: 0,
       acrescimo: parseFloat(c.acrescimo) || 0,
     };
     grupos[key].itens.push(c);
@@ -3266,7 +3295,10 @@ async function renderPendentes() {
     <tr>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
       <td>${(g.data||'').split('-').reverse().join('/')}</td>
-      <td><strong>${esc(g.forn||'—')}</strong></td>
+      <td>
+        <strong>${esc(g.forn||'—')}</strong>
+        ${g.setor ? `<br><span class="badge" style="background:#6f42c1;font-size:.7rem">${esc(g.setor)}</span>` : ''}
+      </td>
       <td>${esc(g.comp||'—')}</td>
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span></td>
       <td class="text-center"><strong>${brl(g.total)}</strong></td>
@@ -3460,14 +3492,14 @@ async function confirmarRecebimento() {
     }).eq('id', contaExist.id);
   } else {
     // Flow B — cria a conta e tenta enviar ao financeiro
-    const { data: novaConta } = await sb.from('cmp_contas_pagar').insert([{
+    const { data: novaConta, error: errConta } = await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
       data_receb: dataRec, vencimento, valor: totalRecebido,
       status: 'pendente',
     }]).select().single();
+    if (errConta) { toast('Aviso: conta a pagar não criada — ' + errConta.message, 'erro'); }
 
-    // Envia ao financeiro se modo produção
     if (novaConta) {
       const nf = document.getElementById('receb-nf')?.value?.trim() || null;
       await gerarContaFinanceiro({
@@ -4122,7 +4154,7 @@ async function carregarCompras() {
   const fornSel = document.getElementById('cps-forn')?.value || '';
 
   let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb')
+    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor')
     .not('pedido_num','is',null)
     .order('data', { ascending: false })
     .order('pedido_num', { ascending: false });
@@ -4138,8 +4170,8 @@ async function carregarCompras() {
     const key = c.pedido_num;
     if (!grupos[key]) grupos[key] = {
       pedido_num: key, data: c.data, data_entrega: c.data_entrega,
-      forn: c.fornecedor_nome, comp: c.comprador,
-      itens: [], total: 0, recebido: c.status_receb === 'recebido'
+      forn: c.fornecedor_nome, comp: c.comprador, fornecedor_id: c.fornecedor_id || '',
+      setor: c.setor || '', itens: [], total: 0, recebido: c.status_receb === 'recebido'
     };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
@@ -4195,14 +4227,23 @@ async function carregarCompras() {
       ? `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`
       : aguardando
         ? `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`
-        : `<span class="badge bg-light text-muted border">Não enviado</span>`;
+        : g.recebido
+          ? `<button class="btn btn-sm btn-outline-primary py-0 px-2"
+               onclick="event.stopPropagation();abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
+               title="Pedido recebido mas não enviado ao financeiro">
+               <i class="bi bi-arrow-left-right"></i> Gerar Conta
+             </button>`
+          : `<span class="badge bg-light text-muted border">Não enviado</span>`;
     const podeEditar  = !g.recebido && !enviado;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
       <td>${dataBR}</td>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
-      <td><strong>${esc(g.forn||'—')}</strong></td>
+      <td>
+        <strong>${esc(g.forn||'—')}</strong>
+        ${g.setor ? `<br><span class="badge" style="background:#6f42c1;font-size:.7rem">${esc(g.setor)}</span>` : ''}
+      </td>
       <td>${esc(g.comp||'—')}</td>
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length}</span></td>
       <td class="text-center">${entregaBR}</td>
@@ -4402,7 +4443,7 @@ async function confirmarDivisao() {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo')
+    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -4427,6 +4468,7 @@ async function editarPedido(pedido_num) {
       qtd:        it.quantidade,
       uso:        it.unidade_uso,
       unidadeId:  uniObj?.id || null,
+      setor:      it.setor || '',
       total:      (it.custo_unit || 0) * (it.quantidade || 0),
     };
   });

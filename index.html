@@ -120,6 +120,7 @@
         <a href="#" onclick="irCadSb('grupos',this)">🗂️ Grupos de Produto</a>
         <a href="#" onclick="irCadSb('fornecedores',this)">🏪 Fornecedores</a>
         <a href="#" onclick="irCadSb('categorias',this)">📂 Categorias</a>
+        <a href="#" onclick="irCadSb('setores',this)">🏢 Setores</a>
       </div>
       <a href="#" onclick="ir('controlecmv',this)">
         <i class="bi bi-file-earmark-spreadsheet-fill"></i> Controle CMV
@@ -234,7 +235,7 @@
               <label class="form-label">📅 Data</label>
               <input type="date" class="form-control" id="c-data" required>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label">🏪 Fornecedor</label>
               <div class="ac-wrapper">
                 <input type="text" class="form-control" id="c-forn"
@@ -245,9 +246,15 @@
               </div>
               <input type="hidden" id="c-forn-id">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label">👤 Comprador</label>
               <input type="text" class="form-control" id="c-comp" readonly>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">🏢 Setor</label>
+              <select class="form-select" id="c-setor">
+                <option value="">— Todos —</option>
+              </select>
             </div>
             <div class="col-md-2">
               <label class="form-label">➕ Acréscimo (R$)</label>
@@ -811,6 +818,9 @@
         <li class="nav-item">
           <a class="nav-link" href="#" onclick="irCad('categorias',this)">📂 Categorias</a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="irCad('setores',this)">🏢 Setores</a>
+        </li>
       </ul>
 
       <!-- Fornecedores -->
@@ -858,6 +868,28 @@
         </div>
         <div class="card-form">
           <div id="lst-categorias" class="lista-cad">Carregando...</div>
+        </div>
+      </div>
+
+      <!-- Setores -->
+      <div id="cad-setores" class="tab-cad">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <span class="text-muted small">Setores para separar compras, recebimentos e transferências.</span>
+          <button class="btn btn-primary btn-sm" onclick="toggleFormCad('setor')">
+            <i class="bi bi-plus-circle"></i> Novo Setor
+          </button>
+        </div>
+        <div id="form-cad-setor" class="card-form mb-3 d-none">
+          <div class="d-flex gap-2">
+            <input type="text" class="form-control" id="n-setor" placeholder="Nome do setor (ex: Cozinha, Bar, Salão...)"
+              onkeydown="if(event.key==='Enter') addSetor()">
+            <button class="btn btn-primary" onclick="addSetor()">Adicionar</button>
+            <button class="btn btn-outline-secondary" onclick="toggleFormCad('setor')">Cancelar</button>
+          </div>
+          <div id="msg-cad-setor" class="mt-2 small"></div>
+        </div>
+        <div class="card-form">
+          <div id="lst-setores" class="lista-cad">Carregando...</div>
         </div>
       </div>
 
