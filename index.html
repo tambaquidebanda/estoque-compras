@@ -265,6 +265,18 @@
                 onblur="moedaBlur(this);_renderItensPedido()">
             </div>
           </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-3">
+              <label class="form-label">💳 Forma de Pagamento <span class="text-danger">*</span></label>
+              <select class="form-select" id="c-forma-pgto" required>
+                <option value="">— Selecione —</option>
+                <option value="Dinheiro">💵 Dinheiro</option>
+                <option value="Pix">📱 Pix</option>
+                <option value="Boleto">🏦 Boleto</option>
+                <option value="Cartão">💳 Cartão</option>
+              </select>
+            </div>
+          </div>
 
           <!-- ADICIONAR ITEM -->
           <div class="sec-titulo">Adicionar Item ao Pedido</div>
@@ -1780,13 +1792,17 @@
         <input type="hidden" id="gc-fornecedor-id">
 
         <div class="row g-3 mb-3">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label fw-semibold">Pedido</label>
             <div class="form-control bg-light" id="gc-pedido-label"></div>
           </div>
-          <div class="col-md-8">
+          <div class="col-md-6">
             <label class="form-label fw-semibold">Fornecedor</label>
             <div class="form-control bg-light" id="gc-fornecedor-label"></div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">Forma de Pagamento</label>
+            <div class="form-control bg-light fw-semibold" id="gc-forma-pgto-label">—</div>
           </div>
         </div>
 
