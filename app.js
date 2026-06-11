@@ -963,7 +963,7 @@ function adicionarItemPedido(e) {
     toast('Preencha Produto, Categoria, Custo e Quantidade.', 'erro'); return;
   }
   if (!usoId) {
-    toast('Selecione a Unidade de Uso.', 'erro'); return;
+    toast('Selecione a Unidade.', 'erro'); return;
   }
 
   const catObj     = cCat.find(c => c.nome === cat);
