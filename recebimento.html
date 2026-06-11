@@ -107,25 +107,39 @@
     .itens-corpo { padding: .75rem 1rem 7rem; flex: 1; }
     .item-card {
       background: var(--card); border: 1px solid var(--borda);
-      border-radius: 10px; padding: .75rem; margin-bottom: .5rem;
+      border-radius: 10px; padding: .75rem; margin-bottom: .6rem;
       transition: opacity .2s;
     }
-    .item-card.diverg  { border-color: var(--warn); }
+    .item-card.diverg   { border-color: var(--warn); }
     .item-card.excluido { opacity: .4; }
-    .item-nome  { font-size: .88rem; font-weight: 700; }
-    .item-cat   { font-size: .72rem; color: var(--txt2); margin-bottom: .45rem; }
 
-    .qtd-row    { display: flex; align-items: center; gap: .4rem; margin-bottom: .4rem; }
-    .qtd-label  { font-size: .72rem; color: var(--txt2); white-space: nowrap; }
-    .qtd-pedida { font-size: .82rem; color: var(--txt2); min-width: 55px; }
-    input[type=number] {
+    /* Header do card */
+    .item-header { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .6rem; }
+    .item-header-left { flex: 1; min-width: 0; }
+    .item-nome  { font-size: .9rem; font-weight: 700; line-height: 1.2; }
+    .item-cat   { font-size: .72rem; color: var(--txt2); margin-top: .1rem; }
+    .item-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; flex-shrink: 0; }
+    .item-total { font-size: .9rem; font-weight: 700; color: var(--verde); }
+
+    /* Grid de campos */
+    .item-campos { border-top: 1px solid var(--borda); padding-top: .55rem; }
+    .campos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem .6rem; margin-bottom: .5rem; }
+    .campo-bloco { display: flex; flex-direction: column; gap: .2rem; }
+    .campo-bloco.campo-full { grid-column: 1 / -1; }
+    .campo-lbl  { font-size: .68rem; color: var(--txt2); text-transform: uppercase; letter-spacing: .03em; }
+    .campo-val  { font-size: .85rem; color: var(--txt2); }
+    .campo-input-row { display: flex; align-items: center; gap: .3rem; }
+    .campo-rs   { font-size: .78rem; color: var(--txt2); flex-shrink: 0; }
+    .campo-un   { font-size: .75rem; color: var(--txt2); flex-shrink: 0; }
+
+    input[type=number], input.campo-text {
       flex: 1; background: var(--bg); border: 1.5px solid var(--borda);
       border-radius: 8px; color: var(--txt); font-size: 1rem; font-weight: 600;
-      text-align: center; padding: .45rem .3rem; outline: none; -webkit-appearance: none;
-      -moz-appearance: textfield;
+      text-align: center; padding: .4rem .3rem; outline: none;
+      -webkit-appearance: none; -moz-appearance: textfield; width: 100%;
     }
-    input[type=number]:focus { border-color: var(--verde); }
-    .qtd-un { font-size: .75rem; color: var(--txt2); min-width: 28px; }
+    input.campo-text { text-align: right; padding-right: .5rem; }
+    input[type=number]:focus, input.campo-text:focus { border-color: var(--verde); }
 
     /* Toggle (divergência) */
     .tog-row  { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
@@ -442,51 +456,57 @@ async function abrirPedido(pedido_num) {
   setMoeda('rec-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
 
   document.getElementById('rec-itens').innerHTML = itens.map(it => {
-    const qtdFmt = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
-    const total  = (it.quantidade||0) * (it.custo_unit||0);
-    return `<div class="item-card" id="ic-${it.id}">
-      <!-- Nome + total dinâmico -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.1rem">
-        <div>
+    const qtdFmt  = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
+    const precoFmt = (it.custo_unit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const total   = (it.quantidade||0) * (it.custo_unit||0);
+    const sid     = String(it.id);
+    return `<div class="item-card" id="ic-${sid}">
+      <div class="item-header">
+        <div class="item-header-left">
           <div class="item-nome">${esc(it.produto)}</div>
           <div class="item-cat">${esc(it.categoria || '')}</div>
         </div>
-        <div style="text-align:right;flex-shrink:0;margin-left:.5rem">
-          <div id="tot-${it.id}" style="font-size:.88rem;color:var(--verde);font-weight:700">${brl(total)}</div>
+        <div class="item-header-right">
+          <div id="tot-${sid}" class="item-total">${brl(total)}</div>
+          <button type="button" class="btn-check-rec" id="inc-${sid}"
+            onclick="togIncluir('${sid}')">✓</button>
         </div>
       </div>
 
-      <!-- Botão check: Receber agora -->
-      <div class="rec-row">
-        <span class="rec-row-lbl">Receber este item</span>
-        <button type="button" class="btn-check-rec" id="inc-${it.id}"
-          onclick="togIncluir(${it.id})">✓</button>
-      </div>
-
-      <!-- Qtd + preço (ocultos quando excluído) -->
-      <div id="campos-${it.id}">
-        <div class="qtd-row">
-          <span class="qtd-label">Pedido:</span>
-          <span class="qtd-pedida">${qtdFmt} ${esc(it.unidade_med||'')}</span>
-          <span class="qtd-label">Recebido:</span>
-          <input type="number" id="qr-${it.id}" value="${it.quantidade}" min="0" step="any" inputmode="decimal"
-            oninput="atualizarTotal(${it.id},${it.quantidade})">
-          <span class="qtd-un">${esc(it.unidade_med||'')}</span>
+      <div id="campos-${sid}" class="item-campos">
+        <div class="campos-grid">
+          <div class="campo-bloco">
+            <span class="campo-lbl">Pedido</span>
+            <span class="campo-val">${qtdFmt} ${esc(it.unidade_med||'')}</span>
+          </div>
+          <div class="campo-bloco">
+            <span class="campo-lbl">Recebido</span>
+            <div class="campo-input-row">
+              <input type="number" id="qr-${sid}" value="${it.quantidade||0}" min="0" step="any" inputmode="decimal"
+                oninput="atualizarTotal('${sid}',${it.quantidade||0})">
+              <span class="campo-un">${esc(it.unidade_med||'')}</span>
+            </div>
+          </div>
+          <div class="campo-bloco campo-full">
+            <span class="campo-lbl">Preço unitário</span>
+            <div class="campo-input-row">
+              <span class="campo-rs">R$</span>
+              <input type="text" inputmode="decimal" class="campo-text" id="pu-${sid}"
+                value="${precoFmt}"
+                oninput="mascaraMoeda(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                onblur="moedaBlur(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                onfocus="moedaFocus(this)">
+            </div>
+          </div>
         </div>
-        <div class="qtd-row">
-          <span class="qtd-label">Preço/un:</span>
-          <input type="number" id="pu-${it.id}" value="${it.custo_unit||0}" min="0" step="any" inputmode="decimal"
-            oninput="atualizarTotal(${it.id},${it.quantidade})">
-          <span class="qtd-un">R$</span>
-        </div>
-        <div class="tog-row" style="margin-top:.1rem">
+        <div class="tog-row">
           <span class="tog-lbl warn">⚠️ Divergência de quantidade</span>
           <label class="toggle">
-            <input type="checkbox" id="dt-${it.id}" onchange="togObs(${it.id})">
+            <input type="checkbox" id="dt-${sid}" onchange="togObs('${sid}')">
             <span class="tog-track"></span>
           </label>
         </div>
-        <input type="text" class="obs-input-item" id="ob-${it.id}" placeholder="Descreva a divergência...">
+        <input type="text" class="obs-input-item" id="ob-${sid}" placeholder="Descreva a divergência...">
       </div>
     </div>`;
   }).join('');
@@ -513,13 +533,12 @@ function togIncluir(id) {
 
 function atualizarTotal(id, qtdPedida) {
   const qtdRec = parseFloat(document.getElementById(`qr-${id}`)?.value) || 0;
-  const preco  = parseFloat(document.getElementById(`pu-${id}`)?.value) || 0;
+  const preco  = parseMoeda(`pu-${id}`);
   const totEl  = document.getElementById(`tot-${id}`);
   if (totEl) totEl.textContent = brl(qtdRec * preco);
-  // acende divergência automaticamente se qtd diferente
   if (Math.abs(qtdRec - qtdPedida) > 0.001) {
     const tog = document.getElementById(`dt-${id}`);
-    if (tog && !tog.checked) { tog.checked = true; togObs(id); }
+    if (tog && !tog.checked) { tog.checked = true; togObs(String(id)); }
   }
 }
 
@@ -562,7 +581,7 @@ async function confirmarRecebimento() {
 
   const itensReceb = itensIncluidos.map(it => {
     const qtdRec = parseFloat(document.getElementById(`qr-${it.id}`)?.value) || 0;
-    const preco  = parseFloat(document.getElementById(`pu-${it.id}`)?.value) || it.custo_unit || 0;
+    const preco  = parseMoeda(`pu-${it.id}`) || it.custo_unit || 0;
     const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
     const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
