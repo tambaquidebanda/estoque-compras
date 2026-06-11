@@ -305,7 +305,7 @@
                   <div class="col-md-3">
                     <label class="form-label small mb-1">📊 Estoque Atual <span class="text-muted fw-normal">(informe)</span></label>
                     <input type="number" class="form-control form-control-sm" id="c-estoque-atual"
-                      min="0" step="0.001" placeholder="Qtd em estoque" oninput="calcSugestao()">
+                      min="0" step="any" placeholder="Qtd em estoque" oninput="calcSugestao()">
                   </div>
                   <div class="col-md-3">
                     <label class="form-label small mb-1">💡 Pedido Sugerido</label>
@@ -329,7 +329,7 @@
             <div class="col-md-2">
               <label class="form-label">🔢 Qtd</label>
               <input type="number" class="form-control" id="c-qtd"
-                step="0.001" min="0" value="1" oninput="calcTot()">
+                step="any" min="0" value="1" oninput="calcTot()">
             </div>
             <div class="col-md-2">
               <label class="form-label">🧮 Total</label>

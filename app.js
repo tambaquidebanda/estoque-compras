@@ -3371,12 +3371,12 @@ async function abrirModalReceber(pedido_num) {
       <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center" style="width:90px;margin:auto"
-          id="qtd-rec-${x.id}" value="${x.quantidade||0}" min="0" step="0.001"
+          id="qtd-rec-${x.id}" value="${x.quantidade||0}" min="0" step="any"
           oninput="recalcReceb('${x.id}',${x.quantidade||0})">
       </td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-end" style="width:100px;margin:auto"
-          id="vlr-rec-${x.id}" value="${x.custo_unit||0}" min="0" step="0.01"
+          id="vlr-rec-${x.id}" value="${x.custo_unit||0}" min="0" step="any"
           oninput="recalcReceb('${x.id}',${x.quantidade||0})">
       </td>
       <td class="text-center fw-bold" id="tot-rec-${x.id}">${brl((x.quantidade||0)*(x.custo_unit||0))}</td>
