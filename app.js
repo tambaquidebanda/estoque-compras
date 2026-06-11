@@ -4081,6 +4081,7 @@ async function imprimirPedido(pedido_num) {
     <div><span>Data</span><strong>${dataBR}</strong></div>
     <div><span>Fornecedor</span><strong>${esc(ref.fornecedor_nome||'—')}</strong></div>
     <div><span>Comprador</span><strong>${esc(ref.comprador||'—')}</strong></div>
+    ${ref.unidade_uso ? `<div><span>Unidade</span><strong>${esc(ref.unidade_uso)}</strong></div>` : ''}
     ${ref.forma_pagamento ? `<div><span>Forma de Pagamento</span><strong>${esc(ref.forma_pagamento)}</strong></div>` : ''}
     ${ref.data_entrega ? `<div><span>Entrega</span><strong>${ref.data_entrega.split('-').reverse().join('/')}</strong></div>` : ''}
   </div>
