@@ -809,16 +809,20 @@ function selecionarForn(nome, id) {
   fechaAC('ac-forn');
 }
 
-// Autocomplete — Produto
+// Autocomplete — Produto (apenas MP e MC)
 function acProd(val) {
   const lista = document.getElementById('ac-prod');
   if (!val) { lista.classList.remove('aberta'); return; }
   const q = norm(val);
 
-  // Combina histórico de compras (cProd) com catálogo (cProdutosFT)
+  // Apenas MP e MC do catálogo
+  const mpMcNomes = new Set(cProdutosFT.filter(p => ['MP','MC'].includes(p.tipo)).map(p => p.nome.toLowerCase()));
   const vistos = new Set();
   const hits = [];
-  [...cProd, ...cProdutosFT.map(p => ({ nome: p.nome, un: p.unidade_uso, cat: p.categoria }))].forEach(p => {
+  [
+    ...cProd.filter(p => mpMcNomes.has(p.nome.toLowerCase())),
+    ...cProdutosFT.filter(p => ['MP','MC'].includes(p.tipo)).map(p => ({ nome: p.nome, un: p.unidade_uso, cat: p.categoria })),
+  ].forEach(p => {
     if (norm(p.nome).includes(q) && !vistos.has(p.nome.toLowerCase())) {
       vistos.add(p.nome.toLowerCase());
       hits.push(p);
