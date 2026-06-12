@@ -868,7 +868,7 @@ function selecionarProd(nome, un, cat) {
     ? prodCat.custo_comp
     : (prodLista?.custo_unit > 0 ? prodLista.custo_unit : (prodCat?.custo_uso || 0));
   if (custo > 0) {
-    document.getElementById('c-custo').value = custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('c-custo').value = custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     calcTot();
   }
 
@@ -932,6 +932,21 @@ function moedaBlur(el) {
   const v = el.value.replace(/\./g, '').replace(',', '.');
   const n = parseFloat(v) || 0;
   el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
+
+// Variante para custo unitário — permite até 4 casas decimais
+function mascaraCusto(el) {
+  let v = el.value.replace(/[^\d,]/g, '');
+  const partes = v.split(',');
+  const intRaw = partes[0].replace(/\D/g, '');
+  const intFmt = intRaw ? parseInt(intRaw, 10).toLocaleString('pt-BR') : '';
+  const dec    = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 4) : null;
+  el.value     = dec !== null ? `${intFmt},${dec}` : intFmt;
+}
+function custoBlur(el) {
+  const v = el.value.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(v) || 0;
+  el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '';
 }
 
 function _parseCusto() {
@@ -1070,7 +1085,7 @@ function editarItemPedido(idx) {
   const it  = _pedidoItens[idx];
   const row = document.getElementById(`item-row-${idx}`);
   if (!row) return;
-  const custoFmt = it.custo.toFixed(2).replace('.', ',');
+  const custoFmt = it.custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   row.innerHTML = `
     <td><strong>${esc(it.prod)}</strong></td>
     <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
@@ -1081,7 +1096,7 @@ function editarItemPedido(idx) {
     <td class="text-center">${esc(it.un)}</td>
     <td class="text-end" style="min-width:110px">
       <input type="text" class="form-control form-control-sm text-end p-1" id="edit-custo-${idx}"
-        value="${custoFmt}" oninput="mascaraMoeda(this); atualizarTotalInline(${idx})">
+        value="${custoFmt}" oninput="mascaraCusto(this); atualizarTotalInline(${idx})" onblur="custoBlur(this); atualizarTotalInline(${idx})">
     </td>
     <td class="text-end fw-bold" id="edit-total-${idx}">${brl(it.total)}</td>
     <td class="text-center" style="white-space:nowrap">
