@@ -2221,6 +2221,9 @@ function mudarLocalInv(local) {
 
 async function carregarInventario() {
   await carregarProdutosFT();
+  if (!cCat.length) await carregarCaches();
+  const lista = document.getElementById('inv-cat-lista');
+  if (lista) delete lista.dataset.preenchido;
   _popularSetoresInv();
   renderInventario();
   carregarHistoricoInv();
