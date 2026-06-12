@@ -400,6 +400,7 @@ let produtos  = [];
 let visiveis  = [];
 let catAtiva  = null;
 let setores   = [];
+let categorias = [];
 
 function norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -455,8 +456,12 @@ async function entrar() {
   const hoje = new Date().toISOString().slice(0, 10);
   document.getElementById('data-inv').value = hoje;
 
-  const { data: setsData } = await sb.from('cmp_setores').select('id,nome').eq('ativo', true).order('nome');
-  setores = setsData || [];
+  const [{ data: setsData }, { data: catsData }] = await Promise.all([
+    sb.from('cmp_setores').select('id,nome').eq('ativo', true).order('nome'),
+    sb.from('cmp_categorias').select('nome').eq('ativo', true).order('nome'),
+  ]);
+  setores    = setsData || [];
+  categorias = catsData || [];
   const sel = document.getElementById('sel-setor');
   if (sel) {
     sel.innerHTML = '<option value="">— Sem setor —</option>' +
@@ -507,7 +512,7 @@ async function carregarProdutos() {
 }
 
 function popularChips() {
-  const cats = [...new Set(produtos.map(p => p.categoria).filter(Boolean))].sort();
+  const cats = categorias.map(c => c.nome).filter(Boolean);
   const wrap  = document.getElementById('cats-wrap');
   wrap.innerHTML = `<div class="chip ativo" id="chip-todas" onclick="selecionarCat(null)">Todas</div>` +
     cats.map(c => `<div class="chip" id="chip-${CSS.escape(c)}" onclick="selecionarCat('${c.replace(/'/g,"\\'")}')">
