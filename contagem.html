@@ -359,6 +359,11 @@
       <span style="color:var(--borda)">|</span>
       <span id="exibe-contagem" style="color:var(--verde)">0 itens preenchidos</span>
     </div>
+    <div style="margin-top:.5rem">
+      <select id="sel-setor" style="background:var(--input-bg);border:1px solid var(--borda);border-radius:8px;color:var(--txt);font-size:.82rem;padding:.35rem .6rem;width:100%;margin:0;-webkit-appearance:none">
+        <option value="">🏢 Sem setor</option>
+      </select>
+    </div>
   </div>
 
   <!-- Busca -->
@@ -391,9 +396,10 @@
 let sb   = null;
 let user = null;
 let local = 'Centro';
-let produtos  = [];   // todos os produtos carregados
-let visiveis  = [];   // produtos filtrados
-let catAtiva  = null; // categoria selecionada (null = todas)
+let produtos  = [];
+let visiveis  = [];
+let catAtiva  = null;
+let setores   = [];
 
 function norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -438,7 +444,7 @@ async function fazerLogin() {
   entrar();
 }
 
-function entrar() {
+async function entrar() {
   document.getElementById('tela-login').style.display = 'none';
   document.getElementById('tela-principal').style.display = 'flex';
   document.getElementById('tela-principal').style.flexDirection = 'column';
@@ -448,6 +454,14 @@ function entrar() {
 
   const hoje = new Date().toISOString().slice(0, 10);
   document.getElementById('data-inv').value = hoje;
+
+  const { data: setsData } = await sb.from('cmp_setores').select('id,nome').eq('ativo', true).order('nome');
+  setores = setsData || [];
+  const sel = document.getElementById('sel-setor');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Sem setor —</option>' +
+      setores.map(s => `<option value="${s.nome}">${s.nome}</option>`).join('');
+  }
 
   carregarProdutos();
 }
@@ -604,11 +618,12 @@ async function salvarContagem() {
   const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
   const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
 
-  const hoje = document.getElementById('data-inv').value || new Date().toISOString().slice(0, 10);
+  const hoje  = document.getElementById('data-inv').value || new Date().toISOString().slice(0, 10);
   const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const setor = document.getElementById('sel-setor')?.value || '';
 
   const { data: inv, error } = await sb.from('est_inventarios')
-    .insert([{ num_inv, data: hoje, local, responsavel: resp, total_geral: 0 }])
+    .insert([{ num_inv, data: hoje, local, responsavel: resp, setor, total_geral: 0 }])
     .select().single();
 
   if (error) {

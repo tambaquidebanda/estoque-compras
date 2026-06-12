@@ -2221,8 +2221,16 @@ function mudarLocalInv(local) {
 
 async function carregarInventario() {
   await carregarProdutosFT();
+  _popularSetoresInv();
   renderInventario();
   carregarHistoricoInv();
+}
+
+function _popularSetoresInv() {
+  const sel = document.getElementById('inv-setor');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Sem setor —</option>' +
+    cSetores.map(s => `<option value="${esc(s.nome)}">${esc(s.nome)}</option>`).join('');
 }
 
 function filtrarInventario() {
@@ -2369,7 +2377,8 @@ async function salvarInventario() {
   if (!data) { toast('Selecione a data do inventário.', 'erro'); return; }
   if (!_invProdutos.length) { toast('Nenhum produto na lista.', 'erro'); return; }
 
-  const resp = (document.getElementById('inv-resp').value || '').trim();
+  const resp  = (document.getElementById('inv-resp').value || '').trim();
+  const setor = (document.getElementById('inv-setor')?.value || '').trim();
 
   // Monta itens
   const itens = _invProdutos.map((p, i) => ({
@@ -2396,7 +2405,7 @@ async function salvarInventario() {
 
   // Salva cabeçalho
   const { data: inv, error } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _invLocal, responsavel: resp, total_geral: totalGeral
+    num_inv, data, local: _invLocal, responsavel: resp, setor, total_geral: totalGeral
   }]).select().single();
 
   if (error) { toast('Erro ao salvar inventário: ' + error.message, 'erro'); return; }
@@ -2417,7 +2426,7 @@ async function salvarInventario() {
 
 async function carregarHistoricoInv() {
   const fil  = document.getElementById('hist-inv-fil')?.value || '';
-  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,responsavel,total_geral').order('criado_em', { ascending: false });
+  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,setor,responsavel,total_geral').order('criado_em', { ascending: false });
   if (fil) query = query.eq('local', fil);
   const { data: lista } = await query;
 
@@ -2433,6 +2442,7 @@ async function carregarHistoricoInv() {
         <span class="badge bg-dark me-1">${inv.num_inv}</span>
         <span class="badge me-2" style="background:${localCor}">${inv.local}</span>
         <strong>${dataBR}</strong>
+        ${inv.setor ? `<span class="badge ms-1" style="background:#6f42c1">${esc(inv.setor)}</span>` : ''}
         ${inv.responsavel ? `<span class="text-muted ms-2">— ${inv.responsavel}</span>` : ''}
       </div>
       <div class="d-flex align-items-center gap-2">
