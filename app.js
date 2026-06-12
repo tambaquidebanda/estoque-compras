@@ -4286,7 +4286,7 @@ async function carregarCompras() {
              </button>`
           : `<span class="badge bg-light text-muted border">Não enviado</span>`;
     const podeEditar   = !g.recebido && !enviado;
-    const podeReabrir  = g.recebido && !enviado && !aguardando;
+    const podeReabrir  = g.recebido && !aguardando;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
@@ -4497,7 +4497,11 @@ async function confirmarDivisao() {
 }
 
 async function reabrirPedido(pedido_num) {
-  if (!confirm(`Reabrir pedido ${pedido_num}?\n\nO recebimento será desfeito e o pedido voltará para pendente, liberando a edição.`)) return;
+  const { data: contaExiste } = await sb.from('cmp_contas_pagar').select('id').eq('pedido_num', pedido_num).maybeSingle();
+  const aviso = contaExiste
+    ? `Reabrir pedido ${pedido_num}?\n\nO recebimento e o vínculo com o financeiro (Contas a Pagar) serão removidos. O pedido voltará para pendente, liberando a edição.\n\nSe o lançamento já foi aprovado no financeiro, exclua-o de lá também.`
+    : `Reabrir pedido ${pedido_num}?\n\nO recebimento será desfeito e o pedido voltará para pendente, liberando a edição.`;
+  if (!confirm(aviso)) return;
 
   // Volta todos os itens para pendente e restaura quantidades originais via recebimento_itens
   const { data: recebimentos } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
