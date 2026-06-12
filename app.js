@@ -2269,9 +2269,8 @@ function _atualizarLabelCat() {
 function _popularCatsInv() {
   const lista = document.getElementById('inv-cat-lista');
   if (!lista || lista.dataset.preenchido) return;
-  const cats = [...new Set(
-    cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo)).map(p => p.categoria).filter(Boolean)
-  )].sort();
+  const cats = cCat.map(c => c.nome).filter(Boolean);
+  if (!cats.length) return;
   lista.innerHTML = cats.map(c => `
     <label class="d-flex align-items-center gap-2 px-2 py-1 rounded" style="cursor:pointer" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background=''">
       <input type="checkbox" value="${esc(c)}" onchange="_atualizarLabelCat();filtrarInventario()">
