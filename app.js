@@ -1778,9 +1778,12 @@ function renderListaGrupos() {
     return;
   }
   lst.innerHTML = cGrupos.map(g => `
-    <tr>
+    <tr id="grupo-tr-${g.id}">
       <td>${esc(g.nome)}</td>
       <td class="text-end">
+        <button class="btn-del me-1" style="background:#e8f4f8;color:#0d6efd" onclick="editarGrupo(${g.id},'${esc(g.nome)}')" title="Renomear">
+          <i class="bi bi-pencil"></i>
+        </button>
         <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
           <i class="bi bi-trash3"></i>
         </button>
@@ -1808,6 +1811,35 @@ async function excluirGrupo(id, nome) {
   const { error } = await sb.from('est_grupos_produto').delete().eq('id', id);
   if (error) { toast('Não foi possível excluir.', 'erro'); return; }
   toast('Grupo excluído.', 'ok');
+  await carregarGrupos();
+}
+
+function editarGrupo(id, nomeAtual) {
+  const tr = document.getElementById(`grupo-tr-${id}`);
+  if (!tr) return;
+  tr.innerHTML = `
+    <td>
+      <input type="text" class="form-control form-control-sm" id="edit-grupo-${id}"
+        value="${esc(nomeAtual)}" style="max-width:300px"
+        onkeydown="if(event.key==='Enter') salvarEdicaoGrupo(${id}); if(event.key==='Escape') carregarGrupos()">
+    </td>
+    <td class="text-end d-flex gap-1 justify-content-end">
+      <button class="btn btn-sm btn-primary py-0 px-2" onclick="salvarEdicaoGrupo(${id})" title="Salvar">
+        <i class="bi bi-check-lg"></i>
+      </button>
+      <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="carregarGrupos()" title="Cancelar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </td>`;
+  document.getElementById(`edit-grupo-${id}`)?.focus();
+}
+
+async function salvarEdicaoGrupo(id) {
+  const nome = (document.getElementById(`edit-grupo-${id}`)?.value || '').trim().toUpperCase();
+  if (!nome) { toast('Informe o nome do grupo.', 'erro'); return; }
+  const { error } = await sb.from('est_grupos_produto').update({ nome }).eq('id', id);
+  if (error) { toast('Erro ao atualizar: ' + error.message, 'erro'); return; }
+  toast('Grupo atualizado!', 'ok');
   await carregarGrupos();
 }
 
