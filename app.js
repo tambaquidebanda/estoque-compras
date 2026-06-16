@@ -1781,12 +1781,14 @@ function renderListaGrupos() {
     <tr id="grupo-tr-${g.id}">
       <td>${esc(g.nome)}</td>
       <td class="text-end">
-        <button class="btn-del me-1" style="background:#e8f4f8;color:#0d6efd" onclick="editarGrupo(${g.id},'${esc(g.nome)}')" title="Renomear">
-          <i class="bi bi-pencil"></i>
-        </button>
-        <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
-          <i class="bi bi-trash3"></i>
-        </button>
+        <div class="d-flex gap-1 justify-content-end">
+          <button class="btn-del" style="background:#e8f4f8;color:#0d6efd" onclick="editarGrupo(${g.id},'${esc(g.nome)}')" title="Renomear">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn-del" onclick="excluirGrupo(${g.id},'${esc(g.nome)}')" title="Excluir">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </div>
       </td>
     </tr>`).join('');
   const cnt = document.getElementById('grupos-count');
