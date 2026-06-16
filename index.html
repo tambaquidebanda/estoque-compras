@@ -734,7 +734,15 @@
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Tipo</label>
-              <input type="text" class="form-control bg-light" id="prod-tipo" readonly>
+              <select class="form-select" id="prod-tipo" onchange="document.getElementById('prod-tipo-badge').textContent=this.value">
+                <option value="MP">MP — Matéria-Prima</option>
+                <option value="VENDA">VENDA — Cardápio</option>
+                <option value="PPB">PPB — Bar</option>
+                <option value="PPC">PPC — Cozinha</option>
+                <option value="PPP">PPP — Produção</option>
+                <option value="SA">SA — Semi-Acabado</option>
+                <option value="MC">MC — Material Consumo</option>
+              </select>
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">Grupo do Produto</label>

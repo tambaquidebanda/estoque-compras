@@ -4667,6 +4667,7 @@ async function salvarDadosProduto() {
 
   const dados = {
     nome:         document.getElementById('prod-nome').value.trim(),
+    tipo:         document.getElementById('prod-tipo').value,
     categoria:    document.getElementById('prod-cat').value,
     plano_cat:    document.getElementById('prod-plano-cat').value || null,
     unidade_comp: document.getElementById('prod-un-comp').value,
