@@ -4345,7 +4345,7 @@ async function carregarCompras() {
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
     (resContas.data || []).forEach(c => {
       if (c.lancamento_id) lancSet.add(c.pedido_num);
-      else if (!lancSet.has(c.pedido_num)) rascunhoSet.add(c.pedido_num);
+      // sem lancamento_id = recebido mas não integrado → mostra "Gerar Conta"
     });
   }
 
