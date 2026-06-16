@@ -2267,10 +2267,47 @@ async function excluirFichaModal() {
 
 
 // ═══════════════════════════════════════════════════════════════
-// INVENTÁRIOS
+// INVENTÁRIOS — Estrutura Setor → Grupo → Produtos
 // ═══════════════════════════════════════════════════════════════
-let _invLocal    = 'Centro';
-let _invProdutos = [];  // produtos filtrados atualmente na tela
+const INVENTARIO_ESTRUTURA = {
+  "CHURRASQUEIRA": {
+    "PEIXES": ["MP BANDA DE TAMBAQUI","MP TAMBAQUI CASACA","MP COSTELA DE TAMBAQUI","MP MATRINXA"],
+    "ESTIVAS": ["MP AZEITE","MP CEBOLA","MP LIMÃO","MP MARGARINA","MP PIMENTA DE CHEIRO","MP SAL REFINADO","MC BOBINA IMPRESSORA","MC CAIXA DE PEIXE","MC CARVÃO"]
+  },
+  "COZINHA": {
+    "CONGELADOS": ["MP AÇAI","SA BATATA 100G","SA MACAXEIRA 300G","SA DADINHO DE TAPIOCA 6 UNID","SA BOLINHO DE PIRARUCU 5 UN","SA BOLINHO DE TAMBAQUI 5 UN","SA PASTEL DE CAMARÃO CREMOSO 3 UNID","SA PASTEL DE QUEIJO 3 UNID","SA PASTEL TAMBAQUI 3 UNID","SA PASTEL MISTO 3 UNID","SA PASTEL DE PIRARUCU COM BANANA 3 UNID","SA CAMARÃO ALHO E OLEO 220G","SA CAMARÃO COM.CATUPIRY 4 UNID","SA CAMARÃO SECO M 40G","SA CAMARÃO FRESCO 5 UNID","SA CAMARÃO SECO G 50G","SA VERDURAS CONGELADAS 200G","SA COCO SECO 250G","MP COSTELA DE TAMBAQUI","SA KIT MOQUECA DE TAMBAQUI","SA FILÉ DE PIRARUCU 160G","SA FILE DE PIRARUCU 120G","SA KIT MOQUECA DE PIRARUCU","SA PIRARUCU DE CASACA","SA PIRARUCU FRESCO DESFIADO 150g","SA CROCANTE DE PIRARUCU 150G","SA KIT MOQUECA CABOCA","SA PIRARUCU KIDS 100G","MP MEDALHÃO DE ALCATRA","SA ISCA DE FILÉ MIGNON 100G","SA MEDALHÃO DE FILÉ MIGNON","SA KIT MEIA GALINHA CAIPIRA","SA ISCA DE FRANGO 100G","SA FRANGO PASSARINHO","SA MARMTA DE FRANGO ASSADO","SA FILE DE FRANGO 100G","SA JARAQUI 1 UNID","SA SARDINHA 2 UNID","SA PACU 1 UNID","SA PICADINHO DE TAMBAQUI 150G","SA KIT TACAQUI NHOQUE","SA KIT VATAPA","SA MACAXEIRA CRUA PURE","MP QUEIJO MUSARELA FATIADO","SA QUEIJO COALHO 50G","MP PETIT GATEAU C CALDA","MP SORVETE DE BAUNILHA","SA CABEÇA DE CAMARÃO SECO 200G","SA COMPOTA DE CUPUACU 1kg (COZINHA)"],
+    "HORTIFRUTI": ["MP ALFACE BOLA","MP ALFAVACA","MP ALHO DESCASCADO","MP BATATA PORTUGUESA","MP CEBOLA","MP CENOURA","MP CHICORIA","MP COENTRO","MP FOLHA DE BANANA","MP JAMBU","MP JERIMUM","MP LIMÃO","MP MAXIXE","MP PIMENTA DE CHEIRO","MP PIMENTA MURUPI","MP SEMENTE DE URUCUM","MP TOMATE","MP OVO"],
+    "ESTIVAS": ["MP ACUCAR","MP ARROZ","MP AZEITE DENDE","MP OLEO COMPOSTO","MP AZEITONA VERDE SEM CAROÇO","MP CANELA EM PÓ","MP SERESTEIRO 900ML","MP CREAM CHEESE","MP CREME DE LEITE FORNEÁVEL","MP EXTRATO DE TOMATE","MP FARINHA BRANCA","MP FARINHA PANKO","MP FARINHA DE TAPIOCA","MP FARINHA OVINHA","MP FEIJÃO PRAIA","MP GOMA","MP KETCHUP","MP LEITE EM PÓ INTEGRAL","MP LEITE LIQUIDO INTEGRAL","MP MACARRÃO ESPAGUETE","MP MARGARINA","MP MASSA DE PURÊ DE BATATA","MP OLEO DE SOJA","MP OLEO DE ALGODÃO","MP SAL GROSSO","MP SAL REFINADO","MP TRIGO S/FERMENTO","MP NOZ MOSCADA","MP PIMENTA DO REINO EM GRAOS","PPC TUCUPI REDUZIDO","PPC TUCUPI TEMPERADO","MP VINAGRE"],
+    "COMIDA FUNCIONÁRIO": ["MC ISCA CARNE - FUNCIONÁRIO","MC CARNE PARA GUISADO","MC AGULHA - FUNCIONÁRIO","MC FILE DE PEITO FUNCIONÁRIO","MC COXA S/ COXA - FUNCIONÁRIO","MC CALABRESA","MP KIT DE TAMBAQUI","MC OVO - FUNCIONÁRIO","MC ARROZ - FUNCIONÁRIO","MC FEIJAO CARIOCA","MC FARINHA FUNCIONÁRIO","BATATA PORTUGUESA","MC MACARRAO - FUNCIONÁRIO","MP ACUCAR","MC CEBOLA FUNCIONÁRIO","MC COENTRO - FUNCIONÁRIO","MC PIMENTA DE CHEIRO ( FUNCIONARIO )","MC COUVE","MP FEIJÃO DE CORDA","MC TOMATE ( FUNCIONARIO )","MC - LIMÃO - FUNCIONARIO","MP POLPA MANGA 1KG","MP POLPA GOIABA 1KG"],
+    "EMBALAGENS": ["MC SACO 1 KG","MC SACO 2 KG","MC SACO 10 KG","MC LUVA PLASTICA","MC PAPEL FILME ROLO","MP POTE 1000ML","MC POTE REDONDO C/ TAMPA 750ML","MC POTE RED 500ML","MC POTE RED 250ML","EMBALAGEM DE ALUMINIO RETANGULAR PEQUENA","MC BANDEJA DE ALUMINIO D6","MC BANEJA DE ALUMINIO D7","MC BANDEJA DE ALUMINIO D5","MC POTE RETANGULAR 500 ML","MC EMBALAGEM G742","MU MOLHEIRA","MC TOUCA SANFONADA","MC FITA DUREX 50X50","MC LUVA VINIL TAM G","MC GARRAFA DE 1 LITRO","MC GARRAFA DE 500ML","MC GARRAFA DE 350ML"]
+  },
+  "BAR": {
+    "MATERIAL DE EXPEDIENTE": ["MC SACO 1 KG","MC PAPEL ROLO COZINHA TORK HANDTOWEL","MC PERFEX WIPE","MC ALCOOL LIQUIDO 70","MC FITA DUREX 50X50","MC COPO DESCARTAVEL 180ML"],
+    "SOBREMESAS": ["MP PUDIM DE LEITE","PM CEU DE BRIGADEIRO","MP TORTA CUPUACU COM CHOCOLATE","MP TORTA CUPUACU COM CASTANHA","MP TORTA DE ABACAXI","MP BROWNIE DE CHOCOLATE","MP CHEESECAKE CHOCOLATE COM CUPUACU","SA CASTANHA LASCA 50g (BAR)","SA COMPOTA DE CUPUACU 1kg (BAR)","SA BOLO DE MACAXEIRA 1 UNID","MP SORVETE DE TAPIOCA","MP SORVETE DE CREME","SA COCO LASCA 50g","MP PICOLE DE GRAVIOLA","MP PICOLE DE AÇAI","MC PENA AZUL","MC PENA VERMELHA","MP PAPEL ARROZ","CALDA BOTACOCO"],
+    "HORTIFRUTI": ["MP ABACAXI","MP ALECRIM","MP AMEIXA EM CALDA","MP CEREJA CALDA","MP HORTELÃ","MP JAMBU","MP KIWI","MP LARANJA BAHIA","MP LARANJA BAHIA DESIDRATADA","MP LIMÃO SICILIANO DESIDRATADO","MP LARANJA","MP LIMÃO","MP LIMÃO SICILIANO","MP MAÇA VERDE","MP MARACUJA FRUTA","MP PITAYA","MP PHISSALYS","MP TUCUMA","MP MORANGO FRUTA","MP PIMENTA ROSA","MP TANGERINA"],
+    "POLPAS": ["MP POLPA DE CUPUAÇU","MP POLPA ACEROLA","MP POLPA MARACUJÁ","MP POLPA GRAVIOLA","MP POLPA DE CAJU","MP POLPA GOIABA","MP POLPA TAPEREBÁ","MP POLPA MANGA","MP POLPA CUPUAÇU 1 KG","MP POLPA GRAVIOLA 1 KG","MP POLPA GOIABA 1 KG","MP POLPA TAPEREBÁ 1 KG","MP POLPA MANGA 1KG","SA ABACAXI EM CUBOS 150G"],
+    "ESTIVAS": ["MP AÇUCAR","MP AÇUCAR MASCAVO","MP BISCOITO DO CAFE","MP CAPSULA EXPRESSO ATENTO","MP CAPSULA CAFE COM LEITE","MP CAPSULA EXPRESSO PLENO","MP CAPSULA EXPRESSO VIBRANTE","MP CAPSULA CAPUCCINO CLASSICO","MP CAPSULA CHOCOLATE COM CARAMELO","MP CAPSULA CHOCO CARAMEL","MP COCO RALADO ÚMIDO","MP CONDENSADO LATA","MP LEITE EM PÓ","MP LEITE LIQUIDO INTEGRAL","MP LEITE INTEGRAL C4","MP CAFÉ TORRADO MOIDO 1KG","MP GRANOLA","MP AMENDOIM CROCANTE","MP LEITE CONDENSADO PIRACANJUBA 385G","MP AMENDOIM SEM CASCA"],
+    "ALCOOLICAS": ["MP BARRIL CHOPP BRAHMA 50 LITROS","MP BOHEMIA 600ML","MP BRAHMA DUPLO MALTE 600 ML","MP BUDWEISER LN","MP CORONA EXTRA LN 355ML","MP EISENBAHN PILSEN 355ML","MP FRANZISKANER WEISSBIER 500ML","MP HEINEKEN 330ML","MP HEINEKEN 600ML","MP ITAIPAVA 600ML","MP ORIGINAL 600ML","MP STELLA ARTOIS 600ML","MP BOHEMIA 355ML","MP BUDWEISER 600ML","MP EISENBAHN DUNKEL 500ML","MP EISENBAHN PALE ALE 355ML","MP BUDWEISER LATA","MP HEINEKEN LATA","MP SKOL BEATS SENSES LATA","MP STELLA LATA","MP CACHAÇA 51 960ML","MP CACHAÇA LEBLON 750ML","MP JACK DANIEL'S 1L","MP SMIRNOFF VODKA RED 1L","MP TEQUILA JOSE CUERVO ESPECIAL 750ML","MP JOHNNIE WALKER RED LABEL 1L","MP JOHNNIE WALKER BLACK LABEL 1L","MP VINHO TINTO SUAVE 750ML","MP VINHO BRANCO SUAVE 750ML","MP ESPIRITO DE MINAS CACHAÇA 970 ML","MP VINHO TINTO SECO 750ML","MP ESPIRITO DE MINAS TRADICIONAL 970ML","MP BALLANTINES 750ML","MP GRANT'S TRIPLE WOOD 750ML","MP MONTILLA VINHO TINTO SUAVE 750ML","MP VINHO BRANCO SECO 750ML","MP SPATEN 600ML","MP AMSTEL 600ML","MP BRAHMA 600ML","MP COLORADO APPIA 600ML","MP DEVASSA DOURADA 600ML","MP ANTARCTICA ORIGINAL 600ML","MP SPATEN 350ML","MP AMSTEL LATA"],
+    "NÃO ALCOOLICAS": ["MP AGUA COM GÁS","MP AGUA SEM GÁS","PEPSI BLACK","MP TONICA ANTARTICA 355ML","MP SUKITA LARANJA LATA","MP GUARANÁ ANTARCTICA LATA","MP PEPSI LATA","MP PEPSI ZERO LATA","MP GATORADE MARACUJA","MP REDBULL","MP SUCO DELL VALE 1L","MP GUARANÁ ANTARCTICA 600ML","MP PEPSI BLACK LATA","MP SCHWEPPES GUARANA 600ML","MP SUKITA UVA LATA","MP SUKITA LARANJA LATA"],
+    "EMBALAGEMDESCAR": ["MC CANUDO SACHE BIO FLEX 6MM","MP CANUDO PRETO CAIPIRINHA","MC CANUDO SACHER COMUM BIODEGRADAVEL","MC COPO DESCARTAVEL 300ML","MC COPO LONG DRINK 300ML DESCARTAVEL","MC SAQUINHO HIGIENICO","MC SACHET COLHER BIOPLÁSTICO 16CM","MC GUARDANAPO DE PAPEL"],
+    "SODA AMAZONENSE": ["PPB XAROPE DE ABACAXI","PPB XAROPE DE ACEROLA","PPB XAROPE DE CUPUAÇU","PPB XAROPE DE GARVIOLA","PPB XAROPE DE MARACUJÁ","PPB XAROPE DE TAPEREBÁ","PPB XAROPE DE GOIABA","PPB XAROPE DE MANGA","PPB XAROPE DE MORANGO"]
+  },
+  "SALAO": {
+    "MATERIAL EXPEDIENTE": ["MC GUARDANAPO TORK","MP PALITO SACHÊ","MP PALITO DE PICOLÉ","MP SAL SACHE","MP AÇUCAR SACHE","MC ADOÇANTE SACHE","MC ALCOOL EM GEL","MC PERFEX WIPE","MP AZEIITE EXTRA VIRGEM","MC ALCOOL LIQUIDO 70","MC SACOLA BRANCA 8KG"]
+  },
+  "ASG": {
+    "MATERIAL DE LIMPEZA": ["MC SACO DE LIXO - 50LT","MC SACO DE LIXO - 200LT","MC DETERGENTE NEUTRO 5 L","MC PROTETOR DE ASSENTO SANITARIO","MC DESINFETANTE CONCENTRADO","MC AGUA SANITARIA","MC ESPONJA COMUM","MC SABONETE CLIENTE","MC SABONETE BACTERICIDA","MC LUVA DE LIMPEZA","MC PAPEL HIGIENICO TORK SMART ONE","MC PAPEL HIGIENICO FUNCIONARIO","MC PAPEL TOALHA CLIENTE TORK","MC PAPEL ROLO COZINHA TORK HANDTOWEL","MC PAPEL TOLHA ROLO TORK ADV 4/250M FS","MC ALCOOL EM GEL","MC FIBRA PESADA","MC X-12","MC PEROXY 3000","MC LIMPA ALUMINIO","MC LIMPA VIDRO 5LT","MC CLEARON","MC PANO DE CHÃO","MC PERFEX WIPE","MC MOP"]
+  },
+  "DELIVERY": {
+    "BEBIDAS": ["MP AGUA COM GÁS","MP AGUA SEM GÁS","MP PEPSI BLACK LATA","MP GUARANÁ ANTARCTICA LATA","MP PEPSI LATA","MP PEPSI ZERO LATA","MP GATORADE MARACUJA","MP REDBULL","MP SUCO DELL VALE 1L","MP GUARANÁ ANTARCTICA 600ML","MP SCHWEPPES GUARANA 600ML","MP SUKITA UVA LATA","MP SUKITA LARANJA LATA","MP BRAHMA 600ML","MP HEINEKEN 330ML","MP HEINEKEN 600ML","MP STELLA ARTOIS 600ML","MP BUDWEISER LN","MP CORONA EXTRA LN 355ML","MP BOHEMIA 600ML","MP BOHEMIA 355ML","MP SPATEN 600ML","MP AMSTEL 600ML","MP AMSTEL LATA"],
+    "DESCARTAVEL": ["MC GARFO REFEIÇÃO","MC COLHER REFEIÇÃO DESCARTAVEIS","MC FACA REFEIÇÃO","MC PRATO DESCARTAVEL","MC SACOLA BRANCA 8KG","MC FITA DUREX 50X50","MC COPO DESCARTAVEL 300ML","MC GUARDANAPO DE PAPEL"]
+  }
+};
+
+let _invLocal  = 'Centro';
+let _invSetor  = null;
+let _invGrupo  = null;
+let _invProds  = [];   // { nome, produto_id } array do grupo atual
 
 function mudarLocalInv(local) {
   _invLocal = local;
@@ -2279,223 +2316,224 @@ function mudarLocalInv(local) {
   if (e2) e2.textContent = local;
   document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
   document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
-  document.getElementById('inv-busca').value = '';
-  // Reseta checkboxes de categoria ao trocar de local
-  document.querySelectorAll('#inv-cat-lista input[type=checkbox]').forEach(c => c.checked = false);
-  _atualizarLabelCat();
-  renderInventario();
 }
 
 async function carregarInventario() {
-  await carregarProdutosFT();
-  if (!cCat.length) await carregarCaches();
-  const lista = document.getElementById('inv-cat-lista');
-  if (lista) delete lista.dataset.preenchido;
-  _popularSetoresInv();
-  renderInventario();
+  if (!cProdutosFT.length) await carregarProdutosFT();
   carregarHistoricoInv();
 }
 
-function _popularSetoresInv() {
-  const sel = document.getElementById('inv-setor');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— Sem setor —</option>' +
-    cSetores.map(s => `<option value="${esc(s.nome)}">${esc(s.nome)}</option>`).join('');
+function selecionarSetorInv(setor) {
+  _invSetor = setor;
+  _invGrupo = null;
+  _invProds = [];
+
+  // Destaca botão de setor
+  document.querySelectorAll('.inv-setor-btn').forEach(b => {
+    const ativo = b.dataset.setor === setor;
+    b.className = 'btn inv-setor-btn ' + (ativo ? 'btn-primary' : 'btn-outline-secondary');
+    b.style.borderRadius = '20px';
+  });
+
+  // Monta botões de grupo
+  const grupos = Object.keys(INVENTARIO_ESTRUTURA[setor] || {});
+  const grupoSection = document.getElementById('inv-grupo-section');
+  const grupoTitulo  = document.getElementById('inv-grupo-titulo');
+  const grupoBtns    = document.getElementById('inv-grupo-btns');
+
+  grupoTitulo.textContent = `GRUPOS — ${setor}`;
+  grupoBtns.innerHTML = grupos.map(g =>
+    `<button class="btn btn-outline-secondary inv-grupo-btn" data-grupo="${esc(g)}"
+      onclick="selecionarGrupoInv('${esc(g)}')" style="border-radius:20px">${esc(g)}</button>`
+  ).join('');
+
+  grupoSection.classList.remove('d-none');
+  document.getElementById('inv-tabela-section').classList.add('d-none');
+  document.getElementById('lst-inventario').innerHTML =
+    '<tr><td colspan="4" class="text-center text-muted py-4">Selecione um grupo acima.</td></tr>';
 }
 
-function filtrarInventario() {
-  renderInventario();
-}
+function selecionarGrupoInv(grupo) {
+  _invGrupo = grupo;
 
-function toggleDropCat(e) {
-  e.stopPropagation();
-  const drop = document.getElementById('inv-cat-dropdown');
-  if (!drop) return;
-  const aberto = drop.style.display !== 'none';
-  drop.style.display = aberto ? 'none' : 'block';
-}
+  // Destaca botão de grupo
+  document.querySelectorAll('.inv-grupo-btn').forEach(b => {
+    const ativo = b.dataset.grupo === grupo;
+    b.className = 'btn inv-grupo-btn ' + (ativo ? 'btn-success' : 'btn-outline-secondary');
+    b.style.borderRadius = '20px';
+  });
 
-// Fecha dropdown ao clicar fora
-document.addEventListener('click', () => {
-  const drop = document.getElementById('inv-cat-dropdown');
-  if (drop) drop.style.display = 'none';
-});
+  // Monta lista de produtos
+  const nomes = INVENTARIO_ESTRUTURA[_invSetor]?.[grupo] || [];
+  _invProds = nomes.map(nome => {
+    const nomNorm = nome.toLowerCase().trim();
+    const prod = cProdutosFT.find(p => p.nome.toLowerCase().trim() === nomNorm);
+    return { nome, produto_id: prod?.id || null };
+  });
 
-function _getCatsSelecionadas() {
-  return Array.from(document.querySelectorAll('#inv-cat-lista input[type=checkbox]:checked')).map(c => c.value);
-}
+  // Breadcrumb
+  document.getElementById('inv-breadcrumb').textContent = `${_invSetor} / ${grupo}`;
+  const e2 = document.getElementById('inv-local-badge2');
+  if (e2) e2.textContent = _invLocal;
 
-function _atualizarLabelCat() {
-  const selecionadas = _getCatsSelecionadas();
-  const label = document.getElementById('inv-cat-label');
-  if (!label) return;
-  label.textContent = selecionadas.length === 0
-    ? 'Todas as categorias'
-    : selecionadas.length === 1
-      ? selecionadas[0]
-      : `${selecionadas.length} categorias selecionadas`;
-}
-
-function _popularCatsInv() {
-  const lista = document.getElementById('inv-cat-lista');
-  if (!lista || lista.dataset.preenchido) return;
-  const cats = cCat.map(c => c.nome).filter(Boolean);
-  if (!cats.length) return;
-  lista.innerHTML = cats.map(c => `
-    <label class="d-flex align-items-center gap-2 px-2 py-1 rounded" style="cursor:pointer" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background=''">
-      <input type="checkbox" value="${esc(c)}" onchange="_atualizarLabelCat();filtrarInventario()">
-      <span class="small">${esc(c)}</span>
-    </label>`).join('');
-  lista.dataset.preenchido = '1';
-}
-
-function limparFiltrosInv() {
-  document.querySelectorAll('#inv-cat-lista input[type=checkbox]').forEach(c => c.checked = false);
-  _atualizarLabelCat();
-  const busca = document.getElementById('inv-busca');
-  if (busca) busca.value = '';
+  document.getElementById('inv-tabela-section').classList.remove('d-none');
   renderInventario();
 }
 
 function renderInventario() {
-  _popularCatsInv();
-  const busca = norm(document.getElementById('inv-busca')?.value);
-  const catsFiltro = _getCatsSelecionadas();
-  let prods = cProdutosFT.filter(p => ['MP','SA','MC'].includes(p.tipo));
-  if (catsFiltro.length) prods = prods.filter(p => catsFiltro.includes(p.categoria));
-  if (busca) prods = prods.filter(p => norm(p.nome).includes(busca));
-  _invProdutos = prods;
-
   const tbody = document.getElementById('lst-inventario');
-  if (!prods.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
-    calcTotalInv();
+  if (!_invProds.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>';
     return;
   }
-
-  const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
-  tbody.innerHTML = prods.map((p, i) => {
-    const unOpts = uns.map(u => `<option${u === (p.unidade_uso || 'UN') ? ' selected' : ''}>${u}</option>`).join('');
-    const val = p.custo_uso || 0;
+  tbody.innerHTML = _invProds.map((p, i) => {
+    const padrao = _getPadrao(p.nome);
+    const padraoTxt = padrao !== null ? padrao : '—';
+    const semProd = !p.produto_id ? ' title="Produto não encontrado no cadastro" style="color:#dc3545"' : '';
     return `<tr>
-      <td><strong>${esc(p.nome)}</strong></td>
-      <td class="text-muted small">${esc(p.categoria || '')}</td>
+      <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}</td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center inv-campo"
+        <input type="number" class="form-control form-control-sm text-center"
           id="inv-est-${i}" min="0" step="0.001" value="0"
-          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+          style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center inv-campo"
-          id="inv-cb-${i}" min="0" step="0.001" value="0"
-          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+        <span class="badge bg-secondary" id="inv-pad-${i}">${padraoTxt}</span>
       </td>
-      <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center inv-campo"
-          id="inv-out-${i}" min="0" step="0.001" value="0"
-          style="width:80px;margin:auto" oninput="calcLinhaInv(${i})">
+      <td class="text-center fw-bold" id="inv-ped-${i}" style="color:#06D6A0;font-size:1.05rem">
+        ${padrao !== null ? Math.max(0, padrao - 0) : '—'}
       </td>
-      <td class="text-center fw-bold" id="inv-tot-${i}">0</td>
-      <td class="text-center">
-        <select class="form-select form-select-sm" id="inv-un-${i}" style="width:75px;margin:auto">${unOpts}</select>
-      </td>
-      <td class="text-center">
-        <input type="text" class="form-control form-control-sm text-center inv-campo"
-          id="inv-val-${i}" inputmode="decimal"
-          value="${val > 0 ? val.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) : ''}"
-          placeholder="0,00" style="width:90px;margin:auto"
-          oninput="mascaraMoeda(this); calcLinhaInv(${i})"
-          onfocus="moedaFocus(this)" onblur="moedaBlur(this); calcLinhaInv(${i})">
-      </td>
-      <td class="text-center fw-bold text-success" id="inv-soma-${i}">R$ 0,00</td>
     </tr>`;
   }).join('');
-
-  calcTotalInv();
 }
 
-function calcLinhaInv(i) {
-  const est = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
-  const cb  = parseFloat(document.getElementById(`inv-cb-${i}`)?.value)  || 0;
-  const out = parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0;
-  const val = parseMoeda(`inv-val-${i}`);
-  const tot  = est + cb + out;
-  const soma = tot * val;
-  const totEl  = document.getElementById(`inv-tot-${i}`);
-  const somaEl = document.getElementById(`inv-soma-${i}`);
-  if (totEl)  totEl.textContent  = tot % 1 === 0 ? String(tot) : tot.toFixed(3).replace(/\.?0+$/, '');
-  if (somaEl) somaEl.textContent = brl(soma);
-  calcTotalInv();
+function calcPedidoInv(i) {
+  const est    = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
+  const nome   = _invProds[i]?.nome || '';
+  const padrao = _getPadrao(nome);
+  const pedEl  = document.getElementById(`inv-ped-${i}`);
+  if (!pedEl) return;
+  if (padrao === null) { pedEl.textContent = '—'; return; }
+  const ped = Math.max(0, padrao - est);
+  pedEl.textContent = ped % 1 === 0 ? String(ped) : ped.toFixed(3).replace(/\.?0+$/, '');
 }
 
-function calcTotalInv() {
-  let total = 0;
-  document.querySelectorAll('[id^="inv-soma-"]').forEach(el => {
-    const v = el.textContent.replace(/[R$\s.]/g, '').replace(',', '.');
-    total += parseFloat(v) || 0;
+function _getPadrao(nome) {
+  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
+  const val = padroes[nome.trim().toUpperCase()];
+  return val !== undefined ? Number(val) : null;
+}
+
+function _setPadrao(nome, val) {
+  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
+  padroes[nome.trim().toUpperCase()] = val;
+  localStorage.setItem('inv_padroes', JSON.stringify(padroes));
+}
+
+function abrirEditarPadroes() {
+  if (!_invProds.length) { toast('Selecione um grupo primeiro.', 'erro'); return; }
+  const lista = document.getElementById('lista-padroes');
+  lista.innerHTML = `
+    <table class="table table-sm align-middle mb-0">
+      <thead style="background:#f8f9fa">
+        <tr>
+          <th>Produto</th>
+          <th class="text-center" style="width:140px">Pedido Padrão</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${_invProds.map((p, i) => {
+          const val = _getPadrao(p.nome);
+          return `<tr>
+            <td class="small">${esc(p.nome)}</td>
+            <td class="text-center">
+              <input type="number" class="form-control form-control-sm text-center"
+                id="pad-input-${i}" min="0" step="0.001"
+                value="${val !== null ? val : ''}" placeholder="—"
+                style="width:100px;margin:auto">
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  new bootstrap.Modal(document.getElementById('modal-padroes')).show();
+}
+
+function salvarPadroes() {
+  _invProds.forEach((p, i) => {
+    const input = document.getElementById(`pad-input-${i}`);
+    if (!input) return;
+    const val = input.value.trim();
+    if (val === '') {
+      const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
+      delete padroes[p.nome.trim().toUpperCase()];
+      localStorage.setItem('inv_padroes', JSON.stringify(padroes));
+    } else {
+      _setPadrao(p.nome, parseFloat(val) || 0);
+    }
   });
-  const fmt = brl(total);
-  const e1 = document.getElementById('inv-total-geral');
-  const e2 = document.getElementById('inv-rodape-total');
-  if (e1) e1.textContent = fmt;
-  if (e2) e2.textContent = fmt;
+  toast('Padrões salvos!', 'ok');
+  bootstrap.Modal.getInstance(document.getElementById('modal-padroes'))?.hide();
+  renderInventario();
 }
 
 async function salvarInventario() {
+  if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de salvar.', 'erro'); return; }
   const data = document.getElementById('inv-data').value;
   if (!data) { toast('Selecione a data do inventário.', 'erro'); return; }
-  if (!_invProdutos.length) { toast('Nenhum produto na lista.', 'erro'); return; }
+  if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
-  const resp  = (document.getElementById('inv-resp').value || '').trim();
-  const setor = (document.getElementById('inv-setor')?.value || '').trim();
+  const resp = (document.getElementById('inv-resp').value || '').trim();
 
-  // Monta itens
-  const itens = _invProdutos.map((p, i) => ({
-    produto_id:     p.id,
-    nome:           p.nome,
-    estoque:        parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
-    cozinha_bar:    parseFloat(document.getElementById(`inv-cb-${i}`)?.value)  || 0,
-    outros:         parseFloat(document.getElementById(`inv-out-${i}`)?.value) || 0,
-    total:          parseFloat(document.getElementById(`inv-tot-${i}`)?.textContent) || 0,
-    unidade:        document.getElementById(`inv-un-${i}`)?.value || 'UN',
-    valor_unitario: parseMoeda(`inv-val-${i}`),
-    soma_total:     (() => {
-      const v = (document.getElementById(`inv-soma-${i}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
-      return parseFloat(v) || 0;
-    })(),
-  }));
+  const itens = _invProds.map((p, i) => {
+    const estoque      = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
+    const pedido_padrao = _getPadrao(p.nome) ?? 0;
+    const pedido       = Math.max(0, pedido_padrao - estoque);
+    return {
+      produto_id: p.produto_id || null,
+      nome: p.nome,
+      estoque,
+      pedido_padrao,
+      pedido,
+      cozinha_bar: 0,
+      outros: 0,
+      total: estoque,
+      unidade: 'UN',
+      valor_unitario: 0,
+      soma_total: 0,
+    };
+  });
 
-  const totalGeral = itens.reduce((s, it) => s + it.soma_total, 0);
+  const totalPedido = itens.reduce((s, it) => s + it.pedido, 0);
 
-  // Número sequencial
   const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em', { ascending: false }).limit(1);
   const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
   const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
 
-  // Salva cabeçalho
   const { data: inv, error } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _invLocal, responsavel: resp, setor, total_geral: totalGeral
+    num_inv, data, local: _invLocal, responsavel: resp,
+    setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido
   }]).select().single();
 
-  if (error) { toast('Erro ao salvar inventário: ' + error.message, 'erro'); return; }
+  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
 
-  // Salva itens (só os que têm alguma quantidade > 0, ou todos)
   const itensComId = itens.map(it => ({ ...it, inventario_id: inv.id }));
   await sb.from('est_inventario_itens').insert(itensComId);
 
-  toast(`${num_inv} salvo! Total: ${brl(totalGeral)}`, 'ok');
+  toast(`${num_inv} salvo! Total pedido: ${totalPedido}`, 'ok');
   carregarHistoricoInv();
 
-  // Limpa os campos
-  document.querySelectorAll('.inv-campo').forEach(el => { el.value = el.id.startsWith('inv-val-') ? '' : '0'; });
-  document.querySelectorAll('[id^="inv-tot-"]').forEach(el => el.textContent = '0');
-  document.querySelectorAll('[id^="inv-soma-"]').forEach(el => el.textContent = 'R$ 0,00');
-  calcTotalInv();
+  // Limpa os campos de estoque
+  _invProds.forEach((_, i) => {
+    const el = document.getElementById(`inv-est-${i}`);
+    if (el) el.value = '0';
+    calcPedidoInv(i);
+  });
 }
 
 async function carregarHistoricoInv() {
   const fil  = document.getElementById('hist-inv-fil')?.value || '';
-  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,setor,responsavel,total_geral').order('criado_em', { ascending: false });
+  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,setor,grupo,responsavel,total_geral').order('criado_em', { ascending: false });
   if (fil) query = query.eq('local', fil);
   const { data: lista } = await query;
 
@@ -2512,10 +2550,12 @@ async function carregarHistoricoInv() {
         <span class="badge me-2" style="background:${localCor}">${inv.local}</span>
         <strong>${dataBR}</strong>
         ${inv.setor ? `<span class="badge ms-1" style="background:#6f42c1">${esc(inv.setor)}</span>` : ''}
+        ${inv.grupo ? `<span class="badge ms-1" style="background:#0d6efd">${esc(inv.grupo)}</span>` : ''}
         ${inv.responsavel ? `<span class="text-muted ms-2">— ${inv.responsavel}</span>` : ''}
       </div>
       <div class="d-flex align-items-center gap-2">
-        <strong class="text-success">${brl(inv.total_geral)}</strong>
+        <span class="text-muted small me-1">Pedido:</span>
+        <strong class="text-primary">${inv.total_geral ?? 0}</strong>
         <button class="btn btn-sm btn-outline-danger" onclick="excluirInventario('${inv.id}')">
           <i class="bi bi-trash"></i>
         </button>
