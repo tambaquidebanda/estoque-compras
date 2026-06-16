@@ -3659,12 +3659,13 @@ async function confirmarRecebimento() {
   }
 
   // Marca cada item: se qtd completa → recebido; se parcial → atualiza quantidade restante
+  // Sempre atualiza custo_unit com o valor efetivamente recebido
   for (const ir of itensReceb) {
     const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
     if (restante <= 0.001) {
-      await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('id', ir.compra_id);
+      await sb.from('cmp_compras').update({ status_receb: 'recebido', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
     } else {
-      await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente' }).eq('id', ir.compra_id);
+      await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
     }
   }
   // Persiste acréscimo atualizado
@@ -5290,11 +5291,17 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
 
-  // Recalcula total com acréscimo direto do banco (garante valor correto independente de quem chamou)
+  // Recalcula total com acréscimo — fonte primária: cmp_contas_pagar.valor (sempre correto)
+  // Fallback: subtotal dos itens + acrescimo de cmp_compras
   if (pedRows?.length) {
     const subtotalDB  = pedRows.reduce((s, r) => s + (r.quantidade||0) * (r.custo_unit||0), 0);
     const acrescimoDB = parseFloat(pedRow0.acrescimo) || 0;
-    setMoeda('gc-valor', subtotalDB + acrescimoDB);
+    const { data: contaRow } = await sb.from('cmp_contas_pagar')
+      .select('valor').eq('pedido_num', pedido_num).maybeSingle();
+    const valorFinal = (contaRow?.valor && contaRow.valor > subtotalDB)
+      ? contaRow.valor
+      : subtotalDB + acrescimoDB;
+    setMoeda('gc-valor', valorFinal);
   }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';

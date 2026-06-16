@@ -664,18 +664,18 @@ async function confirmarRecebimento() {
   if (errItens) console.error('Itens:', errItens.message);
 
   // 3. Atualiza cada item incluído individualmente
-  //    - Se recebeu a quantidade completa → fecha (status_receb = 'recebido')
-  //    - Se recebeu menos → atualiza a quantidade para o restante e mantém pendente
   for (const ir of itensReceb) {
     const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
     if (restante <= 0.001) {
-      // Entrega completa deste item
-      await sb.from('cmp_compras').update({ status_receb: 'recebido' }).eq('id', ir.compra_id);
+      await sb.from('cmp_compras').update({
+        status_receb: 'recebido',
+        custo_unit: ir.valor_unitario,
+      }).eq('id', ir.compra_id);
     } else {
-      // Entrega parcial: reduz quantidade pendente para o restante
       await sb.from('cmp_compras').update({
         quantidade: Math.max(restante, 0),
         status_receb: 'pendente',
+        custo_unit: ir.valor_unitario,
       }).eq('id', ir.compra_id);
     }
   }
