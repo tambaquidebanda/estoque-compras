@@ -4781,6 +4781,33 @@ async function excluirProduto() {
   irCadSb('produtos', null);
 }
 
+async function duplicarProduto() {
+  if (!_prodAtual) return;
+  const p = _prodAtual;
+
+  const { data, error } = await sb.from('est_produtos').insert([{
+    nome:            p.nome + ' (cópia)',
+    tipo:            p.tipo            || 'MP',
+    categoria:       p.categoria       || null,
+    plano_cat:       p.plano_cat       || null,
+    unidade_comp:    p.unidade_comp    || 'UN',
+    unidade_uso:     p.unidade_uso     || 'UN',
+    custo_comp:      p.custo_comp      || 0,
+    custo_uso:       p.custo_uso       || 0,
+    preco_venda:     p.preco_venda     || 0,
+    estoque_min:     p.estoque_min     || 0,
+    fator_conversao: p.fator_conversao || 1,
+    perda:           p.perda           || 0,
+    ativo:           true,
+  }]).select('id,nome,tipo,categoria,plano_cat,unidade_comp,unidade_uso,custo_comp,custo_uso,preco_venda,estoque_min,ativo,fator_conversao,perda').single();
+
+  if (error) { toast('Erro ao duplicar: ' + error.message, 'erro'); return; }
+
+  cProdutosFT.push(data);
+  toast('Produto duplicado! Edite o nome e salve.', 'ok');
+  abrirProduto(data.id);
+}
+
 async function carregarFichaProduto() {
   if (!_prodAtual) return;
   const cont = document.getElementById('prod-ficha-conteudo');
