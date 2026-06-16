@@ -3578,6 +3578,12 @@ async function confirmarRecebimento() {
 
   const acrescimo     = parseMoeda('receb-acrescimo');
 
+  // Alerta se acréscimo = 0 (possível esquecimento)
+  if (acrescimo === 0) {
+    const ok = confirm('⚠️ O campo Acréscimo está zerado.\n\nSe a NF tem frete ou taxa, cancele e preencha o valor antes de confirmar.\n\nDeseja continuar sem acréscimo?');
+    if (!ok) return;
+  }
+
   // Apenas itens marcados para receber agora
   const incluidos = _recebItensAbertos.filter(x => document.getElementById(`inc-rec-${x.id}`)?.classList.contains('checked'));
   if (!incluidos.length) { toast('Selecione ao menos um item para receber.', 'erro'); return; }

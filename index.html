@@ -1844,9 +1844,16 @@
 
         <div class="row g-3 mb-3">
           <div class="col-md-4">
-            <label class="form-label fw-semibold">Valor (R$) *</label>
-            <input type="text" class="form-control" id="gc-valor" placeholder="0,00"
-              inputmode="decimal" oninput="mascaraMoeda(this)" onfocus="moedaFocus(this)" onblur="moedaBlur(this)">
+            <label class="form-label fw-semibold">
+              Valor Total da NF (R$) *
+              <span class="text-warning fw-normal small ms-1">✏️ editável</span>
+            </label>
+            <input type="text" class="form-control fw-bold fs-5 text-center" id="gc-valor" placeholder="0,00"
+              inputmode="decimal" oninput="mascaraMoeda(this)" onfocus="moedaFocus(this)" onblur="moedaBlur(this)"
+              style="border:2px solid #ffc107;border-radius:8px">
+            <div class="form-text text-warning fw-semibold">
+              ⚠️ Confira se inclui acréscimos (frete, taxa)
+            </div>
           </div>
           <div class="col-md-4">
             <label class="form-label fw-semibold">Vencimento *</label>
