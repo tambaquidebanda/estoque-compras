@@ -1839,6 +1839,9 @@ function editarGrupo(id, nomeAtual) {
 async function salvarEdicaoGrupo(id) {
   const nome = (document.getElementById(`edit-grupo-${id}`)?.value || '').trim().toUpperCase();
   if (!nome) { toast('Informe o nome do grupo.', 'erro'); return; }
+
+  const nomeAntigo = cGrupos.find(g => g.id == id)?.nome || '';
+
   const { data, error } = await sb.from('est_grupos_produto').update({ nome }).eq('id', id).select();
   if (error) { toast('Erro ao atualizar: ' + error.message, 'erro'); return; }
   if (!data || data.length === 0) {
@@ -1846,6 +1849,16 @@ async function salvarEdicaoGrupo(id) {
     await carregarGrupos();
     return;
   }
+
+  // Atualiza também todos os produtos que usavam o nome antigo
+  if (nomeAntigo && nomeAntigo !== nome) {
+    await sb.from('est_produtos').update({ categoria: nome }).eq('categoria', nomeAntigo);
+    // Reseta o filtro de grupo da lista de produtos para forçar recarregar
+    const selCat = document.getElementById('ft-cat');
+    if (selCat) selCat.innerHTML = '<option value="">Todos</option>';
+    await carregarProdutosFT(true);
+  }
+
   toast('Grupo atualizado!', 'ok');
   await carregarGrupos();
 }
