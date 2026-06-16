@@ -4352,19 +4352,19 @@ async function carregarCompras() {
   const numeros = Object.keys(grupos);
   const lancSet     = new Set();
   const rascunhoSet = new Set();
+  const adiantSet   = new Set(); // pedidos com adiantamento_lancamento_id (advance separado)
   const valorRecebMap = {}; // pedido_num → valor efetivamente recebido (cmp_contas_pagar.valor)
   if (numeros.length) {
     const [resLanc, resRasc, resContas] = await Promise.all([
       sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
       sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
-      // Busca valor recebido real e status financeiro
-      sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,valor').in('pedido_num', numeros),
+      sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,adiantamento_lancamento_id,valor').in('pedido_num', numeros),
     ]);
     (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
     (resContas.data || []).forEach(c => {
-      if (c.lancamento_id) lancSet.add(c.pedido_num);
-      // sem lancamento_id = recebido mas não integrado → mostra "Gerar Conta"
+      if (c.lancamento_id)              lancSet.add(c.pedido_num);
+      if (c.adiantamento_lancamento_id) adiantSet.add(c.pedido_num);
       if (c.valor > 0) valorRecebMap[c.pedido_num] = c.valor;
     });
   }
@@ -4406,19 +4406,51 @@ async function carregarCompras() {
     const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : '—';
     const corEstoque  = g.recebido ? '#2EC4B6' : '#FF6B35';
     const statusEstoque = g.recebido ? '✅ Recebido' : '⏳ Pendente';
-    const enviado = lancSet.has(g.pedido_num);
-    const aguardando = !enviado && rascunhoSet.has(g.pedido_num);
-    const badgeFinanc = enviado
-      ? `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`
-      : aguardando
-        ? `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`
-        : g.recebido
-          ? `<button class="btn btn-sm btn-outline-primary py-0 px-2"
-               onclick="event.stopPropagation();abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
-               title="Pedido recebido mas não enviado ao financeiro">
-               <i class="bi bi-arrow-left-right"></i> Gerar Conta
-             </button>`
-          : `<span class="badge bg-light text-muted border">Não enviado</span>`;
+    const enviado    = lancSet.has(g.pedido_num);
+    const adiantado  = adiantSet.has(g.pedido_num);
+    const aguardando = !enviado && !adiantado && rascunhoSet.has(g.pedido_num);
+
+    let badgeFinanc;
+    if (enviado && adiantado) {
+      // Adiantamento + NF registrados = completo
+      badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`;
+    } else if (enviado) {
+      // NF no financeiro — pode ser do fluxo antigo onde o advance usou lancamento_id
+      badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`
+        + (g.recebido
+          ? `<button class="btn btn-sm btn-link p-0 d-block mt-1" style="font-size:.73rem;color:#fd7e14;text-decoration:none"
+               onclick="event.stopPropagation();abrirRegistrarNFReal('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}')"
+               title="O lançamento atual era um adiantamento? Registre o valor real da NF aqui">
+               📄 Registrar NF Real</button>` : '');
+    } else if (adiantado && g.recebido) {
+      // Adiantamento feito + recebido → aguardando Gerar NF
+      badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>
+        <button class="btn btn-sm btn-outline-primary py-0 px-2 d-block mt-1"
+          onclick="event.stopPropagation();abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
+          title="Registrar NF com valor real no financeiro">
+          <i class="bi bi-arrow-left-right"></i> Gerar NF
+        </button>`;
+    } else if (adiantado) {
+      // Adiantamento feito, aguardando recebimento
+      badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>`;
+    } else if (aguardando) {
+      badgeFinanc = `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`;
+    } else if (g.recebido) {
+      // Recebido, sem adiantamento → Gerar Conta normal
+      badgeFinanc = `<button class="btn btn-sm btn-outline-primary py-0 px-2"
+          onclick="event.stopPropagation();abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
+          title="Pedido recebido — enviar ao financeiro">
+          <i class="bi bi-arrow-left-right"></i> Gerar Conta
+        </button>`;
+    } else {
+      // Não recebido, sem adiantamento
+      badgeFinanc = `<span class="badge bg-light text-muted border">Não enviado</span>
+        <button class="btn btn-sm btn-outline-warning py-0 px-2 d-block mt-1"
+          onclick="event.stopPropagation();abrirAdiantamento('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
+          title="Enviar adiantamento ao financeiro (dinheiro sai antes do recebimento)">
+          💳 Adiantamento
+        </button>`;
+    }
     const podeEditar   = !g.recebido && !enviado;
     const podeReabrir  = g.recebido && !aguardando;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
@@ -5293,16 +5325,47 @@ function inicializarToggleIntegracao() {
   }
 }
 
-async function abrirGerarConta(pedido_num, forn, fornId, total) {
+function abrirAdiantamento(pedido_num, forn, fornId, total) {
+  abrirGerarConta(pedido_num, forn, fornId, total, 'adiantamento');
+}
+
+function abrirRegistrarNFReal(pedido_num, forn, fornId) {
+  abrirGerarConta(pedido_num, forn, fornId, 0, 'nf-real');
+}
+
+async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   if (!cCat.length) await carregarCaches();
-  document.getElementById('gc-pedido-num').value           = pedido_num;
-  document.getElementById('gc-fornecedor-id').value        = fornId;
-  document.getElementById('gc-pedido-label').textContent   = pedido_num;
+  document.getElementById('gc-pedido-num').value             = pedido_num;
+  document.getElementById('gc-fornecedor-id').value          = fornId;
+  document.getElementById('gc-pedido-label').textContent     = pedido_num;
   document.getElementById('gc-fornecedor-label').textContent = forn || '—';
+  document.getElementById('gc-tipo').value                   = tipo;
   setMoeda('gc-valor', total);
   document.getElementById('gc-vencimento').value = '';
   document.getElementById('gc-nf').value         = '';
   document.getElementById('gc-preview').classList.add('d-none');
+
+  // Título e alerta informativo por tipo
+  const titulo  = document.getElementById('gc-modal-title');
+  const infoEl  = document.getElementById('gc-tipo-info');
+  if (tipo === 'adiantamento') {
+    titulo.innerHTML = '<i class="bi bi-send"></i> Registrar Adiantamento ao Financeiro';
+    infoEl.innerHTML = `<div class="alert alert-warning py-2 small mb-2 mt-2">
+      💳 <strong>Adiantamento:</strong> O dinheiro sairá da conta antes do recebimento.
+      Após receber os itens com o valor real da NF, use <strong>"Gerar NF"</strong> para
+      registrar o custo definitivo no financeiro.</div>`;
+    infoEl.classList.remove('d-none');
+  } else if (tipo === 'nf-real') {
+    titulo.innerHTML = '<i class="bi bi-file-earmark-text"></i> Registrar NF Real no Financeiro';
+    infoEl.innerHTML = `<div class="alert alert-info py-2 small mb-2 mt-2">
+      📄 <strong>NF Real:</strong> O lançamento anterior (adiantamento) ficará preservado como referência.
+      Um novo lançamento será criado com o valor real da nota fiscal recebida.</div>`;
+    infoEl.classList.remove('d-none');
+  } else {
+    titulo.innerHTML = '<i class="bi bi-arrow-left-right"></i> Gerar Conta a Pagar no Financeiro';
+    infoEl.innerHTML = '';
+    infoEl.classList.add('d-none');
+  }
 
   // Busca dados do pedido (forma_pagamento + itens + acréscimo para quando _pedidosGrupos estiver vazio)
   const { data: pedRows } = await sb.from('cmp_compras')
@@ -5311,23 +5374,31 @@ async function abrirGerarConta(pedido_num, forn, fornId, total) {
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
 
-  // Recalcula total com acréscimo — fonte primária: cmp_contas_pagar.valor (sempre correto)
-  // Fallback: subtotal dos itens + acrescimo de cmp_compras
+  // Calcula valor a exibir no modal
   if (pedRows?.length) {
     const subtotalDB  = pedRows.reduce((s, r) => s + (r.quantidade||0) * (r.custo_unit||0), 0);
     const acrescimoDB = parseFloat(pedRow0.acrescimo) || 0;
     const { data: contaRow } = await sb.from('cmp_contas_pagar')
       .select('valor').eq('pedido_num', pedido_num).maybeSingle();
-    const valorFinal = (contaRow?.valor && contaRow.valor > subtotalDB)
-      ? contaRow.valor
-      : subtotalDB + acrescimoDB;
+
+    let valorFinal;
+    if (tipo === 'nf-real') {
+      // NF Real: usa o valor real recebido (cmp_contas_pagar.valor, gravado no recebimento)
+      valorFinal = contaRow?.valor || subtotalDB + acrescimoDB;
+    } else {
+      // Adiantamento ou NF normal: fonte primária é cmp_contas_pagar.valor se maior que subtotal
+      valorFinal = (contaRow?.valor && contaRow.valor > subtotalDB)
+        ? contaRow.valor
+        : subtotalDB + acrescimoDB;
+    }
     setMoeda('gc-valor', valorFinal);
   }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
+  const prefixoObs = tipo === 'adiantamento' ? 'Adiantamento Pedido' : tipo === 'nf-real' ? 'NF Pedido' : 'Pedido';
   document.getElementById('gc-obs').value = formaPgto
-    ? `Pedido ${pedido_num} — ${formaPgto}`
-    : `Pedido ${pedido_num}`;
+    ? `${prefixoObs} ${pedido_num} — ${formaPgto}`
+    : `${prefixoObs} ${pedido_num}`;
 
   // Se fornId não veio (null/vazio), resolve pelo nome ou pela linha do banco
   if (!fornId) {
@@ -5460,37 +5531,69 @@ async function confirmarGerarConta() {
   const nf_numero     = document.getElementById('gc-nf').value.trim() || null;
   const obs           = document.getElementById('gc-obs').value.trim();
   const forn_nome     = document.getElementById('gc-fornecedor-label').textContent;
+  const tipo          = document.getElementById('gc-tipo').value || 'nf';
 
   if (!valor || valor <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
 
-  const temRateio   = !document.getElementById('gc-rateio-section').classList.contains('d-none');
-  const plano_conta = temRateio ? null : document.getElementById('gc-plano-label').textContent;
-
-  // plano_conta_id já resolvido em abrirGerarConta via query direta ao banco
+  const temRateio             = !document.getElementById('gc-rateio-section').classList.contains('d-none');
+  const plano_conta           = temRateio ? null : document.getElementById('gc-plano-label').textContent;
   const rateioItensResolvidos = temRateio ? _rateioItensAtual : [];
+  const unidade_id            = document.getElementById('gc-unidade')?.value || null;
 
-  // Upsert em cmp_contas_pagar
-  const { data: conta } = await sb.from('cmp_contas_pagar')
-    .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
-            { onConflict: 'pedido_num', ignoreDuplicates: false })
-    .select().single();
-
-  const unidade_id = document.getElementById('gc-unidade')?.value || null;
-
-  await gerarContaFinanceiro({
-    pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
-    plano_conta, nf_numero, conta_id: conta?.id || null,
-    obs: obs || `Pedido ${pedido_num}`,
-    temRateio, rateioItensResolvidos, unidade_id,
-  });
+  if (tipo === 'nf-real') {
+    // Fluxo NF Real: move lancamento_id atual → adiantamento_lancamento_id, cria novo lançamento para NF
+    const { data: contaExist } = await sb.from('cmp_contas_pagar')
+      .select('id,lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
+    if (contaExist?.lancamento_id) {
+      await sb.from('cmp_contas_pagar').update({
+        adiantamento_lancamento_id: contaExist.lancamento_id,
+        lancamento_id: null,
+        vencimento, valor, nf_numero,
+      }).eq('id', contaExist.id);
+    }
+    await gerarContaFinanceiro({
+      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      plano_conta, nf_numero, conta_id: contaExist?.id || null,
+      obs: obs || `NF Pedido ${pedido_num}`,
+      temRateio, rateioItensResolvidos, unidade_id,
+      campo_id_destino: 'lancamento_id',
+    });
+  } else if (tipo === 'adiantamento') {
+    // Fluxo Adiantamento: cria/atualiza cmp_contas_pagar sem tocar em lancamento_id
+    const { data: conta } = await sb.from('cmp_contas_pagar')
+      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
+              { onConflict: 'pedido_num', ignoreDuplicates: false })
+      .select().single();
+    await gerarContaFinanceiro({
+      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      plano_conta, nf_numero, conta_id: conta?.id || null,
+      obs: obs || `Adiantamento Pedido ${pedido_num}`,
+      temRateio, rateioItensResolvidos, unidade_id,
+      campo_id_destino: 'adiantamento_lancamento_id',
+    });
+  } else {
+    // Fluxo NF normal (padrão)
+    const { data: conta } = await sb.from('cmp_contas_pagar')
+      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
+              { onConflict: 'pedido_num', ignoreDuplicates: false })
+      .select().single();
+    await gerarContaFinanceiro({
+      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      plano_conta, nf_numero, conta_id: conta?.id || null,
+      obs: obs || `Pedido ${pedido_num}`,
+      temRateio, rateioItensResolvidos, unidade_id,
+      campo_id_destino: 'lancamento_id',
+    });
+  }
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
   renderPendentes();
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
-  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [], unidade_id = null }) {
+  fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [], unidade_id = null,
+  campo_id_destino = 'lancamento_id' }) {
 
   const producao = modoIntegracaoProducao();
 
@@ -5564,9 +5667,9 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
     if (errRateio) toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro');
   }
 
-  // Registra lancamento_id na conta a pagar local
+  // Registra o id do lançamento no campo correto (lancamento_id ou adiantamento_lancamento_id)
   if (conta_id && lanc?.id) {
-    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', conta_id);
+    await sb.from('cmp_contas_pagar').update({ [campo_id_destino]: lanc.id }).eq('id', conta_id);
   }
 
   toast(`✅ Conta gerada no financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');

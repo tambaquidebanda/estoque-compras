@@ -1803,12 +1803,14 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-arrow-left-right"></i> Gerar Conta a Pagar no Financeiro</h5>
+        <h5 class="modal-title" id="gc-modal-title"><i class="bi bi-arrow-left-right"></i> Gerar Conta a Pagar no Financeiro</h5>
         <button class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="gc-pedido-num">
         <input type="hidden" id="gc-fornecedor-id">
+        <input type="hidden" id="gc-tipo" value="nf">
+        <div id="gc-tipo-info" class="d-none"></div>
 
         <div class="row g-3 mb-3">
           <div class="col-md-3">
