@@ -560,6 +560,17 @@ async function abrirPedido(pedido_num) {
                 onfocus="moedaFocus(this)">
             </div>
           </div>
+          <div class="campo-bloco campo-full">
+            <span class="campo-lbl" style="color:#FF6B35">Desconto (R$)</span>
+            <div class="campo-input-row">
+              <span class="campo-rs" style="color:#FF6B35">-</span>
+              <input type="text" inputmode="decimal" class="campo-text" id="dc-${sid}"
+                value="0,00"
+                oninput="mascaraMoeda(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                onblur="moedaBlur(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                onfocus="moedaFocus(this)">
+            </div>
+          </div>
         </div>
         <div class="tog-row">
           <span class="tog-lbl warn">⚠️ Divergência de quantidade</span>
@@ -594,10 +605,12 @@ function togIncluir(id) {
 }
 
 function atualizarTotal(id, qtdPedida) {
-  const qtdRec = parseFloat(document.getElementById(`qr-${id}`)?.value) || 0;
-  const preco  = parseMoeda(`pu-${id}`);
-  const totEl  = document.getElementById(`tot-${id}`);
-  if (totEl) totEl.textContent = brl(qtdRec * preco);
+  const qtdRec   = parseFloat(document.getElementById(`qr-${id}`)?.value) || 0;
+  const preco    = parseMoeda(`pu-${id}`);
+  const desconto = parseMoeda(`dc-${id}`);
+  const total    = Math.max(0, qtdRec * preco - desconto);
+  const totEl    = document.getElementById(`tot-${id}`);
+  if (totEl) totEl.textContent = brl(total);
   if (Math.abs(qtdRec - qtdPedida) > 0.001) {
     const tog = document.getElementById(`dt-${id}`);
     if (tog && !tog.checked) { tog.checked = true; togObs(String(id)); }
@@ -621,9 +634,10 @@ function atualizarTotalGeral() {
     const sid   = String(it.id);
     const chk   = document.getElementById(`inc-${sid}`);
     if (!chk?.checked) return;
-    const qtd   = parseFloat(document.getElementById(`qr-${sid}`)?.value) || 0;
-    const preco = parseMoeda(`pu-${sid}`);
-    soma += qtd * preco;
+    const qtd      = parseFloat(document.getElementById(`qr-${sid}`)?.value) || 0;
+    const preco    = parseMoeda(`pu-${sid}`);
+    const desconto = parseMoeda(`dc-${sid}`);
+    soma += Math.max(0, qtd * preco - desconto);
   });
   const acr = parseMoeda('rec-acrescimo');
   const el  = document.getElementById('rec-total');
@@ -657,15 +671,19 @@ async function confirmarRecebimento() {
   const ref = itensIncluidos[0];
 
   const itensReceb = itensIncluidos.map(it => {
-    const qtdRec = parseFloat(document.getElementById(`qr-${it.id}`)?.value) || 0;
-    const preco  = parseMoeda(`pu-${it.id}`) || it.custo_unit || 0;
+    const qtdRec   = parseFloat(document.getElementById(`qr-${it.id}`)?.value) || 0;
+    const preco    = parseMoeda(`pu-${it.id}`) || it.custo_unit || 0;
+    const desconto = parseMoeda(`dc-${it.id}`);
+    const totalItem = Math.max(0, qtdRec * preco - desconto);
+    // valor_unitario efetivo = total_com_desconto / qtd
+    const vlrEfetivo = qtdRec > 0 ? totalItem / qtdRec : preco;
     const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
     const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
       compra_id: it.id, produto: it.produto, categoria: it.categoria || '',
       unidade: it.unidade_med || '', qtd_pedida: it.quantidade || 0,
-      qtd_recebida: qtdRec, valor_unitario: preco,
-      total_recebido: qtdRec * preco,
+      qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
+      total_recebido: totalItem,
       divergencia: diverg, obs_divergencia: obs,
     };
   });
