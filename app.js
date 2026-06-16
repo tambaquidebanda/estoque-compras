@@ -4341,20 +4341,29 @@ async function carregarCompras() {
   const numeros = Object.keys(grupos);
   const lancSet     = new Set();
   const rascunhoSet = new Set();
+  const valorRecebMap = {}; // pedido_num → valor efetivamente recebido (cmp_contas_pagar.valor)
   if (numeros.length) {
     const [resLanc, resRasc, resContas] = await Promise.all([
       sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
       sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
-      // Fonte adicional: cmp_contas_pagar com lancamento_id vinculado (cobre quando numero_pedido é NF)
-      sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id').in('pedido_num', numeros),
+      // Busca valor recebido real e status financeiro
+      sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,valor').in('pedido_num', numeros),
     ]);
     (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
     (resContas.data || []).forEach(c => {
       if (c.lancamento_id) lancSet.add(c.pedido_num);
       // sem lancamento_id = recebido mas não integrado → mostra "Gerar Conta"
+      if (c.valor > 0) valorRecebMap[c.pedido_num] = c.valor;
     });
   }
+
+  // Para pedidos recebidos: usa cmp_contas_pagar.valor como total (correto: qtd_recebida × preço_recebido + acréscimo)
+  Object.values(grupos).forEach(g => {
+    if (g.recebido && valorRecebMap[g.pedido_num]) {
+      g.total = valorRecebMap[g.pedido_num];
+    }
+  });
 
   let lista = Object.values(grupos).sort((a,b) => b.pedido_num.localeCompare(a.pedido_num));
 
