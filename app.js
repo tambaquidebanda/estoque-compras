@@ -1839,8 +1839,13 @@ function editarGrupo(id, nomeAtual) {
 async function salvarEdicaoGrupo(id) {
   const nome = (document.getElementById(`edit-grupo-${id}`)?.value || '').trim().toUpperCase();
   if (!nome) { toast('Informe o nome do grupo.', 'erro'); return; }
-  const { error } = await sb.from('est_grupos_produto').update({ nome }).eq('id', id);
+  const { data, error } = await sb.from('est_grupos_produto').update({ nome }).eq('id', id).select();
   if (error) { toast('Erro ao atualizar: ' + error.message, 'erro'); return; }
+  if (!data || data.length === 0) {
+    toast('Sem permissão para editar grupos. Verifique as políticas RLS no Supabase.', 'erro');
+    await carregarGrupos();
+    return;
+  }
   toast('Grupo atualizado!', 'ok');
   await carregarGrupos();
 }
