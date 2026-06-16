@@ -270,15 +270,21 @@
     <div>
       <label class="campo-lbl">➕ Acréscimo (R$)</label>
       <input type="text" id="rec-acrescimo" placeholder="0,00" inputmode="decimal"
-        oninput="mascaraMoeda(this)"
+        oninput="mascaraMoeda(this);atualizarTotalGeral()"
         onfocus="moedaFocus(this)"
-        onblur="moedaBlur(this)">
+        onblur="moedaBlur(this);atualizarTotalGeral()">
     </div>
   </div>
 
   <div class="itens-corpo" id="rec-itens"></div>
 
   <div class="rodape-fixo">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0 .6rem;border-top:1px solid var(--borda);margin-bottom:.5rem">
+      <span style="font-size:.8rem;color:var(--txt2)">👤 <span id="rec-responsavel" style="color:var(--txt)">—</span></span>
+      <span style="font-size:.85rem;font-weight:700">
+        Total: <span id="rec-total" style="color:var(--verde);font-size:1.05rem">R$ 0,00</span>
+      </span>
+    </div>
     <button class="btn-confirmar" id="btn-confirmar" onclick="confirmarRecebimento()">
       ✅ Confirmar Recebimento
     </button>
@@ -505,6 +511,11 @@ async function abrirPedido(pedido_num) {
   document.getElementById('rec-nf').value        = '';
   setMoeda('rec-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
 
+  // Mostra nome do responsável (usuário logado)
+  const nomeResp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const elResp = document.getElementById('rec-responsavel');
+  if (elResp) elResp.textContent = nomeResp || '—';
+
   document.getElementById('rec-itens').innerHTML = itens.map(it => {
     const qtdFmt  = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
     const precoFmt = (it.custo_unit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -564,6 +575,9 @@ async function abrirPedido(pedido_num) {
 
   mostrar('tela-pedido');
   window.scrollTo(0, 0);
+
+  // Todos os itens começam marcados por padrão; calcula total inicial
+  setTimeout(atualizarTotalGeral, 50);
 }
 
 function voltarLista() {
@@ -576,6 +590,7 @@ function togIncluir(id) {
   const totEl = document.getElementById(`tot-${id}`);
   if (!totEl) return;
   totEl.style.color = chk?.checked ? 'var(--verde)' : 'var(--txt2)';
+  atualizarTotalGeral();
 }
 
 function atualizarTotal(id, qtdPedida) {
@@ -587,6 +602,7 @@ function atualizarTotal(id, qtdPedida) {
     const tog = document.getElementById(`dt-${id}`);
     if (tog && !tog.checked) { tog.checked = true; togObs(String(id)); }
   }
+  atualizarTotalGeral();
 }
 
 function togObs(id) {
@@ -598,7 +614,21 @@ function togObs(id) {
   card.classList.toggle('diverg', tog.checked);
 }
 
-function atualizarTotalAcrescimo() { /* acréscimo reflete no confirmar — sem display separado */ }
+function atualizarTotalGeral() {
+  if (!_pedidoAtual) return;
+  let soma = 0;
+  _pedidoAtual.itens.forEach(it => {
+    const sid   = String(it.id);
+    const chk   = document.getElementById(`inc-${sid}`);
+    if (!chk?.checked) return;
+    const qtd   = parseFloat(document.getElementById(`qr-${sid}`)?.value) || 0;
+    const preco = parseMoeda(`pu-${sid}`);
+    soma += qtd * preco;
+  });
+  const acr = parseMoeda('rec-acrescimo');
+  const el  = document.getElementById('rec-total');
+  if (el) el.textContent = brl(soma + acr);
+}
 
 // ── CONFIRMAR ────────────────────────────────────────────────────
 async function confirmarRecebimento() {
