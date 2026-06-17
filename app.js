@@ -2531,6 +2531,59 @@ async function salvarInventario() {
   });
 }
 
+function verDivergenciasInv() {
+  if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
+
+  const divergencias = [];
+
+  Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
+    Object.entries(grupos).forEach(([grupo, nomes]) => {
+      nomes.forEach(nome => {
+        const nomNorm = norm(nome.trim());
+        const match = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
+        if (!match) {
+          // Busca sugestão: produto cujo nome normalizado contenha alguma palavra-chave do nome procurado
+          const palavras = nomNorm.split(/\s+/).filter(p => p.length > 2);
+          const sugestoes = cProdutosFT
+            .map(p => {
+              const pNorm = norm(p.nome.trim());
+              const hits = palavras.filter(w => pNorm.includes(w)).length;
+              return { nome: p.nome, hits };
+            })
+            .filter(s => s.hits > 0)
+            .sort((a, b) => b.hits - a.hits)
+            .slice(0, 3)
+            .map(s => s.nome);
+
+          divergencias.push({ setor, grupo, nome, sugestoes });
+        }
+      });
+    });
+  });
+
+  const resumoEl = document.getElementById('div-divergencias-resumo');
+  const tbody    = document.getElementById('tb-divergencias-inv');
+
+  if (!divergencias.length) {
+    resumoEl.innerHTML = '<div class="alert alert-success py-2 mb-2">✅ Nenhuma divergência encontrada — todos os produtos têm correspondência!</div>';
+    tbody.innerHTML = '';
+  } else {
+    resumoEl.innerHTML = `<div class="alert alert-warning py-2 mb-0">${divergencias.length} produto(s) sem correspondência em ${[...new Set(divergencias.map(d => d.setor))].length} setor(es).</div>`;
+    tbody.innerHTML = divergencias.map(d => `
+      <tr>
+        <td class="ps-3 fw-semibold" style="color:#FF6B35">${esc(d.setor)}</td>
+        <td class="text-muted">${esc(d.grupo)}</td>
+        <td><code style="color:#dc3545">${esc(d.nome)}</code></td>
+        <td style="color:#198754;font-size:.8rem">${d.sugestoes.length
+          ? d.sugestoes.map(s => `<div>→ ${esc(s)}</div>`).join('')
+          : '<span class="text-muted">nenhuma sugestão encontrada</span>'
+        }</td>
+      </tr>`).join('');
+  }
+
+  new bootstrap.Modal(document.getElementById('modal-divergencias-inv')).show();
+}
+
 async function carregarHistoricoInv() {
   const fil  = document.getElementById('hist-inv-fil')?.value || '';
   let query  = sb.from('est_inventarios').select('id,num_inv,data,local,setor,grupo,responsavel,total_geral').order('criado_em', { ascending: false });

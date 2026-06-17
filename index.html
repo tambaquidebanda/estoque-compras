@@ -1077,6 +1077,9 @@
             <button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarPadroes()">
               <i class="bi bi-gear"></i> Configurar Padrões
             </button>
+            <button class="btn btn-sm btn-outline-warning" onclick="verDivergenciasInv()" id="btn-divergencias-inv">
+              <i class="bi bi-exclamation-triangle"></i> Ver Divergências
+            </button>
             <button class="btn btn-primary" onclick="salvarInventario()">
               <i class="bi bi-floppy-fill"></i> Salvar Inventário
             </button>
@@ -1113,6 +1116,41 @@
           </select>
         </div>
         <div id="lst-historico-inv"><p class="text-muted">Nenhum inventário salvo ainda.</p></div>
+      </div>
+
+      <!-- Modal: Divergências de Produtos no Inventário (temporário) -->
+      <div class="modal fade" id="modal-divergencias-inv" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#856404;color:#fff">
+              <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Produtos sem match no Inventário</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+              <div class="px-3 pt-3 pb-2 small text-muted">
+                Produtos listados em <strong>INVENTARIO_ESTRUTURA</strong> que não encontraram correspondência em <strong>est_produtos</strong> (após normalização de acentos). Corrija os nomes no código ou no cadastro de produtos.
+              </div>
+              <div id="div-divergencias-resumo" class="px-3 pb-2"></div>
+              <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0" style="font-size:.83rem">
+                  <thead style="background:#f8f9fa;position:sticky;top:0">
+                    <tr>
+                      <th class="ps-3">Setor</th>
+                      <th>Grupo</th>
+                      <th>Nome na INVENTARIO_ESTRUTURA</th>
+                      <th>Sugestão mais próxima em est_produtos</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tb-divergencias-inv"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <small class="text-muted me-auto">Após corrigir os nomes no código, recarregue a página e verifique novamente.</small>
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Modal: Configurar Pedido Padrão -->
