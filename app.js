@@ -5431,9 +5431,7 @@ function atualizarTotalGC() {
   const acrescimo = parseMoeda('gc-acrescimo') || 0;
   const total     = nota + acrescimo;
   const el = document.getElementById('gc-total-display');
-  if (!el) return;
-  const spanValor = el.querySelector('span:last-child');
-  if (spanValor) spanValor.textContent = total > 0 ? brl(total) : '—';
+  if (el) el.textContent = total > 0 ? brl(total) : '—';
 }
 
 async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
