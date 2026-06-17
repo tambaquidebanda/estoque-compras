@@ -5429,8 +5429,11 @@ function abrirRegistrarNFReal(pedido_num, forn, fornId) {
 function atualizarTotalGC() {
   const nota      = parseMoeda('gc-valor') || 0;
   const acrescimo = parseMoeda('gc-acrescimo') || 0;
+  const total     = nota + acrescimo;
   const el = document.getElementById('gc-total-display');
-  if (el) el.textContent = acrescimo > 0 ? `Total: ${brl(nota + acrescimo)}` : '';
+  if (!el) return;
+  const spanValor = el.querySelector('span:last-child');
+  if (spanValor) spanValor.textContent = total > 0 ? brl(total) : '—';
 }
 
 async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {

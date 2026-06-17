@@ -1883,11 +1883,12 @@
           <div class="form-control bg-light" id="gc-plano-label"></div>
         </div>
 
-        <div class="row g-3 mb-3">
+        <!-- Linha 1: Valor da Nota + Acréscimo + Total em destaque -->
+        <div class="row g-3 mb-2 align-items-end">
           <div class="col-md-3">
             <label class="form-label fw-semibold">
               Valor da Nota (R$) *
-              <span class="text-muted fw-normal small ms-1">✏️ editável</span>
+              <span class="text-muted fw-normal small ms-1">✏️</span>
             </label>
             <input type="text" class="form-control fw-bold fs-5 text-center" id="gc-valor" placeholder="0,00"
               inputmode="decimal" oninput="mascaraMoeda(this);atualizarTotalGC()" onfocus="moedaFocus(this)" onblur="moedaBlur(this)"
@@ -1895,17 +1896,26 @@
           </div>
           <div class="col-md-2">
             <label class="form-label fw-semibold" style="color:#FF6B35">Acréscimo (R$)</label>
-            <input type="text" class="form-control text-end" id="gc-acrescimo" placeholder="0,00"
+            <input type="text" class="form-control text-end fw-semibold" id="gc-acrescimo" placeholder="0,00"
               inputmode="decimal" oninput="mascaraMoeda(this);atualizarTotalGC()" onfocus="moedaFocus(this)" onblur="moedaBlur(this)"
               style="border:2px solid #FF6B35;border-radius:8px">
             <div class="form-text text-muted small">frete, taxa</div>
           </div>
-          <div class="col-md-3">
+          <div class="col-md-7">
+            <div id="gc-total-display" class="rounded-3 px-4 py-3 d-flex justify-content-between align-items-center"
+              style="background:#d1fae5;border:2px solid #10b981;min-height:58px">
+              <span class="text-muted small fw-semibold" style="color:#065f46!important">Total a enviar</span>
+              <span class="fw-bold" style="font-size:1.6rem;color:#065f46">—</span>
+            </div>
+          </div>
+        </div>
+        <!-- Linha 2: Vencimento + NF -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
             <label class="form-label fw-semibold">Vencimento *</label>
             <input type="date" class="form-control" id="gc-vencimento">
-            <div class="form-text fw-semibold" id="gc-total-display" style="color:#198754;font-size:.9rem"></div>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-6">
             <label class="form-label fw-semibold">Nº NF / Documento</label>
             <input type="text" class="form-control" id="gc-nf" placeholder="Opcional">
           </div>
