@@ -2363,11 +2363,13 @@ function selecionarGrupoInv(grupo) {
     b.style.borderRadius = '20px';
   });
 
-  // Monta lista de produtos
+  // Monta lista de produtos (respeita mapeamentos de correção)
+  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
   const nomes = INVENTARIO_ESTRUTURA[_invSetor]?.[grupo] || [];
   _invProds = nomes.map(nome => {
-    const nomNorm = norm(nome.trim());
-    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
+    const nomeBusca = mapeamentos[nome] || nome;
+    const nomNorm   = norm(nomeBusca.trim());
+    const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
     return { nome, produto_id: prod?.id || null };
   });
 
@@ -2534,28 +2536,27 @@ async function salvarInventario() {
 function verDivergenciasInv() {
   if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
 
+  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
   const divergencias = [];
+  // Lista completa de produtos do cadastro ordenada por nome
+  const todosProd = [...cProdutosFT].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
   Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
     Object.entries(grupos).forEach(([grupo, nomes]) => {
       nomes.forEach(nome => {
-        const nomNorm = norm(nome.trim());
-        const match = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
+        const nomeBusca = mapeamentos[nome] || nome;
+        const nomNorm   = norm(nomeBusca.trim());
+        const match     = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
         if (!match) {
-          // Busca sugestão: produto cujo nome normalizado contenha alguma palavra-chave do nome procurado
-          const palavras = nomNorm.split(/\s+/).filter(p => p.length > 2);
-          const sugestoes = cProdutosFT
-            .map(p => {
-              const pNorm = norm(p.nome.trim());
-              const hits = palavras.filter(w => pNorm.includes(w)).length;
-              return { nome: p.nome, hits };
-            })
+          // Sugestões: produtos com mais palavras em comum
+          const palavras = norm(nome).split(/\s+/).filter(w => w.length > 2);
+          const sugestoes = todosProd
+            .map(p => ({ nome: p.nome, hits: palavras.filter(w => norm(p.nome).includes(w)).length }))
             .filter(s => s.hits > 0)
             .sort((a, b) => b.hits - a.hits)
-            .slice(0, 3)
+            .slice(0, 5)
             .map(s => s.nome);
-
-          divergencias.push({ setor, grupo, nome, sugestoes });
+          divergencias.push({ setor, grupo, nome, sugestoes, mapeadoAtual: mapeamentos[nome] || '' });
         }
       });
     });
@@ -2568,20 +2569,59 @@ function verDivergenciasInv() {
     resumoEl.innerHTML = '<div class="alert alert-success py-2 mb-2">✅ Nenhuma divergência encontrada — todos os produtos têm correspondência!</div>';
     tbody.innerHTML = '';
   } else {
-    resumoEl.innerHTML = `<div class="alert alert-warning py-2 mb-0">${divergencias.length} produto(s) sem correspondência em ${[...new Set(divergencias.map(d => d.setor))].length} setor(es).</div>`;
-    tbody.innerHTML = divergencias.map(d => `
-      <tr>
-        <td class="ps-3 fw-semibold" style="color:#FF6B35">${esc(d.setor)}</td>
-        <td class="text-muted">${esc(d.grupo)}</td>
-        <td><code style="color:#dc3545">${esc(d.nome)}</code></td>
-        <td style="color:#198754;font-size:.8rem">${d.sugestoes.length
-          ? d.sugestoes.map(s => `<div>→ ${esc(s)}</div>`).join('')
-          : '<span class="text-muted">nenhuma sugestão encontrada</span>'
-        }</td>
-      </tr>`).join('');
+    resumoEl.innerHTML = `<div class="alert alert-warning py-2 mb-0">
+      <strong>${divergencias.length}</strong> produto(s) sem correspondência em
+      <strong>${[...new Set(divergencias.map(d => d.setor))].length}</strong> setor(es).
+      Selecione o produto correto em cada linha e clique <strong>Salvar Correções</strong>.
+    </div>`;
+
+    tbody.innerHTML = divergencias.map((d, i) => {
+      // Monta options: sugestões primeiro (★), depois todos os outros
+      const sugestaoSet = new Set(d.sugestoes);
+      const optsTop = d.sugestoes.map(s =>
+        `<option value="${esc(s)}" ${d.mapeadoAtual === s ? 'selected' : ''}>★ ${esc(s)}</option>`
+      ).join('');
+      const optsRest = todosProd
+        .filter(p => !sugestaoSet.has(p.nome))
+        .map(p => `<option value="${esc(p.nome)}" ${d.mapeadoAtual === p.nome ? 'selected' : ''}>${esc(p.nome)}</option>`)
+        .join('');
+      const separador = optsTop ? '<option disabled>──────────────</option>' : '';
+
+      return `<tr>
+        <td class="ps-3 fw-semibold" style="color:#FF6B35;white-space:nowrap">${esc(d.setor)}</td>
+        <td class="text-muted small" style="white-space:nowrap">${esc(d.grupo)}</td>
+        <td><code style="color:#dc3545;font-size:.8rem">${esc(d.nome)}</code></td>
+        <td>
+          <select class="form-select form-select-sm" id="div-sel-${i}" data-nome="${esc(d.nome)}">
+            <option value="">-- manter sem match --</option>
+            ${optsTop}${separador}${optsRest}
+          </select>
+        </td>
+      </tr>`;
+    }).join('');
   }
 
   new bootstrap.Modal(document.getElementById('modal-divergencias-inv')).show();
+}
+
+function salvarCorrecoesDivergencias() {
+  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
+  let count = 0;
+  document.querySelectorAll('[id^="div-sel-"]').forEach(sel => {
+    const nomeOriginal = sel.dataset.nome;
+    const nomeCorreto  = sel.value;
+    if (nomeCorreto) {
+      mapeamentos[nomeOriginal] = nomeCorreto;
+      count++;
+    } else {
+      delete mapeamentos[nomeOriginal];
+    }
+  });
+  localStorage.setItem('inv_mapeamentos', JSON.stringify(mapeamentos));
+  bootstrap.Modal.getInstance(document.getElementById('modal-divergencias-inv'))?.hide();
+  toast(`✅ ${count} mapeamento(s) salvo(s). Recarregue o grupo para ver o efeito.`, 'ok');
+  // Re-renderiza grupo atual se houver
+  if (_invGrupo) selecionarGrupoInv(_invGrupo);
 }
 
 async function carregarHistoricoInv() {

@@ -1127,18 +1127,15 @@
               <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-0">
-              <div class="px-3 pt-3 pb-2 small text-muted">
-                Produtos listados em <strong>INVENTARIO_ESTRUTURA</strong> que não encontraram correspondência em <strong>est_produtos</strong> (após normalização de acentos). Corrija os nomes no código ou no cadastro de produtos.
-              </div>
-              <div id="div-divergencias-resumo" class="px-3 pb-2"></div>
-              <div class="table-responsive">
+              <div id="div-divergencias-resumo" class="px-3 pt-3 pb-2"></div>
+              <div class="table-responsive" style="max-height:65vh;overflow-y:auto">
                 <table class="table table-sm table-hover mb-0" style="font-size:.83rem">
                   <thead style="background:#f8f9fa;position:sticky;top:0">
                     <tr>
                       <th class="ps-3">Setor</th>
                       <th>Grupo</th>
-                      <th>Nome na INVENTARIO_ESTRUTURA</th>
-                      <th>Sugestão mais próxima em est_produtos</th>
+                      <th>Nome na ESTRUTURA</th>
+                      <th>Produto correto em est_produtos</th>
                     </tr>
                   </thead>
                   <tbody id="tb-divergencias-inv"></tbody>
@@ -1146,8 +1143,11 @@
               </div>
             </div>
             <div class="modal-footer">
-              <small class="text-muted me-auto">Após corrigir os nomes no código, recarregue a página e verifique novamente.</small>
+              <small class="text-muted me-auto">★ = sugestão automática. Selecione e clique Salvar.</small>
               <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+              <button class="btn btn-success" onclick="salvarCorrecoesDivergencias()">
+                <i class="bi bi-floppy"></i> Salvar Correções
+              </button>
             </div>
           </div>
         </div>
