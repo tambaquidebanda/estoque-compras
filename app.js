@@ -5474,17 +5474,23 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
     const { data: contaRow } = await sb.from('cmp_contas_pagar')
       .select('valor').eq('pedido_num', pedido_num).maybeSingle();
 
-    let valorFinal;
-    if (tipo === 'nf-real') {
-      // NF Real: usa o valor real recebido (cmp_contas_pagar.valor, gravado no recebimento)
-      valorFinal = contaRow?.valor || subtotalDB + acrescimoDB;
-    } else {
-      // Adiantamento ou NF normal: fonte primária é cmp_contas_pagar.valor se maior que subtotal
-      valorFinal = (contaRow?.valor && contaRow.valor > subtotalDB)
-        ? contaRow.valor
-        : subtotalDB + acrescimoDB;
-    }
+    // cmp_contas_pagar.valor é sempre a fonte definitiva quando existe
+    // (para recebimento = totalItens + acréscimo; para adiantamento = valor aprovado)
+    // Fallback: subtotalDB + acréscimo do pedido (quando contaRow ainda não existe)
+    const valorFinal = contaRow?.valor || subtotalDB + acrescimoDB;
     setMoeda('gc-valor', valorFinal);
+
+    // Mostra acréscimo detectado no hint
+    const hintEl = document.getElementById('gc-acrescimo-hint');
+    if (hintEl) {
+      if (acrescimoDB > 0) {
+        hintEl.textContent = `✅ Acréscimo incluído: ${brl(acrescimoDB)} (frete/taxa)`;
+        hintEl.className = 'form-text text-success fw-semibold';
+      } else {
+        hintEl.textContent = '⚠️ Acréscimo zerado — confira se a NF tem frete ou taxa';
+        hintEl.className = 'form-text text-warning fw-semibold';
+      }
+    }
   }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
