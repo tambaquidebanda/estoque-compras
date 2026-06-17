@@ -2363,15 +2363,18 @@ function selecionarGrupoInv(grupo) {
     b.style.borderRadius = '20px';
   });
 
-  // Monta lista de produtos (respeita mapeamentos de correção)
+  // Monta lista de produtos (respeita mapeamentos e exclusões)
   const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
+  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
   const nomes = INVENTARIO_ESTRUTURA[_invSetor]?.[grupo] || [];
-  _invProds = nomes.map(nome => {
-    const nomeBusca = mapeamentos[nome] || nome;
-    const nomNorm   = norm(nomeBusca.trim());
-    const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-    return { nome, produto_id: prod?.id || null };
-  });
+  _invProds = nomes
+    .filter(nome => !excluidos.has(nome))
+    .map(nome => {
+      const nomeBusca = mapeamentos[nome] || nome;
+      const nomNorm   = norm(nomeBusca.trim());
+      const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
+      return { nome, produto_id: prod?.id || null };
+    });
 
   // Breadcrumb
   document.getElementById('inv-breadcrumb').textContent = `${_invSetor} / ${grupo}`;
@@ -2537,6 +2540,7 @@ function verDivergenciasInv() {
   if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
 
   const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
+  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
   const divergencias = [];
   // Lista completa de produtos do cadastro ordenada por nome
   const todosProd = [...cProdutosFT].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -2544,6 +2548,7 @@ function verDivergenciasInv() {
   Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
     Object.entries(grupos).forEach(([grupo, nomes]) => {
       nomes.forEach(nome => {
+        if (excluidos.has(nome)) return; // já excluído pelo usuário
         const nomeBusca = mapeamentos[nome] || nome;
         const nomNorm   = norm(nomeBusca.trim());
         const match     = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
@@ -2594,6 +2599,8 @@ function verDivergenciasInv() {
         <td>
           <select class="form-select form-select-sm" id="div-sel-${i}" data-nome="${esc(d.nome)}">
             <option value="">-- manter sem match --</option>
+            <option value="__excluir__" style="color:#dc3545;font-weight:600">🗑️ Excluir desta estrutura</option>
+            <option disabled>──────────────</option>
             ${optsTop}${separador}${optsRest}
           </select>
         </td>
@@ -2606,21 +2613,33 @@ function verDivergenciasInv() {
 
 function salvarCorrecoesDivergencias() {
   const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
-  let count = 0;
+  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
+  let countMap = 0, countExcl = 0;
+
   document.querySelectorAll('[id^="div-sel-"]').forEach(sel => {
     const nomeOriginal = sel.dataset.nome;
-    const nomeCorreto  = sel.value;
-    if (nomeCorreto) {
-      mapeamentos[nomeOriginal] = nomeCorreto;
-      count++;
+    const valor        = sel.value;
+    if (valor === '__excluir__') {
+      excluidos.add(nomeOriginal);
+      delete mapeamentos[nomeOriginal];
+      countExcl++;
+    } else if (valor) {
+      mapeamentos[nomeOriginal] = valor;
+      excluidos.delete(nomeOriginal);
+      countMap++;
     } else {
       delete mapeamentos[nomeOriginal];
     }
   });
+
   localStorage.setItem('inv_mapeamentos', JSON.stringify(mapeamentos));
+  localStorage.setItem('inv_excluidos',   JSON.stringify([...excluidos]));
   bootstrap.Modal.getInstance(document.getElementById('modal-divergencias-inv'))?.hide();
-  toast(`✅ ${count} mapeamento(s) salvo(s). Recarregue o grupo para ver o efeito.`, 'ok');
-  // Re-renderiza grupo atual se houver
+
+  const msgs = [];
+  if (countMap)  msgs.push(`${countMap} mapeamento(s)`);
+  if (countExcl) msgs.push(`${countExcl} exclusão(ões)`);
+  toast(`✅ ${msgs.join(' e ')} salvo(s).`, 'ok');
   if (_invGrupo) selecionarGrupoInv(_invGrupo);
 }
 
