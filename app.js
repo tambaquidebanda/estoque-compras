@@ -5426,6 +5426,13 @@ function abrirRegistrarNFReal(pedido_num, forn, fornId) {
   abrirGerarConta(pedido_num, forn, fornId, 0, 'nf-real');
 }
 
+function atualizarTotalGC() {
+  const nota      = parseMoeda('gc-valor') || 0;
+  const acrescimo = parseMoeda('gc-acrescimo') || 0;
+  const el = document.getElementById('gc-total-display');
+  if (el) el.textContent = acrescimo > 0 ? `Total: ${brl(nota + acrescimo)}` : '';
+}
+
 async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   if (!cCat.length) await carregarCaches();
   document.getElementById('gc-pedido-num').value             = pedido_num;
@@ -5434,6 +5441,8 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   document.getElementById('gc-fornecedor-label').textContent = forn || '—';
   document.getElementById('gc-tipo').value                   = tipo;
   setMoeda('gc-valor', total);
+  setMoeda('gc-acrescimo', 0);
+  atualizarTotalGC();
   document.getElementById('gc-vencimento').value = '';
   document.getElementById('gc-nf').value         = '';
   document.getElementById('gc-preview').classList.add('d-none');
@@ -5467,30 +5476,20 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
 
-  // Calcula valor a exibir no modal
+  // Calcula nota e acréscimo separados para preencher os campos do modal
   if (pedRows?.length) {
     const subtotalDB  = pedRows.reduce((s, r) => s + (r.quantidade||0) * (r.custo_unit||0), 0);
     const acrescimoDB = parseFloat(pedRow0.acrescimo) || 0;
     const { data: contaRow } = await sb.from('cmp_contas_pagar')
       .select('valor').eq('pedido_num', pedido_num).maybeSingle();
 
-    // cmp_contas_pagar.valor é sempre a fonte definitiva quando existe
-    // (para recebimento = totalItens + acréscimo; para adiantamento = valor aprovado)
-    // Fallback: subtotalDB + acréscimo do pedido (quando contaRow ainda não existe)
-    const valorFinal = contaRow?.valor || subtotalDB + acrescimoDB;
-    setMoeda('gc-valor', valorFinal);
-
-    // Mostra acréscimo detectado no hint
-    const hintEl = document.getElementById('gc-acrescimo-hint');
-    if (hintEl) {
-      if (acrescimoDB > 0) {
-        hintEl.textContent = `✅ Acréscimo incluído: ${brl(acrescimoDB)} (frete/taxa)`;
-        hintEl.className = 'form-text text-success fw-semibold';
-      } else {
-        hintEl.textContent = '⚠️ Acréscimo zerado — confira se a NF tem frete ou taxa';
-        hintEl.className = 'form-text text-warning fw-semibold';
-      }
-    }
+    // total = cmp_contas_pagar.valor (gravado no recebimento = subtotal_recebido + acrescimo)
+    // nota  = total - acrescimo  (o valor da NF sem o frete/taxa)
+    const totalFinal = contaRow?.valor || subtotalDB + acrescimoDB;
+    const notaFinal  = Math.max(0, totalFinal - acrescimoDB);
+    setMoeda('gc-valor',    notaFinal);
+    setMoeda('gc-acrescimo', acrescimoDB);
+    atualizarTotalGC();
   }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
@@ -5595,14 +5594,16 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
 }
 
 function previewContaFinanceiro() {
-  const valor  = parseMoeda('gc-valor');
+  const nota      = parseMoeda('gc-valor');
+  const acrescimo = parseMoeda('gc-acrescimo') || 0;
+  const valor     = nota + acrescimo;
   const venc   = document.getElementById('gc-vencimento').value;
   const nf     = document.getElementById('gc-nf').value.trim();
   const obs    = document.getElementById('gc-obs').value.trim();
   const pedido = document.getElementById('gc-pedido-num').value;
   const forn   = document.getElementById('gc-fornecedor-label').textContent;
 
-  if (!valor || !venc) { toast('Informe valor e vencimento antes de visualizar.', 'erro'); return; }
+  if (!nota || !venc) { toast('Informe valor e vencimento antes de visualizar.', 'erro'); return; }
 
   const temRateio = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano = temRateio ? 'Rateio' : document.getElementById('gc-plano-label').textContent;
@@ -5612,9 +5613,10 @@ function previewContaFinanceiro() {
       <div class="col-6"><strong>tipo:</strong> pagar</div>
       <div class="col-6"><strong>status:</strong> pendente</div>
       <div class="col-12"><strong>descricao:</strong> Pedido ${pedido} — ${forn}</div>
-      <div class="col-4"><strong>valor:</strong> ${brl(valor)}</div>
-      <div class="col-4"><strong>vencimento:</strong> ${venc.split('-').reverse().join('/')}</div>
-      <div class="col-4"><strong>numero_pedido:</strong> ${nf || pedido}</div>
+      <div class="col-3"><strong>nota:</strong> ${brl(nota)}</div>
+      <div class="col-3"><strong>acréscimo:</strong> ${brl(acrescimo)}</div>
+      <div class="col-3"><strong>total:</strong> ${brl(valor)}</div>
+      <div class="col-3"><strong>vencimento:</strong> ${venc.split('-').reverse().join('/')}</div>
       <div class="col-6"><strong>fornecedor:</strong> ${forn}</div>
       <div class="col-6"><strong>plano_contas:</strong> ${plano}</div>
       ${obs ? `<div class="col-12"><strong>observacoes:</strong> ${obs}</div>` : ''}
@@ -5625,14 +5627,16 @@ function previewContaFinanceiro() {
 async function confirmarGerarConta() {
   const pedido_num    = document.getElementById('gc-pedido-num').value;
   const fornecedor_id = document.getElementById('gc-fornecedor-id').value || null;
-  const valor         = parseMoeda('gc-valor');
+  const nota          = parseMoeda('gc-valor');
+  const acrescimo_val = parseMoeda('gc-acrescimo') || 0;
+  const valor         = nota + acrescimo_val;  // total = nota + acréscimo
   const vencimento    = document.getElementById('gc-vencimento').value;
   const nf_numero     = document.getElementById('gc-nf').value.trim() || null;
   const obs           = document.getElementById('gc-obs').value.trim();
   const forn_nome     = document.getElementById('gc-fornecedor-label').textContent;
   const tipo          = document.getElementById('gc-tipo').value || 'nf';
 
-  if (!valor || valor <= 0) { toast('Informe um valor válido.', 'erro'); return; }
+  if (!nota || nota <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
 
   const temRateio             = !document.getElementById('gc-rateio-section').classList.contains('d-none');
@@ -5652,7 +5656,8 @@ async function confirmarGerarConta() {
       }).eq('id', contaExist.id);
     }
     await gerarContaFinanceiro({
-      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      pedido_num, vencimento, valor, acrescimo: acrescimo_val,
+      fornecedor_id, fornecedor_nome: forn_nome,
       plano_conta, nf_numero, conta_id: contaExist?.id || null,
       obs: obs || `NF Pedido ${pedido_num}`,
       temRateio, rateioItensResolvidos, unidade_id,
@@ -5665,7 +5670,8 @@ async function confirmarGerarConta() {
               { onConflict: 'pedido_num', ignoreDuplicates: false })
       .select().single();
     await gerarContaFinanceiro({
-      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      pedido_num, vencimento, valor, acrescimo: acrescimo_val,
+      fornecedor_id, fornecedor_nome: forn_nome,
       plano_conta, nf_numero, conta_id: conta?.id || null,
       obs: obs || `Adiantamento Pedido ${pedido_num}`,
       temRateio, rateioItensResolvidos, unidade_id,
@@ -5678,7 +5684,8 @@ async function confirmarGerarConta() {
               { onConflict: 'pedido_num', ignoreDuplicates: false })
       .select().single();
     await gerarContaFinanceiro({
-      pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome: forn_nome,
+      pedido_num, vencimento, valor, acrescimo: acrescimo_val,
+      fornecedor_id, fornecedor_nome: forn_nome,
       plano_conta, nf_numero, conta_id: conta?.id || null,
       obs: obs || `Pedido ${pedido_num}`,
       temRateio, rateioItensResolvidos, unidade_id,
@@ -5690,7 +5697,7 @@ async function confirmarGerarConta() {
   renderPendentes();
 }
 
-async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_id,
+async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo = 0, fornecedor_id,
   fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [], unidade_id = null,
   campo_id_destino = 'lancamento_id' }) {
 
@@ -5713,7 +5720,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
 
   const dadosBase = {
     descricao:      `Pedido ${pedido_num} — ${fornecedor_nome}`,
-    valor,
+    valor:          valor - acrescimo,  // valor da nota sem acréscimo
     vencimento,
     tipo:           'pagar',
     status:         'pendente',
@@ -5721,7 +5728,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, fornecedor_
     plano_conta_id: plano_conta_id,
     numero_pedido:  nf_numero || pedido_num,
     observacoes:    obs || null,
-    acrescimo:      0,
+    acrescimo:      acrescimo,          // acréscimo no campo correto do financeiro
     desconto:       0,
     tem_rateio:     temRateio,
     unidade_id:     unidade_id || null,
