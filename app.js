@@ -5604,11 +5604,8 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
     if (unidadeIdItem) uniSel.value = unidadeIdItem;
   }
 
-  const prodMode = modoIntegracaoProducao();
-  document.getElementById('btn-gc-label').textContent = prodMode
-    ? 'Enviar ao Financeiro' : 'Simular (Modo Teste)';
-  document.getElementById('btn-gc-enviar').className = prodMode
-    ? 'btn btn-primary' : 'btn btn-warning';
+  document.getElementById('btn-gc-label').textContent = 'Enviar Financeiro';
+  document.getElementById('btn-gc-enviar').className = 'btn btn-primary';
 
   new bootstrap.Modal(document.getElementById('modal-gerar-conta')).show();
 }
