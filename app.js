@@ -5987,10 +5987,10 @@ async function abrirAjusteHistoricoCompExterno() {
     const numPuro = pn.replace(/^#+/, '');
     const { data: ll } = await sb.from('lancamentos')
       .select('id,descricao,valor,status,tipo,ofx_id,data_pagamento')
-      .ilike('descricao', `%${numPuro}%`)
+      .ilike('descricao', `Pedido #${numPuro}%`)
       .eq('tipo', 'pagar')
       .order('valor', { ascending: false });
-    const match = (ll || []).find(l => l.descricao && l.descricao.includes(numPuro) && !l.descricao.startsWith('DARF') && !l.descricao.startsWith('N 5'));
+    const match = (ll || []).find(l => l.descricao && l.descricao.startsWith(`Pedido #${numPuro}`));
     if (match) lancBusca[pn] = match;
   }
 
