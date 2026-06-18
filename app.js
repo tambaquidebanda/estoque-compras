@@ -391,6 +391,10 @@ function norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
+function isCompExterna(forn) {
+  return norm(forn || '') === 'comprador externo';
+}
+
 function mesCurto(mesStr) {
   const [y, m] = mesStr.split('-');
   return new Date(+y, +m - 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
@@ -3742,18 +3746,33 @@ async function confirmarRecebimento() {
   // Salva itens
   await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
 
+  // Resolve nf, unidade_id e modalidade antes de ambos os flows
+  const nf = document.getElementById('receb-nf')?.value?.trim() || null;
+  if (!cUnidades.length) await carregarCaches();
+  const uniNome = ref?.unidade_uso || '';
+  const unidade_id = cUnidades.find(u => u.nome.toLowerCase() === uniNome.toLowerCase())?.id || null;
+  const isCompExt = isCompExterna(ref?.fornecedor_nome);
+
   // Verifica se já foi gerada conta no financeiro (Flow A)
   const { data: contaExist } = await sb.from('cmp_contas_pagar')
     .select('id,lancamento_id').eq('pedido_num', pedido_num).single();
 
   if (contaExist) {
-    // Já existe — apenas atualiza com dados do recebimento
+    // Já existe — atualiza com dados do recebimento
     await sb.from('cmp_contas_pagar').update({
       recebimento_id: receb.id, data_receb: dataRec,
       vencimento, valor: totalRecebido,
     }).eq('id', contaExist.id);
+    // Comprador Externo: envia despesa ao financeiro como paga (se ainda não enviada)
+    if (isCompExt && !contaExist.lancamento_id) {
+      await enviarDespesaCompExterno({
+        pedido_num, conta_id: contaExist.id, itensReceb,
+        totalRecebido, acrescimo, dataRec, vencimento,
+        fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
+      });
+    }
   } else {
-    // Flow B — cria a conta e tenta enviar ao financeiro
+    // Flow B — cria a conta e integra ao financeiro
     const { data: novaConta, error: errConta } = await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
@@ -3763,21 +3782,24 @@ async function confirmarRecebimento() {
     if (errConta) { toast('Aviso: conta a pagar não criada — ' + errConta.message, 'erro'); }
 
     if (novaConta) {
-      const nf = document.getElementById('receb-nf')?.value?.trim() || null;
-      // Resolve unidade_id pelo nome salvo em unidade_uso
-      if (!cUnidades.length) await carregarCaches();
-      const uniNome = ref?.unidade_uso || '';
-      const unidade_id = cUnidades.find(u => u.nome.toLowerCase() === uniNome.toLowerCase())?.id || null;
-      await gerarContaFinanceiro({
-        pedido_num, vencimento, valor: totalRecebido,
-        fornecedor_id: ref?.fornecedor_id || null,
-        fornecedor_nome: ref?.fornecedor_nome || '',
-        plano_conta: ref?.plano_conta || '',
-        nf_numero: nf,
-        conta_id: novaConta.id,
-        unidade_id,
-        obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
-      });
+      if (isCompExt) {
+        await enviarDespesaCompExterno({
+          pedido_num, conta_id: novaConta.id, itensReceb,
+          totalRecebido, acrescimo, dataRec, vencimento,
+          fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
+        });
+      } else {
+        await gerarContaFinanceiro({
+          pedido_num, vencimento, valor: totalRecebido,
+          fornecedor_id: ref?.fornecedor_id || null,
+          fornecedor_nome: ref?.fornecedor_nome || '',
+          plano_conta: ref?.plano_conta || '',
+          nf_numero: nf,
+          conta_id: novaConta.id,
+          unidade_id,
+          obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
+        });
+      }
     }
   }
 
@@ -4521,9 +4543,24 @@ async function carregarCompras() {
     const enviado    = lancSet.has(g.pedido_num);
     const adiantado  = adiantSet.has(g.pedido_num);
     const aguardando = !enviado && !adiantado && rascunhoSet.has(g.pedido_num);
+    const isCompExt  = isCompExterna(g.forn);
 
     let badgeFinanc;
-    if (enviado && adiantado) {
+    if (isCompExt) {
+      // Fluxo Comprador Externo: despesa vai automaticamente ao receber
+      if (g.recebido) {
+        badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`;
+      } else if (adiantado) {
+        badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>`;
+      } else {
+        badgeFinanc = `<span class="badge bg-light text-muted border">Não enviado</span>
+          <button class="btn btn-sm btn-outline-warning py-0 px-2 d-block mt-1"
+            onclick="event.stopPropagation();abrirAdiantamento('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
+            title="Enviar adiantamento ao financeiro">
+            💳 Adiantamento
+          </button>`;
+      }
+    } else if (enviado && adiantado) {
       // Adiantamento + NF registrados = completo
       badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`;
     } else if (enviado) {
@@ -5712,6 +5749,60 @@ async function confirmarGerarConta() {
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
   renderPendentes();
+}
+
+async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf }) {
+  if (!cCat.length || !cPlanoConta.length) await carregarCaches();
+
+  const totalItens = Math.max(0, totalRecebido - acrescimo);
+
+  // Agrupa por plano_conta usando os itens originais abertos
+  const grupos = {};
+  for (const ir of itensReceb) {
+    const orig = _recebItensAbertos.find(o => o.id === ir.compra_id);
+    const plano = orig?.plano_conta || '';
+    if (!grupos[plano]) grupos[plano] = { plano_conta: plano, subtotal: 0 };
+    grupos[plano].subtotal += ir.total_recebido;
+  }
+  const gruposList = Object.values(grupos);
+  const temRateio  = gruposList.length > 1;
+
+  // Resolve plano_conta_id por grupo
+  for (const g of gruposList) {
+    const cat = cCat.find(c => c.plano_conta === g.plano_conta);
+    g.plano_conta_id = (cat?.plano_conta_id && cPlanoConta.find(p => p.id === cat.plano_conta_id))
+      ? cat.plano_conta_id
+      : cPlanoConta.find(p => p.nome.toLowerCase() === g.plano_conta.toLowerCase())?.id || null;
+  }
+
+  const { data: lanc, error } = await sb.from('lancamentos').insert([{
+    descricao:      `Pedido ${pedido_num} — Comprador Externo`,
+    valor:          totalItens,
+    acrescimo:      acrescimo,
+    vencimento,
+    tipo:           'pagar',
+    status:         'pago',
+    data_pagamento: dataRec,
+    fornecedor_id:  fornecedor_id || null,
+    plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
+    numero_pedido:  pedido_num,
+    observacoes:    nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
+    desconto:       0,
+    tem_rateio:     temRateio,
+    unidade_id:     unidade_id || null,
+  }]).select('id').single();
+
+  if (error) { toast('Erro ao enviar despesa ao financeiro: ' + error.message, 'erro'); return; }
+
+  if (temRateio && lanc?.id && gruposList.length) {
+    await sb.from('rateio_itens').insert(
+      gruposList.map(g => ({ lancamento_id: lanc.id, plano_conta_id: g.plano_conta_id, valor: g.subtotal, descricao: '' }))
+    );
+  }
+
+  if (conta_id && lanc?.id) {
+    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', conta_id);
+  }
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo = 0, fornecedor_id,
