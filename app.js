@@ -5928,3 +5928,223 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
 
   toast(`✅ Conta gerada no financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+// AJUSTE HISTÓRICO — COMPRADOR EXTERNO
+// ═══════════════════════════════════════════════════════════════
+
+const BANCO_SANTANDER_ID = '2bc3c4df-923b-407b-91d1-99b0bee89882';
+const BANCO_NUBANK_ID    = 'c342ece3-9015-40d6-a5ce-72c668f17395';
+const COMP_EXT_FORN_ID   = 'c194fd5b-1ba9-4229-a416-2e7cdc05f287';
+
+const FORNEC_EXT_HISTORICO = [
+  'assaí atacadista','assai atacadista','sendas distribuidora',
+  'cdl centro','atack hiperatacadao','atack hiperatacadão',
+  'medeiros comercio','vitória supermercados','vitoria supermercados',
+  'supermercados db','feira manaus moderna',
+  'atacadao','atacadão','comprador externo',
+];
+
+function isFornecExtHistorico(nome) {
+  const n = norm(nome || '');
+  return FORNEC_EXT_HISTORICO.some(f => n.includes(norm(f)));
+}
+
+let _ajusteRows = []; // cache das linhas carregadas
+
+async function abrirAjusteHistoricoCompExterno() {
+  const modal = document.getElementById('modal-ajuste-comp-ext');
+  modal.classList.remove('d-none');
+  document.getElementById('ajuste-comp-ext-body').innerHTML =
+    '<tr><td colspan="7" class="text-center py-4">Carregando...</td></tr>';
+
+  // 1. Agrupar pedidos de fornecedores externos
+  const { data: compras } = await sb.from('cmp_compras')
+    .select('pedido_num,fornecedor_nome,total,status_receb,unidade_uso')
+    .order('pedido_num', { ascending: true });
+
+  const pedidos = {};
+  for (const r of compras || []) {
+    if (!isFornecExtHistorico(r.fornecedor_nome)) continue;
+    const pn = r.pedido_num;
+    if (!pedidos[pn]) pedidos[pn] = { forn: r.fornecedor_nome, totalEst: 0, recebido: false, unidade_uso: r.unidade_uso || '' };
+    pedidos[pn].totalEst += parseFloat(r.total || 0);
+    if (r.status_receb === 'recebido') pedidos[pn].recebido = true;
+  }
+
+  // 2. Buscar cmp_contas_pagar para esses pedidos
+  const nums = Object.keys(pedidos);
+  const { data: contas } = await sb.from('cmp_contas_pagar')
+    .select('id,pedido_num,valor,data_receb,lancamento_id,adiantamento_lancamento_id')
+    .in('pedido_num', nums);
+  const contasIdx = {};
+  for (const c of contas || []) contasIdx[c.pedido_num] = c;
+
+  // 3. Buscar lançamentos do financeiro por número do pedido
+  const lancBusca = {};
+  for (const pn of nums) {
+    const numPuro = pn.replace(/^#+/, '');
+    const { data: ll } = await sb.from('lancamentos')
+      .select('id,descricao,valor,status,tipo,ofx_id,data_pagamento')
+      .ilike('descricao', `%${numPuro}%`)
+      .eq('tipo', 'pagar')
+      .order('valor', { ascending: false });
+    const match = (ll || []).find(l => l.descricao && l.descricao.includes(numPuro) && !l.descricao.startsWith('DARF') && !l.descricao.startsWith('N 5'));
+    if (match) lancBusca[pn] = match;
+  }
+
+  // 4. Montar rows
+  _ajusteRows = nums.map(pn => ({
+    pn,
+    forn:       pedidos[pn].forn,
+    totalEst:   pedidos[pn].totalEst,
+    recebido:   pedidos[pn].recebido,
+    unidade_uso: pedidos[pn].unidade_uso,
+    conta:      contasIdx[pn] || null,
+    lanc:       lancBusca[pn] || null,
+    convertido: false,
+    despesaOk:  !!(contasIdx[pn]?.lancamento_id),
+  }));
+
+  renderAjusteHistoricoRows();
+}
+
+function renderAjusteHistoricoRows() {
+  const tbody = document.getElementById('ajuste-comp-ext-body');
+  tbody.innerHTML = _ajusteRows.map((r, i) => {
+    const lancVal  = r.lanc ? brl(r.lanc.valor) : '—';
+    const lancSt   = r.lanc ? (r.lanc.ofx_id ? '✅ Conciliado' : '⏳ Pendente') : '—';
+    const estVal   = brl(r.totalEst);
+    const recSt    = r.recebido ? '✅ Sim' : '❌ Não';
+    const fornShort = r.forn.length > 22 ? r.forn.slice(0,22)+'…' : r.forn;
+
+    let acoes = '';
+    if (r.convertido) {
+      acoes = '<span class="badge bg-success">Transferência criada</span>';
+    } else if (!r.lanc) {
+      acoes = '<span class="text-muted small">Sem lançamento no financeiro</span>';
+    } else {
+      acoes = `<button class="btn btn-sm btn-outline-primary me-1" onclick="converterParaTransferenciaHistorico(${i})">
+        🔄 Converter
+      </button>`;
+    }
+
+    if (r.recebido && !r.despesaOk) {
+      acoes += ` <button class="btn btn-sm btn-outline-success" onclick="registrarDespesaRealHistorico(${i})">
+        💰 Despesa Real
+      </button>`;
+    } else if (r.despesaOk) {
+      acoes += ' <span class="badge bg-success ms-1">Despesa ok</span>';
+    }
+
+    return `<tr>
+      <td class="small">${r.pn}</td>
+      <td class="small">${fornShort}</td>
+      <td class="small text-end">${lancVal}</td>
+      <td class="small text-end">${estVal}</td>
+      <td class="small">${lancSt}</td>
+      <td class="small">${recSt}</td>
+      <td>${acoes}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function converterParaTransferenciaHistorico(idx) {
+  const r = _ajusteRows[idx];
+  if (!r?.lanc) return;
+  const lancId = r.lanc.id;
+  const valor  = r.lanc.valor;
+  const data   = r.lanc.data_pagamento || new Date().toISOString().split('T')[0];
+
+  if (!confirm(`Converter adiantamento do ${r.pn} (${brl(valor)}) em Transferência Santander → Nubank?\n\nO lançamento atual será excluído. Você precisará re-conciliar essa entrada no extrato do Santander.`)) return;
+
+  // 1. Criar transferência
+  const { error: errT } = await sb.from('transferencias').insert([{
+    banco_origem_id:  BANCO_SANTANDER_ID,
+    banco_destino_id: BANCO_NUBANK_ID,
+    valor,
+    data,
+    descricao: `Adiantamento ${r.pn} — Comprador Externo`,
+  }]);
+  if (errT) { toast('Erro ao criar transferência: ' + errT.message, 'erro'); return; }
+
+  // 2. Excluir lançamento antigo
+  const { error: errD } = await sb.from('lancamentos').delete().eq('id', lancId);
+  if (errD) { toast('Erro ao excluir lançamento: ' + errD.message, 'erro'); return; }
+
+  _ajusteRows[idx].convertido = true;
+  _ajusteRows[idx].lanc = null;
+  renderAjusteHistoricoRows();
+  toast(`✅ ${r.pn} convertido para Transferência Santander→Nubank!`, 'ok');
+}
+
+async function registrarDespesaRealHistorico(idx) {
+  const r = _ajusteRows[idx];
+  if (!r?.recebido) return;
+
+  // Itens recebidos desse pedido
+  const { data: itens } = await sb.from('cmp_compras')
+    .select('total,plano_conta')
+    .eq('pedido_num', r.pn)
+    .eq('status_receb', 'recebido');
+
+  if (!itens?.length) { toast('Nenhum item recebido encontrado.', 'erro'); return; }
+
+  const dataRec = r.conta?.data_receb || new Date().toISOString().split('T')[0];
+  const totalReal = (itens).reduce((s, i) => s + parseFloat(i.total || 0), 0);
+
+  // Agrupar por plano_conta
+  const grupos = {};
+  for (const it of itens) {
+    const k = it.plano_conta || '';
+    if (!grupos[k]) grupos[k] = 0;
+    grupos[k] += parseFloat(it.total || 0);
+  }
+  const gruposList = Object.entries(grupos).map(([plano, subtotal]) => ({ plano, subtotal }));
+
+  if (!cPlanoConta.length) await carregarCaches();
+  for (const g of gruposList) {
+    g.plano_conta_id = cPlanoConta.find(p => norm(p.nome) === norm(g.plano))?.id || null;
+  }
+
+  const temRateio = gruposList.length > 1;
+  if (!cUnidades.length) await carregarCaches();
+  const unidade_id = cUnidades.find(u => norm(u.nome) === norm(r.unidade_uso))?.id || null;
+
+  const { data: lanc, error } = await sb.from('lancamentos').insert([{
+    descricao:      `Pedido ${r.pn} — Comprador Externo`,
+    valor:          totalReal,
+    acrescimo:      0,
+    vencimento:     dataRec,
+    tipo:           'pagar',
+    status:         'pago',
+    data_pagamento: dataRec,
+    fornecedor_id:  COMP_EXT_FORN_ID,
+    plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
+    numero_pedido:  r.pn,
+    desconto:       0,
+    tem_rateio:     temRateio,
+    unidade_id:     unidade_id || null,
+  }]).select('id').single();
+
+  if (error) { toast('Erro ao criar despesa: ' + error.message, 'erro'); return; }
+
+  if (temRateio && lanc?.id && gruposList.length) {
+    await sb.from('rateio_itens').insert(
+      gruposList.map(g => ({ lancamento_id: lanc.id, plano_conta_id: g.plano_conta_id, valor: g.subtotal, descricao: '' }))
+    );
+  }
+
+  if (r.conta?.id && lanc?.id) {
+    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', r.conta.id);
+  }
+
+  _ajusteRows[idx].despesaOk = true;
+  renderAjusteHistoricoRows();
+  toast(`✅ Despesa real do ${r.pn} registrada no financeiro (${brl(totalReal)})!`, 'ok');
+}
+
+function fecharAjusteHistoricoCompExterno() {
+  document.getElementById('modal-ajuste-comp-ext').classList.add('d-none');
+}

@@ -463,9 +463,12 @@
             <button class="btn btn-outline-secondary w-100" onclick="limparFiltrosCompras()">↺ Limpar</button>
           </div>
         </div>
-        <div class="mt-2 text-end">
+        <div class="mt-2 text-end d-flex gap-2 justify-content-end">
           <button class="btn btn-sm btn-outline-warning" onclick="sincronizarValoresFinanceiro()" title="Atualiza os valores dos lançamentos no financeiro para refletir os valores reais recebidos no estoque">
             🔄 Sincronizar valores com financeiro
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="abrirAjusteHistoricoCompExterno()" title="Converte adiantamentos antigos do Comprador Externo em Transferências e registra despesas reais">
+            🔧 Ajuste histórico — Comp. Externo
           </button>
         </div>
       </div>
@@ -2175,6 +2178,42 @@
           ✂️ Dividir em dois pedidos
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Ajuste Histórico — Comprador Externo -->
+<div class="d-none" id="modal-ajuste-comp-ext"
+     style="position:fixed;inset:0;z-index:1060;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;">
+  <div class="bg-white rounded-3 shadow-lg p-0" style="width:96%;max-width:940px;max-height:90vh;display:flex;flex-direction:column;">
+    <div class="d-flex align-items-center justify-content-between px-4 py-3 border-bottom">
+      <h5 class="mb-0 fw-bold">🔧 Ajuste Histórico — Comprador Externo</h5>
+      <button class="btn-close" onclick="fecharAjusteHistoricoCompExterno()"></button>
+    </div>
+    <div class="px-3 py-2 bg-warning-subtle border-bottom small">
+      <strong>O que isso faz:</strong> converte os lançamentos de adiantamento (Conta a Pagar) em <strong>Transferências Santander→Nubank</strong>, e registra a <strong>despesa real por categoria</strong> para os pedidos já recebidos no estoque.
+      Após converter, re-concilie as entradas no extrato do Santander marcando-as como "Transferência → Nubank".
+    </div>
+    <div style="overflow-y:auto;flex:1;">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark sticky-top">
+          <tr>
+            <th>Pedido</th>
+            <th>Fornecedor</th>
+            <th class="text-end">Adiant. (Fin.)</th>
+            <th class="text-end">Real (Est.)</th>
+            <th>OFX</th>
+            <th>Recebido</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="ajuste-comp-ext-body">
+          <tr><td colspan="7" class="text-center py-4">Carregando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="px-4 py-3 border-top d-flex justify-content-end">
+      <button class="btn btn-outline-secondary" onclick="fecharAjusteHistoricoCompExterno()">Fechar</button>
     </div>
   </div>
 </div>
