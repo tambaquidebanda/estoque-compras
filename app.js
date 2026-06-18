@@ -3763,13 +3763,19 @@ async function confirmarRecebimento() {
       recebimento_id: receb.id, data_receb: dataRec,
       vencimento, valor: totalRecebido,
     }).eq('id', contaExist.id);
-    // Comprador Externo: envia despesa ao financeiro como paga (se ainda não enviada)
     if (isCompExt && !contaExist.lancamento_id) {
+      // Comprador Externo: envia despesa ao financeiro como paga (se ainda não enviada)
       await enviarDespesaCompExterno({
         pedido_num, conta_id: contaExist.id, itensReceb,
         totalRecebido, acrescimo, dataRec, vencimento,
         fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
       });
+    } else if (!isCompExt && contaExist.lancamento_id) {
+      // Fornecedor direto: sincroniza valor recebido com o lançamento no financeiro
+      await sb.from('lancamentos').update({
+        valor:     totalItens,
+        acrescimo: acrescimo,
+      }).eq('id', contaExist.lancamento_id);
     }
   } else {
     // Flow B — cria a conta e integra ao financeiro
@@ -5749,6 +5755,40 @@ async function confirmarGerarConta() {
 
   bootstrap.Modal.getInstance(document.getElementById('modal-gerar-conta'))?.hide();
   renderPendentes();
+}
+
+async function sincronizarValoresFinanceiro() {
+  if (!confirm('Isso vai atualizar o valor de TODOS os lançamentos no financeiro para refletir os valores reais recebidos no estoque.\n\nContinuar?')) return;
+
+  // Busca todas as contas com lancamento_id e valor recebido
+  const { data: contas, error } = await sb.from('cmp_contas_pagar')
+    .select('id,pedido_num,lancamento_id,valor,acrescimo,fornecedor')
+    .not('lancamento_id', 'is', null)
+    .not('valor', 'is', null);
+
+  if (error || !contas?.length) {
+    toast('Nenhum lançamento encontrado para sincronizar.', 'erro');
+    return;
+  }
+
+  let atualizados = 0, erros = 0;
+  for (const c of contas) {
+    // Não atualiza Comprador Externo — esses usam outro fluxo
+    if (isCompExterna(c.fornecedor)) continue;
+
+    const acrescimo = parseFloat(c.acrescimo) || 0;
+    const nota      = Math.max(0, (parseFloat(c.valor) || 0) - acrescimo);
+
+    const { error: errUpd } = await sb.from('lancamentos').update({
+      valor:     nota,
+      acrescimo: acrescimo,
+    }).eq('id', c.lancamento_id);
+
+    if (errUpd) erros++;
+    else atualizados++;
+  }
+
+  toast(`✅ ${atualizados} lançamento(s) sincronizado(s)${erros ? ` — ${erros} erro(s)` : ''}.`, 'ok');
 }
 
 async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf }) {

@@ -797,6 +797,13 @@ async function confirmarRecebimento() {
       recebimento_id: receb.id, data_receb: dataRec,
       vencimento: venc, valor: totalRecebido, nf_numero: nf,
     }).eq('id', conta.id);
+    if (!isCompExt && conta.lancamento_id) {
+      // Fornecedor direto: sincroniza valor recebido com o lançamento no financeiro
+      await sb.from('lancamentos').update({
+        valor:     totalItens,
+        acrescimo: acrescimo,
+      }).eq('id', conta.lancamento_id);
+    }
     if (isCompExt && !conta.lancamento_id) {
       await enviarDespesaCompExternoMobile({
         pedido_num, conta_id: conta.id, itensReceb,
