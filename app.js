@@ -3531,18 +3531,11 @@ async function renderPendentes() {
   tbody.innerHTML = lista.map(g => {
     const jaEnviado   = lancamentosSet.has(g.pedido_num);
     const temRascunho = rascunhoSet.has(g.pedido_num);
-    const btnFin = jaEnviado
-      ? `<button class="btn btn-sm btn-outline-success py-0 px-2" disabled title="Conta já enviada ao financeiro">
-           <i class="bi bi-check-circle-fill"></i> Enviado
-         </button>`
+    const badgeFin = jaEnviado
+      ? `<span class="badge bg-success">✅ Enviado</span>`
       : temRascunho
-      ? `<button class="btn btn-sm btn-outline-warning py-0 px-2" disabled title="Rascunho aguardando aprovação no financeiro">
-           <i class="bi bi-hourglass-split"></i> Aguardando
-         </button>`
-      : `<button class="btn btn-sm btn-outline-primary py-0 px-2"
-           onclick="abrirGerarConta('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})">
-           <i class="bi bi-arrow-left-right"></i> Financeiro
-         </button>`;
+      ? `<span class="badge bg-warning text-dark">⏳ Aguardando</span>`
+      : `<span class="badge bg-light text-muted border">Não enviado</span>`;
     return `
     <tr>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
@@ -3554,7 +3547,7 @@ async function renderPendentes() {
       <td>${esc(g.comp||'—')}</td>
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span></td>
       <td class="text-center"><strong>${brl(g.total)}</strong></td>
-      <td class="text-center">${btnFin}</td>
+      <td class="text-center">${badgeFin}</td>
       <td class="text-center">
         <button class="btn btn-sm btn-success py-0 px-2" onclick="abrirModalReceber('${esc(g.pedido_num)}')">
           📬 Receber
@@ -4569,8 +4562,8 @@ async function carregarCompras() {
         badgeFinanc = `<span class="badge bg-light text-muted border">Não enviado</span>
           <button class="btn btn-sm btn-outline-warning py-0 px-2 d-block mt-1"
             onclick="event.stopPropagation();abrirAdiantamento('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
-            title="Enviar adiantamento ao financeiro">
-            💳 Adiantamento
+            title="Enviar ao financeiro">
+            📤 Enviar Financeiro
           </button>`;
       }
     } else if (enviado && adiantado) {
@@ -4609,8 +4602,8 @@ async function carregarCompras() {
       badgeFinanc = `<span class="badge bg-light text-muted border">Não enviado</span>
         <button class="btn btn-sm btn-outline-warning py-0 px-2 d-block mt-1"
           onclick="event.stopPropagation();abrirAdiantamento('${esc(g.pedido_num)}','${esc(g.forn||'')}','${g.fornecedor_id||''}',${g.total})"
-          title="Enviar adiantamento ao financeiro (dinheiro sai antes do recebimento)">
-          💳 Adiantamento
+          title="Enviar ao financeiro">
+          📤 Enviar Financeiro
         </button>`;
     }
     const podeEditar   = !g.recebido && !enviado;
@@ -5521,9 +5514,9 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   const titulo  = document.getElementById('gc-modal-title');
   const infoEl  = document.getElementById('gc-tipo-info');
   if (tipo === 'adiantamento') {
-    titulo.innerHTML = '<i class="bi bi-send"></i> Registrar Adiantamento ao Financeiro';
+    titulo.innerHTML = '<i class="bi bi-send"></i> Enviar ao Financeiro';
     infoEl.innerHTML = `<div class="alert alert-warning py-2 small mb-2 mt-2">
-      💳 <strong>Adiantamento:</strong> O dinheiro sairá da conta antes do recebimento.
+      📤 <strong>Envio antecipado:</strong> O valor sairá da conta antes do recebimento.
       Após receber os itens com o valor real da NF, use <strong>"Gerar NF"</strong> para
       registrar o custo definitivo no financeiro.</div>`;
     infoEl.classList.remove('d-none');
