@@ -3755,7 +3755,7 @@ async function confirmarRecebimento() {
 
   // Verifica se já foi gerada conta no financeiro (Flow A)
   const { data: contaExist } = await sb.from('cmp_contas_pagar')
-    .select('id,lancamento_id').eq('pedido_num', pedido_num).single();
+    .select('id,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num).single();
 
   if (contaExist) {
     // Já existe — atualiza com dados do recebimento
@@ -3764,11 +3764,17 @@ async function confirmarRecebimento() {
       vencimento, valor: totalRecebido,
     }).eq('id', contaExist.id);
     if (isCompExt && !contaExist.lancamento_id) {
-      // Comprador Externo: envia despesa ao financeiro como paga (se ainda não enviada)
+      // Detecta banco do adiantamento (Nubank=PIX, Caixa=Dinheiro)
+      let bancoDespesa = BANCO_NUBANK_ID;
+      if (contaExist.adiantamento_lancamento_id) {
+        const { data: adLanc } = await sb.from('lancamentos').select('banco_id').eq('id', contaExist.adiantamento_lancamento_id).single();
+        if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
+      }
       await enviarDespesaCompExterno({
         pedido_num, conta_id: contaExist.id, itensReceb,
         totalRecebido, acrescimo, dataRec, vencimento,
         fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
+        banco_id: bancoDespesa,
       });
     } else if (!isCompExt && contaExist.lancamento_id) {
       // Fornecedor direto: sincroniza valor recebido com o lançamento no financeiro
@@ -3793,6 +3799,7 @@ async function confirmarRecebimento() {
           pedido_num, conta_id: novaConta.id, itensReceb,
           totalRecebido, acrescimo, dataRec, vencimento,
           fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
+          banco_id: BANCO_NUBANK_ID,
         });
       } else {
         await gerarContaFinanceiro({
@@ -5791,7 +5798,7 @@ async function sincronizarValoresFinanceiro() {
   toast(`✅ ${atualizados} lançamento(s) sincronizado(s)${erros ? ` — ${erros} erro(s)` : ''}.`, 'ok');
 }
 
-async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf }) {
+async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf, banco_id }) {
   if (!cCat.length || !cPlanoConta.length) await carregarCaches();
 
   const totalItens = Math.max(0, totalRecebido - acrescimo);
@@ -5823,7 +5830,7 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
     tipo:           'pagar',
     status:         'pendente',
     data_pagamento: null,
-    banco_id:       BANCO_NUBANK_ID,
+    banco_id:       banco_id || BANCO_NUBANK_ID,
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
     numero_pedido:  pedido_num,
