@@ -2549,11 +2549,6 @@ function verDivergenciasInv() {
   // Lista completa de produtos do cadastro ordenada por nome
   const todosProd = [...cProdutosFT].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
-  // DEBUG TEMPORÁRIO — remover após diagnóstico
-  const _debugMapCount = Object.keys(mapeamentos).length;
-  let _debugResolvidos = 0;
-  const _debugFalhos = [];
-
   Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
     Object.entries(grupos).forEach(([grupo, nomes]) => {
       nomes.forEach(nome => {
@@ -2561,8 +2556,6 @@ function verDivergenciasInv() {
         const nomeBusca = mapeamentos[nome] || nome;
         const nomNorm   = norm(nomeBusca.trim());
         const match     = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-        if (mapeamentos[nome] && match) _debugResolvidos++;
-        if (mapeamentos[nome] && !match) _debugFalhos.push(`"${nome}" → "${mapeamentos[nome]}" (NÃO encontrado)`);
         if (!match) {
           // Sugestões: produtos com mais palavras em comum
           const palavras = norm(nome).split(/\s+/).filter(w => w.length > 2);
@@ -2581,17 +2574,11 @@ function verDivergenciasInv() {
   const resumoEl = document.getElementById('div-divergencias-resumo');
   const tbody    = document.getElementById('tb-divergencias-inv');
 
-  // DEBUG TEMPORÁRIO — mostra contagem e falhos no modal
-  const _debugInfo = `<div class="alert alert-info py-1 px-2 mb-1" style="font-size:.75rem;font-family:monospace">
-    🔍 DEBUG: ${_debugMapCount} mapeamento(s) no localStorage | ${_debugResolvidos} resolvido(s) | ${_debugFalhos.length} mapeado(s) mas NÃO encontrado(s)
-    ${_debugFalhos.length ? '<br>' + _debugFalhos.join('<br>') : ''}
-  </div>`;
-
   if (!divergencias.length) {
-    resumoEl.innerHTML = _debugInfo + '<div class="alert alert-success py-2 mb-2">✅ Nenhuma divergência encontrada — todos os produtos têm correspondência!</div>';
+    resumoEl.innerHTML = '<div class="alert alert-success py-2 mb-2">✅ Nenhuma divergência encontrada — todos os produtos têm correspondência!</div>';
     tbody.innerHTML = '';
   } else {
-    resumoEl.innerHTML = _debugInfo + `<div class="alert alert-warning py-2 mb-0">
+    resumoEl.innerHTML = `<div class="alert alert-warning py-2 mb-0">
       <strong>${divergencias.length}</strong> produto(s) sem correspondência em
       <strong>${[...new Set(divergencias.map(d => d.setor))].length}</strong> setor(es).
       Selecione o produto correto em cada linha e clique <strong>Salvar Correções</strong>.
@@ -2651,18 +2638,12 @@ function salvarCorrecoesDivergencias() {
 
   localStorage.setItem('inv_mapeamentos', JSON.stringify(mapeamentos));
   localStorage.setItem('inv_excluidos',   JSON.stringify([...excluidos]));
-
-  // DEBUG TEMPORÁRIO — verifica se foi gravado corretamente
-  const _verificar = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
-  console.log('[DEBUG inv_mapeamentos salvo]', _verificar);
-  console.log('[DEBUG chaves salvas]', Object.keys(_verificar));
-
   bootstrap.Modal.getInstance(document.getElementById('modal-divergencias-inv'))?.hide();
 
   const msgs = [];
   if (countMap)  msgs.push(`${countMap} mapeamento(s)`);
   if (countExcl) msgs.push(`${countExcl} exclusão(ões)`);
-  toast(`✅ ${msgs.join(' e ')} salvo(s). Chaves: ${Object.keys(_verificar).join(', ') || '(vazio)'}`, 'ok');
+  toast(`✅ ${msgs.join(' e ')} salvo(s).`, 'ok');
   if (_invGrupo) selecionarGrupoInv(_invGrupo);
 }
 
