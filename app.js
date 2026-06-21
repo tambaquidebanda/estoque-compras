@@ -2540,24 +2540,20 @@ async function salvarInventario() {
   });
 }
 
-function verDivergenciasInv() {
-  if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
-
+function _preencherModalDivergencias() {
   const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
   const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
   const divergencias = [];
-  // Lista completa de produtos do cadastro ordenada por nome
   const todosProd = [...cProdutosFT].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
   Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
     Object.entries(grupos).forEach(([grupo, nomes]) => {
       nomes.forEach(nome => {
-        if (excluidos.has(nome)) return; // já excluído pelo usuário
+        if (excluidos.has(nome)) return;
         const nomeBusca = mapeamentos[nome] || nome;
         const nomNorm   = norm(nomeBusca.trim());
         const match     = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
         if (!match) {
-          // Sugestões: produtos com mais palavras em comum
           const palavras = norm(nome).split(/\s+/).filter(w => w.length > 2);
           const sugestoes = todosProd
             .map(p => ({ nome: p.nome, hits: palavras.filter(w => norm(p.nome).includes(w)).length }))
@@ -2585,7 +2581,6 @@ function verDivergenciasInv() {
     </div>`;
 
     tbody.innerHTML = divergencias.map((d, i) => {
-      // Monta options: sugestões primeiro (★), depois todos os outros
       const sugestaoSet = new Set(d.sugestoes);
       const optsTop = d.sugestoes.map(s =>
         `<option value="${esc(s)}" ${d.mapeadoAtual === s ? 'selected' : ''}>★ ${esc(s)}</option>`
@@ -2611,7 +2606,11 @@ function verDivergenciasInv() {
       </tr>`;
     }).join('');
   }
+}
 
+function verDivergenciasInv() {
+  if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
+  _preencherModalDivergencias();
   new bootstrap.Modal(document.getElementById('modal-divergencias-inv')).show();
 }
 
@@ -2638,12 +2637,14 @@ function salvarCorrecoesDivergencias() {
 
   localStorage.setItem('inv_mapeamentos', JSON.stringify(mapeamentos));
   localStorage.setItem('inv_excluidos',   JSON.stringify([...excluidos]));
-  bootstrap.Modal.getInstance(document.getElementById('modal-divergencias-inv'))?.hide();
 
   const msgs = [];
   if (countMap)  msgs.push(`${countMap} mapeamento(s)`);
   if (countExcl) msgs.push(`${countExcl} exclusão(ões)`);
   toast(`✅ ${msgs.join(' e ')} salvo(s).`, 'ok');
+
+  // Atualiza a lista no lugar (sem fechar o modal)
+  _preencherModalDivergencias();
   if (_invGrupo) selecionarGrupoInv(_invGrupo);
 }
 
