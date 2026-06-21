@@ -1133,12 +1133,6 @@
             <button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarPadroes()">
               <i class="bi bi-gear"></i> Configurar Padrões
             </button>
-            <button class="btn btn-sm btn-outline-warning" onclick="verDivergenciasInv()" id="btn-divergencias-inv">
-              <i class="bi bi-exclamation-triangle"></i> Ver Divergências
-            </button>
-            <button class="btn btn-primary" onclick="salvarInventario()">
-              <i class="bi bi-floppy-fill"></i> Salvar Contagem
-            </button>
             <button class="btn btn-success" onclick="enviarPedidoInterno()">
               <i class="bi bi-send-fill"></i> Enviar Pedido
             </button>
@@ -1264,41 +1258,6 @@
       </div><!-- /tab-pedidos -->
 
       </div><!-- /tab-content outer -->
-
-      <!-- Modal: Divergências de Produtos no Inventário (temporário) -->
-      <div class="modal fade" id="modal-divergencias-inv" tabindex="-1">
-        <div class="modal-dialog modal-xl">
-          <div class="modal-content">
-            <div class="modal-header" style="background:#856404;color:#fff">
-              <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Produtos sem match na Contagem</h5>
-              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body p-0">
-              <div id="div-divergencias-resumo" class="px-3 pt-3 pb-2"></div>
-              <div class="table-responsive" style="max-height:65vh;overflow-y:auto">
-                <table class="table table-sm table-hover mb-0" style="font-size:.83rem">
-                  <thead style="background:#f8f9fa;position:sticky;top:0">
-                    <tr>
-                      <th class="ps-3">Setor</th>
-                      <th>Grupo</th>
-                      <th>Nome na ESTRUTURA</th>
-                      <th>Produto correto em est_produtos</th>
-                    </tr>
-                  </thead>
-                  <tbody id="tb-divergencias-inv"></tbody>
-                </table>
-              </div>
-            </div>
-            <div class="modal-footer">
-              <small class="text-muted me-auto">★ = sugestão automática. Selecione e clique Salvar.</small>
-              <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-              <button class="btn btn-success" onclick="salvarCorrecoesDivergencias()">
-                <i class="bi bi-floppy"></i> Salvar Correções
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- Modal: Configurar Pedido Padrão -->
       <div class="modal fade" id="modal-padroes" tabindex="-1">

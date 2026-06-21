@@ -2809,34 +2809,67 @@ async function _proximoNumPedido() {
 
 async function enviarPedidoInterno() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
+  const data = document.getElementById('inv-data').value;
+  if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
+  if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
-  const itens = [];
-  _invProds.forEach((p, i) => {
-    const qtd = parseFloat(document.getElementById(`inv-ped-${i}`)?.textContent) || 0;
-    if (qtd > 0) itens.push({ produto_id: p.produto_id || null, nome: p.nome, qtd_pedida: qtd });
+  const resp = (document.getElementById('inv-resp').value || '').trim();
+
+  // ─── 1. Salvar contagem ───
+  const itensCont = _invProds.map((p, i) => {
+    const estoque       = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
+    const pedido_padrao = _getPadrao(p.nome) ?? 0;
+    const pedido        = Math.max(0, pedido_padrao - estoque);
+    return { produto_id: p.produto_id || null, nome: p.nome, estoque, pedido_padrao, pedido,
+             cozinha_bar: 0, outros: 0, total: estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 };
   });
+  const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
-  if (!itens.length) { toast('Nenhum produto com pedido > 0. Preencha a contagem primeiro.', 'warn'); return; }
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em', { ascending: false }).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
+  const num_inv   = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
 
-  const data    = document.getElementById('inv-data').value || new Date().toISOString().slice(0, 10);
-  const resp    = (document.getElementById('inv-resp').value || '').trim();
-  const numPed  = await _proximoNumPedido();
+  const { data: inv, error: eInv } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _invLocal, responsavel: resp,
+    setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido,
+  }]).select().single();
+  if (eInv) { toast('Erro ao salvar contagem: ' + eInv.message, 'erro'); return; }
+  await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
-  const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
+  // ─── 2. Criar pedido interno (só itens com pedido > 0) ───
+  const itensPed = itensCont.filter(it => it.pedido > 0)
+    .map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd_pedida: it.pedido }));
+
+  if (!itensPed.length) {
+    toast(`${num_inv} salvo! Todos os produtos estão no padrão — nenhum pedido gerado.`, 'ok');
+    carregarHistoricoInv();
+    _limparCamposEstoque();
+    return;
+  }
+
+  const numPed = await _proximoNumPedido();
+  const { data: ped, error: ePed } = await sb.from('pedidos_internos').insert({
     num_pedido: numPed, data,
     dia_semana: _invFeriado ? 'feriado' : _invDia,
     setor: _invSetor, local: _invLocal,
     tipo: 'normal', status: 'pendente',
     responsavel: resp, obs: _invGrupo,
   }).select().single();
+  if (ePed) { toast(`${num_inv} salvo, mas erro no pedido: ` + ePed.message, 'warn'); return; }
 
-  if (e1) { toast('Erro ao criar pedido: ' + e1.message, 'erro'); return; }
+  await sb.from('pedidos_internos_itens').insert(itensPed.map(it => ({ ...it, pedido_id: ped.id })));
 
-  const { error: e2 } = await sb.from('pedidos_internos_itens')
-    .insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
-  if (e2) { toast('Erro ao salvar itens: ' + e2.message, 'erro'); return; }
+  toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅`, 'ok');
+  carregarHistoricoInv();
+  _limparCamposEstoque();
+}
 
-  toast(`${numPed} enviado ao estoque com ${itens.length} item(s)! ✅`, 'ok');
+function _limparCamposEstoque() {
+  _invProds.forEach((_, i) => {
+    const el = document.getElementById(`inv-est-${i}`);
+    if (el) el.value = '0';
+    calcPedidoInv(i);
+  });
 }
 
 async function carregarPedidosInternos() {
