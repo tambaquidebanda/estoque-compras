@@ -1049,6 +1049,37 @@
         </div>
       </div>
 
+      <!-- Dia da Semana + Turno + Feriado -->
+      <div class="card-grafico mb-3">
+        <div class="d-flex flex-wrap gap-4 align-items-center">
+          <div>
+            <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">DIA DA SEMANA</div>
+            <div class="btn-group" role="group">
+              <button class="btn btn-sm btn-outline-primary" data-dia="seg" onclick="setInvDia('seg')">SEG</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="ter" onclick="setInvDia('ter')">TER</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="qua" onclick="setInvDia('qua')">QUA</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="qui" onclick="setInvDia('qui')">QUI</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="sex" onclick="setInvDia('sex')">SEX</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="sab" onclick="setInvDia('sab')">SAB</button>
+              <button class="btn btn-sm btn-outline-primary" data-dia="dom" onclick="setInvDia('dom')">DOM</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">TURNO</div>
+            <div class="btn-group" role="group">
+              <button class="btn btn-sm btn-outline-success" data-turno="almoco" onclick="setInvTurno('almoco')">☀️ Almoço</button>
+              <button class="btn btn-sm btn-outline-success" data-turno="jantar" onclick="setInvTurno('jantar')">🌙 Jantar</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-muted fw-semibold small mb-2">&nbsp;</div>
+            <button class="btn btn-sm btn-outline-warning" id="btn-inv-feriado" onclick="toggleFeriado()">
+              🎉 Feriado
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Seleção de Setor -->
       <div class="card-grafico mb-3">
         <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">SETOR</div>
@@ -1163,16 +1194,16 @@
 
       <!-- Modal: Configurar Pedido Padrão -->
       <div class="modal fade" id="modal-padroes" tabindex="-1">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-xl">
           <div class="modal-content">
             <div class="modal-header" style="background:#1a1a2e;color:#fff">
-              <h5 class="modal-title">⚙️ Configurar Pedido Padrão</h5>
+              <h5 class="modal-title">⚙️ Configurar Pedido Padrão — por Dia e Turno</h5>
               <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
               <p class="text-muted small mb-3">
-                Defina a quantidade de referência para cada produto. O campo <strong>Pedido</strong>
-                será calculado automaticamente como <code>Padrão − Estoque</code> (mínimo 0).
+                Defina a quantidade de referência por produto, dia da semana e turno.
+                O <strong>Pedido</strong> é calculado como <code>Padrão − Estoque</code> (mínimo 0).
               </p>
               <div id="lista-padroes"></div>
             </div>
