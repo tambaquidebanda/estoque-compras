@@ -2591,10 +2591,17 @@ function _preencherModalDivergencias() {
         .join('');
       const separador = optsTop ? '<option disabled>──────────────</option>' : '';
 
+      const avisoStale = d.mapeadoAtual
+        ? `<div class="text-warning small mt-1">⚠️ Salvo anteriormente como: <em>${esc(d.mapeadoAtual)}</em> (produto não encontrado no cadastro)</div>`
+        : '';
+
       return `<tr>
         <td class="ps-3 fw-semibold" style="color:#FF6B35;white-space:nowrap">${esc(d.setor)}</td>
         <td class="text-muted small" style="white-space:nowrap">${esc(d.grupo)}</td>
-        <td><code style="color:#dc3545;font-size:.8rem">${esc(d.nome)}</code></td>
+        <td>
+          <code style="color:#dc3545;font-size:.8rem">${esc(d.nome)}</code>
+          ${avisoStale}
+        </td>
         <td>
           <select class="form-select form-select-sm" id="div-sel-${i}" data-nome="${esc(d.nome)}">
             <option value="">-- manter sem match --</option>
