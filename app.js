@@ -2497,6 +2497,13 @@ function abrirEditarPadroes() {
     </li>`
   ).join('');
 
+  const _gruposDias = {
+    'Dias Úteis (Seg-Sex)': ['seg','ter','qua','qui','sex'],
+    'Fim de Semana (Sab-Dom)': ['sab','dom'],
+    'Feriado': ['feriado'],
+    'Todos': ['seg','ter','qua','qui','sex','sab','dom','feriado'],
+  };
+
   const tabPanes = todasDias.map((d, i) => {
     const rows = _invProds.map((p, pi) => {
       const obj = padroes[p.nome.trim().toUpperCase()];
@@ -2509,6 +2516,11 @@ function abrirEditarPadroes() {
         </td>
       </tr>`;
     }).join('');
+
+    const copyBtns = Object.entries(_gruposDias).map(([label, destinos]) =>
+      `<button class="btn btn-sm btn-outline-secondary" onclick="_copiarPadraoDia('${d}',[${destinos.map(x=>`'${x}'`).join(',')}])">${label}</button>`
+    ).join('');
+
     return `<div class="tab-pane fade ${i === 0 ? 'show active' : ''}" id="pad-tab-${d}">
       <table class="table table-sm align-middle mb-0">
         <thead style="background:#f8f9fa;position:sticky;top:0">
@@ -2516,6 +2528,10 @@ function abrirEditarPadroes() {
         </thead>
         <tbody>${rows}</tbody>
       </table>
+      <div class="d-flex flex-wrap gap-2 align-items-center p-2 border-top bg-light">
+        <small class="text-muted fw-semibold">📋 Replicar para:</small>
+        ${copyBtns}
+      </div>
     </div>`;
   }).join('');
 
@@ -2547,6 +2563,21 @@ function salvarPadroes() {
   toast('Padrões salvos!', 'ok');
   bootstrap.Modal.getInstance(document.getElementById('modal-padroes'))?.hide();
   renderInventario();
+}
+
+function _copiarPadraoDia(origem, destinos) {
+  const alvos = destinos.filter(d => d !== origem);
+  if (!alvos.length) return;
+  _invProds.forEach((_, pi) => {
+    const src = document.getElementById(`pad-${origem}-${pi}`);
+    if (!src) return;
+    alvos.forEach(d => {
+      const dst = document.getElementById(`pad-${d}-${pi}`);
+      if (dst) dst.value = src.value;
+    });
+  });
+  const labels = alvos.map(d => _DIAS_LABEL[d]).join(', ');
+  toast(`Valores de ${_DIAS_LABEL[origem]} copiados para: ${labels}`, 'ok');
 }
 
 async function salvarInventario() {
