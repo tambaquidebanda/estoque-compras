@@ -2489,7 +2489,7 @@ function salvarPadroes() {
 async function salvarInventario() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de salvar.', 'erro'); return; }
   const data = document.getElementById('inv-data').value;
-  if (!data) { toast('Selecione a data do inventário.', 'erro'); return; }
+  if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();
@@ -2663,7 +2663,7 @@ async function carregarHistoricoInv() {
 
   const cont = document.getElementById('lst-historico-inv');
   if (!cont) return;
-  if (!lista?.length) { cont.innerHTML = '<p class="text-muted">Nenhum inventário salvo ainda.</p>'; return; }
+  if (!lista?.length) { cont.innerHTML = '<p class="text-muted">Nenhuma contagem salva ainda.</p>'; return; }
 
   cont.innerHTML = lista.map(inv => {
     const localCor = inv.local === 'Centro' ? '#0d6efd' : '#198754';
@@ -2689,9 +2689,9 @@ async function carregarHistoricoInv() {
 }
 
 async function excluirInventario(id) {
-  if (!confirm('Excluir este inventário?')) return;
+  if (!confirm('Excluir esta contagem?')) return;
   await sb.from('est_inventarios').delete().eq('id', id);
-  toast('Inventário excluído.', 'ok');
+  toast('Contagem excluída.', 'ok');
   carregarHistoricoInv();
 }
 
@@ -2840,7 +2840,7 @@ async function carregarSaldoInventarioPlan() {
   const msgEl = document.getElementById('msg-inv-plan');
   const selId = document.getElementById('inv-plan-sel')?.value;
   if (!selId) {
-    if (msgEl) msgEl.innerHTML = '<span class="text-warning">⚠️ Selecione um inventário.</span>';
+    if (msgEl) msgEl.innerHTML = '<span class="text-warning">⚠️ Selecione uma contagem.</span>';
     return;
   }
 
@@ -2849,7 +2849,7 @@ async function carregarSaldoInventarioPlan() {
     .eq('inventario_id', selId);
 
   if (!itens?.length) {
-    if (msgEl) msgEl.innerHTML = '<span class="text-danger">Inventário sem itens.</span>';
+    if (msgEl) msgEl.innerHTML = '<span class="text-danger">Contagem sem itens.</span>';
     return;
   }
 

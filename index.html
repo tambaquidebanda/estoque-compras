@@ -101,7 +101,7 @@
           <i class="bi bi-box-seam-fill"></i> Recebimentos
         </a>
         <a href="#" onclick="ir('inventario',this)">
-          <i class="bi bi-clipboard-check-fill"></i> Inventários
+          <i class="bi bi-clipboard-check-fill"></i> Contagem/Pedido
         </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
@@ -1026,7 +1026,7 @@
 
     <!-- ══════ INVENTÁRIOS ══════ -->
     <section id="pg-inventario" class="pagina">
-      <h1>📋 Inventários</h1>
+      <h1>📋 Contagem/Pedido</h1>
 
       <!-- Local + Data + Responsável -->
       <div class="card-grafico mb-3">
@@ -1089,7 +1089,7 @@
               <i class="bi bi-exclamation-triangle"></i> Ver Divergências
             </button>
             <button class="btn btn-primary" onclick="salvarInventario()">
-              <i class="bi bi-floppy-fill"></i> Salvar Inventário
+              <i class="bi bi-floppy-fill"></i> Salvar Contagem
             </button>
           </div>
         </div>
@@ -1116,14 +1116,14 @@
       <!-- Histórico -->
       <div class="card-grafico">
         <div class="d-flex align-items-center justify-content-between mb-3">
-          <h5 class="mb-0">📂 Histórico de Inventários</h5>
+          <h5 class="mb-0">📂 Histórico de Contagens</h5>
           <select class="form-select form-select-sm" id="hist-inv-fil" onchange="carregarHistoricoInv()" style="width:160px">
             <option value="">Todos os locais</option>
             <option value="Centro">Centro</option>
             <option value="P10">P10</option>
           </select>
         </div>
-        <div id="lst-historico-inv"><p class="text-muted">Nenhum inventário salvo ainda.</p></div>
+        <div id="lst-historico-inv"><p class="text-muted">Nenhuma contagem salva ainda.</p></div>
       </div>
 
       <!-- Modal: Divergências de Produtos no Inventário (temporário) -->
@@ -1131,7 +1131,7 @@
         <div class="modal-dialog modal-xl">
           <div class="modal-content">
             <div class="modal-header" style="background:#856404;color:#fff">
-              <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Produtos sem match no Inventário</h5>
+              <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Produtos sem match na Contagem</h5>
               <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body p-0">
@@ -1227,14 +1227,14 @@
         <div class="row g-3">
           <div class="col-md-6">
             <div class="rounded-3 p-3 h-100" style="background:#f0fdf4;border:1px solid #bbf7d0">
-              <div class="fw-semibold mb-1">📦 Usar Inventário do Sistema</div>
-              <p class="text-muted small mb-2">Selecione a data da contagem salva em <strong>Inventários</strong> (Centro + P10).</p>
+              <div class="fw-semibold mb-1">📦 Usar Contagem do Sistema</div>
+              <p class="text-muted small mb-2">Selecione a data da contagem salva em <strong>Contagem/Pedido</strong> (Centro + P10).</p>
               <select class="form-select form-select-sm mb-2" id="inv-plan-sel">
                 <option value="">— selecione —</option>
               </select>
               <div id="msg-inv-plan" class="small mb-2"></div>
               <button class="btn btn-success w-100" onclick="carregarSaldoInventarioPlan()">
-                📦 Carregar Saldo do Inventário
+                📦 Carregar Saldo da Contagem
               </button>
             </div>
           </div>
