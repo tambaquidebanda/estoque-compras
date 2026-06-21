@@ -1026,7 +1026,31 @@
 
     <!-- ══════ INVENTÁRIOS ══════ -->
     <section id="pg-inventario" class="pagina">
-      <h1>📋 Contagem/Pedido</h1>
+      <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+        <h1 class="mb-0">📋 Contagem/Pedido</h1>
+        <button class="btn btn-danger" onclick="abrirEmergencia()">
+          🚨 Pedido de Emergência
+        </button>
+      </div>
+
+      <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item">
+          <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-contagem" type="button">
+            📋 Contagem
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-pedidos" type="button"
+            onclick="carregarPedidosInternos()">
+            📦 Pedidos Internos
+            <span id="badge-ped-pendentes" class="badge bg-danger d-none ms-1"></span>
+          </button>
+        </li>
+      </ul>
+
+      <div class="tab-content">
+      <!-- ─── Aba Contagem ─── -->
+      <div class="tab-pane fade show active" id="tab-contagem">
 
       <!-- Local + Data + Responsável -->
       <div class="card-grafico mb-3">
@@ -1115,6 +1139,9 @@
             <button class="btn btn-primary" onclick="salvarInventario()">
               <i class="bi bi-floppy-fill"></i> Salvar Contagem
             </button>
+            <button class="btn btn-success" onclick="enviarPedidoInterno()">
+              <i class="bi bi-send-fill"></i> Enviar Pedido
+            </button>
           </div>
         </div>
         <div class="table-responsive">
@@ -1149,6 +1176,94 @@
         </div>
         <div id="lst-historico-inv"><p class="text-muted">Nenhuma contagem salva ainda.</p></div>
       </div>
+
+      </div><!-- /tab-contagem -->
+
+      <!-- ─── Aba Pedidos Internos ─── -->
+      <div class="tab-pane fade" id="tab-pedidos">
+
+        <ul class="nav nav-pills mb-3" role="tablist">
+          <li class="nav-item">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-ped-estoque" type="button">
+              📥 Pedidos dos Setores
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ped-meus" type="button"
+              onclick="carregarMeusPedidos()">
+              📤 Meus Pedidos
+            </button>
+          </li>
+        </ul>
+
+        <div class="tab-content">
+
+          <!-- Sub-aba: Pedidos dos Setores (visão do estoque) -->
+          <div class="tab-pane fade show active" id="tab-ped-estoque">
+            <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+              <select class="form-select form-select-sm" id="fil-ped-local" style="width:130px">
+                <option value="">Todos os locais</option>
+                <option value="Centro">Centro</option>
+                <option value="P10">P10</option>
+              </select>
+              <select class="form-select form-select-sm" id="fil-ped-setor" style="width:165px">
+                <option value="">Todos os setores</option>
+                <option value="CHURRASQUEIRA">🔥 Churrasqueira</option>
+                <option value="COZINHA">🍳 Cozinha</option>
+                <option value="BAR">🍹 Bar</option>
+                <option value="SALAO">🪑 Salão</option>
+                <option value="ASG">🧹 ASG</option>
+                <option value="DELIVERY">🛵 Delivery</option>
+              </select>
+              <select class="form-select form-select-sm" id="fil-ped-status" style="width:145px"
+                onchange="carregarPedidosInternos()">
+                <option value="pendente">Pendentes</option>
+                <option value="liberado">Liberados</option>
+                <option value="recebido">Recebidos</option>
+                <option value="">Todos</option>
+              </select>
+              <button class="btn btn-sm btn-outline-secondary" onclick="carregarPedidosInternos()">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+            <div id="lst-pedidos-estoque">
+              <p class="text-muted text-center py-4">Nenhum pedido carregado.</p>
+            </div>
+          </div>
+
+          <!-- Sub-aba: Meus Pedidos (visão do setor) -->
+          <div class="tab-pane fade" id="tab-ped-meus">
+            <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+              <select class="form-select form-select-sm" id="fil-meus-setor" style="width:170px"
+                onchange="carregarMeusPedidos()">
+                <option value="">Selecionar setor...</option>
+                <option value="CHURRASQUEIRA">🔥 Churrasqueira</option>
+                <option value="COZINHA">🍳 Cozinha</option>
+                <option value="BAR">🍹 Bar</option>
+                <option value="SALAO">🪑 Salão</option>
+                <option value="ASG">🧹 ASG</option>
+                <option value="DELIVERY">🛵 Delivery</option>
+              </select>
+              <select class="form-select form-select-sm" id="fil-meus-status" style="width:145px"
+                onchange="carregarMeusPedidos()">
+                <option value="">Todos</option>
+                <option value="pendente">Pendentes</option>
+                <option value="liberado">Liberados</option>
+                <option value="recebido">Recebidos</option>
+              </select>
+              <button class="btn btn-sm btn-outline-secondary" onclick="carregarMeusPedidos()">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+            <div id="lst-meus-pedidos">
+              <p class="text-muted text-center py-4">Selecione um setor.</p>
+            </div>
+          </div>
+
+        </div><!-- /tab-content inner -->
+      </div><!-- /tab-pedidos -->
+
+      </div><!-- /tab-content outer -->
 
       <!-- Modal: Divergências de Produtos no Inventário (temporário) -->
       <div class="modal fade" id="modal-divergencias-inv" tabindex="-1">
@@ -1209,6 +1324,103 @@
           </div>
         </div>
       </div>
+
+      <!-- Modal: Liberar Pedido (visão do estoque) -->
+      <div class="modal fade" id="modal-liberar-pedido" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#198754;color:#fff">
+              <h5 class="modal-title"><i class="bi bi-box-arrow-right"></i> Liberar Pedido</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-liberar-body">
+              <p class="text-muted text-center py-3">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-success" onclick="confirmarLiberacao()">
+                <i class="bi bi-check-circle-fill"></i> Confirmar Liberação
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Confirmar Recebimento (visão do setor) -->
+      <div class="modal fade" id="modal-receber-pedido" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#0d6efd;color:#fff">
+              <h5 class="modal-title"><i class="bi bi-check-circle-fill"></i> Confirmar Recebimento</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-receber-body">
+              <p class="text-muted text-center py-3">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-primary" onclick="confirmarRecebimentoInv()">
+                <i class="bi bi-check-circle-fill"></i> Confirmar Recebimento
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Pedido de Emergência -->
+      <div class="modal fade" id="modal-emergencia" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#dc3545;color:#fff">
+              <h5 class="modal-title">🚨 Pedido de Emergência</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Setor</label>
+                <select class="form-select" id="emerg-setor">
+                  <option value="">Selecionar...</option>
+                  <option value="CHURRASQUEIRA">🔥 Churrasqueira</option>
+                  <option value="COZINHA">🍳 Cozinha</option>
+                  <option value="BAR">🍹 Bar</option>
+                  <option value="SALAO">🪑 Salão</option>
+                  <option value="ASG">🧹 ASG</option>
+                  <option value="DELIVERY">🛵 Delivery</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Produto</label>
+                <input type="text" class="form-control" id="emerg-produto-busca"
+                  placeholder="Buscar produto..." oninput="buscarProdutoEmerg()">
+                <div id="emerg-sugestoes" class="list-group mt-1" style="max-height:180px;overflow-y:auto"></div>
+                <input type="hidden" id="emerg-produto-id">
+                <div id="emerg-produto-sel" class="text-success small mt-1 d-none"></div>
+              </div>
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label fw-semibold">Quantidade</label>
+                  <input type="number" class="form-control" id="emerg-qtd" min="1" step="0.001" placeholder="0">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold">Responsável</label>
+                  <input type="text" class="form-control" id="emerg-resp" placeholder="Nome">
+                </div>
+              </div>
+              <div>
+                <label class="form-label fw-semibold">Observação <span class="text-muted fw-normal">(opcional)</span></label>
+                <input type="text" class="form-control" id="emerg-obs" placeholder="Motivo do pedido de emergência">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-danger" onclick="enviarEmergencia()">
+                <i class="bi bi-send-fill"></i> Enviar Emergência
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- ══════ PLANEJAMENTO ══════ -->

@@ -2789,6 +2789,354 @@ async function excluirInventario(id) {
   carregarHistoricoInv();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// PEDIDOS INTERNOS (setor → estoque)
+// ═══════════════════════════════════════════════════════════════
+
+const _STATUS_PED = {
+  pendente:  '<span class="badge bg-warning text-dark">Pendente</span>',
+  liberado:  '<span class="badge bg-primary">Liberado</span>',
+  recebido:  '<span class="badge bg-success">Recebido</span>',
+  cancelado: '<span class="badge bg-danger">Cancelado</span>',
+};
+
+async function _proximoNumPedido() {
+  const { data } = await sb.from('pedidos_internos')
+    .select('num_pedido').order('criado_em', { ascending: false }).limit(1);
+  const n = data?.[0]?.num_pedido ? parseInt(data[0].num_pedido.replace(/\D/g, '')) || 0 : 0;
+  return 'PED-' + String(n + 1).padStart(4, '0');
+}
+
+async function enviarPedidoInterno() {
+  if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
+
+  const itens = [];
+  _invProds.forEach((p, i) => {
+    const qtd = parseFloat(document.getElementById(`inv-ped-${i}`)?.textContent) || 0;
+    if (qtd > 0) itens.push({ produto_id: p.produto_id || null, nome: p.nome, qtd_pedida: qtd });
+  });
+
+  if (!itens.length) { toast('Nenhum produto com pedido > 0. Preencha a contagem primeiro.', 'warn'); return; }
+
+  const data    = document.getElementById('inv-data').value || new Date().toISOString().slice(0, 10);
+  const resp    = (document.getElementById('inv-resp').value || '').trim();
+  const numPed  = await _proximoNumPedido();
+
+  const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
+    num_pedido: numPed, data,
+    dia_semana: _invFeriado ? 'feriado' : _invDia,
+    setor: _invSetor, local: _invLocal,
+    tipo: 'normal', status: 'pendente',
+    responsavel: resp, obs: _invGrupo,
+  }).select().single();
+
+  if (e1) { toast('Erro ao criar pedido: ' + e1.message, 'erro'); return; }
+
+  const { error: e2 } = await sb.from('pedidos_internos_itens')
+    .insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
+  if (e2) { toast('Erro ao salvar itens: ' + e2.message, 'erro'); return; }
+
+  toast(`${numPed} enviado ao estoque com ${itens.length} item(s)! ✅`, 'ok');
+}
+
+async function carregarPedidosInternos() {
+  const local  = document.getElementById('fil-ped-local')?.value  || '';
+  const setor  = document.getElementById('fil-ped-setor')?.value  || '';
+  const status = document.getElementById('fil-ped-status')?.value || '';
+
+  let q = sb.from('pedidos_internos').select('*').order('criado_em', { ascending: false }).limit(100);
+  if (local)  q = q.eq('local', local);
+  if (setor)  q = q.eq('setor', setor);
+  if (status) q = q.eq('status', status);
+
+  const { data: peds, error } = await q;
+  if (error) { toast('Erro ao carregar pedidos: ' + error.message, 'erro'); return; }
+
+  const el = document.getElementById('lst-pedidos-estoque');
+  if (!peds?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhum pedido encontrado.</p>'; return; }
+
+  const { data: itens } = await sb.from('pedidos_internos_itens')
+    .select('*').in('pedido_id', peds.map(p => p.id));
+
+  _renderPedEstoque(peds, itens || []);
+}
+
+async function carregarMeusPedidos() {
+  const setor  = document.getElementById('fil-meus-setor')?.value  || '';
+  const status = document.getElementById('fil-meus-status')?.value || '';
+
+  const el = document.getElementById('lst-meus-pedidos');
+  if (!setor) { el.innerHTML = '<p class="text-muted text-center py-4">Selecione um setor.</p>'; return; }
+
+  let q = sb.from('pedidos_internos').select('*').eq('setor', setor).order('criado_em', { ascending: false }).limit(50);
+  if (status) q = q.eq('status', status);
+
+  const { data: peds, error } = await q;
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  if (!peds?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhum pedido encontrado.</p>'; return; }
+
+  const { data: itens } = await sb.from('pedidos_internos_itens')
+    .select('*').in('pedido_id', peds.map(p => p.id));
+
+  _renderMeusPedidos(peds, itens || []);
+}
+
+function _renderPedEstoque(peds, todosItens) {
+  document.getElementById('lst-pedidos-estoque').innerHTML = peds.map(ped => {
+    const its = todosItens.filter(it => it.pedido_id === ped.id);
+    const rows = its.map(it => `<tr>
+      <td class="ps-3">${esc(it.nome)}</td>
+      <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+      <td class="text-center">${it.qtd_liberada ?? '—'}</td>
+    </tr>`).join('');
+    const tipo = ped.tipo === 'emergencia' ? '<span class="badge bg-danger ms-1">🚨 Emergência</span>' : '';
+    return `<div class="card mb-3">
+      <div class="card-header d-flex align-items-center justify-content-between py-2 flex-wrap gap-2">
+        <div>
+          <strong>${esc(ped.num_pedido || '—')}</strong>${tipo}
+          <span class="text-muted small ms-2">${ped.data} · ${esc(ped.setor)} · ${esc(ped.local || '')}${ped.obs ? ' · ' + esc(ped.obs) : ''}</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          ${_STATUS_PED[ped.status] || ped.status}
+          ${ped.status === 'pendente' ? `<button class="btn btn-sm btn-success" onclick="abrirLiberarPedido('${ped.id}')">
+            <i class="bi bi-box-arrow-right"></i> Liberar
+          </button>` : ''}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr>
+            <th class="ps-3">Produto</th>
+            <th class="text-center">Pedido</th>
+            <th class="text-center">Liberado</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${ped.responsavel ? `<div class="card-footer py-1 small text-muted">Responsável: ${esc(ped.responsavel)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function _renderMeusPedidos(peds, todosItens) {
+  document.getElementById('lst-meus-pedidos').innerHTML = peds.map(ped => {
+    const its = todosItens.filter(it => it.pedido_id === ped.id);
+    const rows = its.map(it => `<tr>
+      <td class="ps-3">${esc(it.nome)}</td>
+      <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+      <td class="text-center">${it.qtd_liberada ?? '—'}</td>
+      <td class="text-center">${it.qtd_recebida ?? '—'}</td>
+    </tr>`).join('');
+    const tipo = ped.tipo === 'emergencia' ? '<span class="badge bg-danger ms-1">🚨 Emergência</span>' : '';
+    return `<div class="card mb-3">
+      <div class="card-header d-flex align-items-center justify-content-between py-2 flex-wrap gap-2">
+        <div>
+          <strong>${esc(ped.num_pedido || '—')}</strong>${tipo}
+          <span class="text-muted small ms-2">${ped.data}</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          ${_STATUS_PED[ped.status] || ped.status}
+          ${ped.status === 'liberado' ? `<button class="btn btn-sm btn-primary" onclick="abrirReceberPedido('${ped.id}')">
+            <i class="bi bi-check-circle"></i> Confirmar Recebimento
+          </button>` : ''}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr>
+            <th class="ps-3">Produto</th>
+            <th class="text-center">Pedido</th>
+            <th class="text-center">Liberado</th>
+            <th class="text-center">Recebido</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${ped.responsavel ? `<div class="card-footer py-1 small text-muted">Responsável: ${esc(ped.responsavel)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+let _pedLiberarId = null;
+
+async function abrirLiberarPedido(pedidoId) {
+  _pedLiberarId = pedidoId;
+  const { data: ped } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+
+  const rows = (itens || []).map(it => `<tr>
+    <td>${esc(it.nome)}</td>
+    <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+    <td class="text-center" style="width:130px">
+      <input type="number" class="form-control form-control-sm text-center"
+        id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="0.001">
+    </td>
+  </tr>`).join('');
+
+  document.getElementById('modal-liberar-body').innerHTML = `
+    <div class="alert alert-success py-2 mb-3">
+      <strong>${esc(ped?.num_pedido || '—')}</strong> ·
+      ${esc(ped?.setor || '')} · ${esc(ped?.local || '')} · ${ped?.data || ''}
+      ${ped?.obs ? `<br><small class="text-muted">${esc(ped.obs)}</small>` : ''}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light"><tr>
+          <th>Produto</th>
+          <th class="text-center">Pedido</th>
+          <th class="text-center">Qtd. a Liberar</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <input type="hidden" id="lib-itens" value='${JSON.stringify((itens || []).map(i => i.id))}'>`;
+
+  new bootstrap.Modal(document.getElementById('modal-liberar-pedido')).show();
+}
+
+async function confirmarLiberacao() {
+  if (!_pedLiberarId) return;
+  const itenIds = JSON.parse(document.getElementById('lib-itens')?.value || '[]');
+
+  await Promise.all(itenIds.map(id => {
+    const qtd = parseFloat(document.getElementById(`lib-qtd-${id}`)?.value) || 0;
+    return sb.from('pedidos_internos_itens').update({ qtd_liberada: qtd }).eq('id', id);
+  }));
+
+  await sb.from('pedidos_internos').update({
+    status: 'liberado', liberado_em: new Date().toISOString(),
+  }).eq('id', _pedLiberarId);
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-liberar-pedido'))?.hide();
+  toast('Pedido liberado! ✅', 'ok');
+  carregarPedidosInternos();
+}
+
+let _pedReceberId = null;
+
+async function abrirReceberPedido(pedidoId) {
+  _pedReceberId = pedidoId;
+  const { data: ped } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+
+  const rows = (itens || []).map(it => `<tr>
+    <td>${esc(it.nome)}</td>
+    <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+    <td class="text-center">${it.qtd_liberada ?? '—'}</td>
+    <td class="text-center" style="width:130px">
+      <input type="number" class="form-control form-control-sm text-center"
+        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="0.001">
+    </td>
+  </tr>`).join('');
+
+  document.getElementById('modal-receber-body').innerHTML = `
+    <div class="alert alert-primary py-2 mb-3">
+      <strong>${esc(ped?.num_pedido || '—')}</strong> · ${esc(ped?.setor || '')} · ${ped?.data || ''}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light"><tr>
+          <th>Produto</th>
+          <th class="text-center">Pedido</th>
+          <th class="text-center">Liberado</th>
+          <th class="text-center">Qtd. Recebida</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <input type="hidden" id="rec-itens" value='${JSON.stringify((itens || []).map(i => i.id))}'>`;
+
+  new bootstrap.Modal(document.getElementById('modal-receber-pedido')).show();
+}
+
+async function confirmarRecebimentoInv() {
+  if (!_pedReceberId) return;
+  const itenIds = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
+
+  await Promise.all(itenIds.map(id => {
+    const qtd = parseFloat(document.getElementById(`rec-qtd-${id}`)?.value) || 0;
+    return sb.from('pedidos_internos_itens').update({ qtd_recebida: qtd }).eq('id', id);
+  }));
+
+  await sb.from('pedidos_internos').update({
+    status: 'recebido', recebido_em: new Date().toISOString(),
+  }).eq('id', _pedReceberId);
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
+  toast('Recebimento confirmado! ✅', 'ok');
+  carregarMeusPedidos();
+}
+
+function abrirEmergencia() {
+  const sel = document.getElementById('emerg-setor');
+  if (sel && _invSetor) sel.value = _invSetor;
+  document.getElementById('emerg-produto-busca').value = '';
+  document.getElementById('emerg-produto-id').value   = '';
+  document.getElementById('emerg-sugestoes').innerHTML = '';
+  document.getElementById('emerg-produto-sel').classList.add('d-none');
+  document.getElementById('emerg-qtd').value = '';
+  document.getElementById('emerg-obs').value = '';
+  const resp = document.getElementById('inv-resp')?.value || '';
+  document.getElementById('emerg-resp').value = resp;
+  new bootstrap.Modal(document.getElementById('modal-emergencia')).show();
+}
+
+function buscarProdutoEmerg() {
+  const q  = (document.getElementById('emerg-produto-busca')?.value || '').trim().toLowerCase();
+  const el = document.getElementById('emerg-sugestoes');
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  const hits = cProdutosFT.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 10);
+  el.innerHTML = hits.length
+    ? hits.map(p => `<button type="button" class="list-group-item list-group-item-action py-1 small"
+        onclick="selecionarProdEmerg('${p.id}','${esc(p.nome)}')">${esc(p.nome)}</button>`).join('')
+    : '<div class="list-group-item text-muted small py-1">Nenhum produto encontrado.</div>';
+}
+
+function selecionarProdEmerg(id, nome) {
+  document.getElementById('emerg-produto-id').value   = id;
+  document.getElementById('emerg-produto-busca').value = nome;
+  document.getElementById('emerg-sugestoes').innerHTML = '';
+  const sel = document.getElementById('emerg-produto-sel');
+  sel.textContent = '✅ ' + nome;
+  sel.classList.remove('d-none');
+}
+
+async function enviarEmergencia() {
+  const setor    = document.getElementById('emerg-setor')?.value?.trim();
+  const prodId   = document.getElementById('emerg-produto-id')?.value?.trim();
+  const prodNome = document.getElementById('emerg-produto-busca')?.value?.trim();
+  const qtd      = parseFloat(document.getElementById('emerg-qtd')?.value) || 0;
+  const resp     = (document.getElementById('emerg-resp')?.value || '').trim();
+  const obs      = (document.getElementById('emerg-obs')?.value  || '').trim();
+
+  if (!setor)    { toast('Selecione o setor.', 'warn');    return; }
+  if (!prodNome) { toast('Selecione um produto.', 'warn'); return; }
+  if (qtd <= 0)  { toast('Informe a quantidade.', 'warn'); return; }
+
+  const numPed = await _proximoNumPedido();
+  const data   = new Date().toISOString().slice(0, 10);
+
+  const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
+    num_pedido: numPed, data,
+    dia_semana: _invFeriado ? 'feriado' : _invDia,
+    setor, local: _invLocal,
+    tipo: 'emergencia', status: 'pendente',
+    responsavel: resp, obs,
+  }).select().single();
+
+  if (e1) { toast('Erro: ' + e1.message, 'erro'); return; }
+
+  await sb.from('pedidos_internos_itens').insert({
+    pedido_id: ped.id,
+    produto_id: prodId || null,
+    nome: prodNome,
+    qtd_pedida: qtd,
+  });
+
+  bootstrap.Modal.getInstance(document.getElementById('modal-emergencia'))?.hide();
+  toast(`${numPed} (emergência) enviado! ✅`, 'ok');
+}
+
 // Importação de planilha para o inventário
 function handleDropInvFile(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarArqInv(f); }
 function importarProdutosInv(e) { const f = e.target.files[0]; if (f) _processarArqInv(f); }
