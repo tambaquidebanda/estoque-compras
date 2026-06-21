@@ -2313,52 +2313,39 @@ let _invSetor   = null;
 let _invGrupo   = null;
 let _invProds   = [];   // { nome, produto_id } array do grupo atual
 let _invDia     = '';   // 'seg'|'ter'|'qua'|'qui'|'sex'|'sab'|'dom'
-let _invTurno   = '';   // 'almoco'|'jantar'
 let _invFeriado = false;
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
 
 function _chavePadrao() {
-  return _invFeriado ? `feriado_${_invTurno}` : `${_invDia}_${_invTurno}`;
+  return _invFeriado ? 'feriado' : _invDia;
 }
 
-function initInvDiaTurno() {
+function initInvDia() {
   _invDia     = _DIAS_SEM[new Date().getDay()];
-  _invTurno   = new Date().getHours() < 15 ? 'almoco' : 'jantar';
   _invFeriado = false;
-  atualizarBtnsDiaTurno();
+  atualizarBtnsDia();
 }
 
 function setInvDia(dia) {
   _invDia = dia;
   _invFeriado = false;
-  atualizarBtnsDiaTurno();
-  if (_invGrupo) renderInventario();
-}
-
-function setInvTurno(turno) {
-  _invTurno = turno;
-  atualizarBtnsDiaTurno();
+  atualizarBtnsDia();
   if (_invGrupo) renderInventario();
 }
 
 function toggleFeriado() {
   _invFeriado = !_invFeriado;
-  atualizarBtnsDiaTurno();
+  atualizarBtnsDia();
   if (_invGrupo) renderInventario();
 }
 
-function atualizarBtnsDiaTurno() {
-  _DIAS_SEM.filter(d => d !== 'dom' || true).forEach(d => {
+function atualizarBtnsDia() {
+  _DIAS_SEM.forEach(d => {
     const btn = document.querySelector(`[data-dia="${d}"]`);
     if (!btn) return;
     btn.className = `btn btn-sm ${d === _invDia && !_invFeriado ? 'btn-primary' : 'btn-outline-primary'}`;
-  });
-  ['almoco','jantar'].forEach(t => {
-    const btn = document.querySelector(`[data-turno="${t}"]`);
-    if (!btn) return;
-    btn.className = `btn btn-sm ${t === _invTurno ? 'btn-success' : 'btn-outline-success'}`;
   });
   const btnFer = document.getElementById('btn-inv-feriado');
   if (btnFer) btnFer.className = `btn btn-sm ${_invFeriado ? 'btn-warning' : 'btn-outline-warning'}`;
@@ -2375,7 +2362,7 @@ function mudarLocalInv(local) {
 
 async function carregarInventario() {
   if (!cProdutosFT.length) await carregarProdutosFT();
-  if (!_invDia) initInvDiaTurno();
+  if (!_invDia) initInvDia();
   carregarHistoricoInv();
 }
 
@@ -2513,24 +2500,19 @@ function abrirEditarPadroes() {
   const tabPanes = todasDias.map((d, i) => {
     const rows = _invProds.map((p, pi) => {
       const obj = padroes[p.nome.trim().toUpperCase()];
-      const vA = (obj && typeof obj === 'object') ? (obj[`${d}_almoco`] ?? '') : '';
-      const vJ = (obj && typeof obj === 'object') ? (obj[`${d}_jantar`] ?? '') : '';
+      const val = (obj && typeof obj === 'object') ? (obj[d] ?? '') : (typeof obj === 'number' ? obj : '');
       return `<tr>
         <td class="small">${esc(p.nome)}</td>
         <td class="text-center">
           <input type="number" class="form-control form-control-sm text-center"
-            id="pad-${d}-almoco-${pi}" min="0" step="0.001" value="${vA}" placeholder="—" style="width:85px;margin:auto">
-        </td>
-        <td class="text-center">
-          <input type="number" class="form-control form-control-sm text-center"
-            id="pad-${d}-jantar-${pi}" min="0" step="0.001" value="${vJ}" placeholder="—" style="width:85px;margin:auto">
+            id="pad-${d}-${pi}" min="0" step="0.001" value="${val}" placeholder="—" style="width:100px;margin:auto">
         </td>
       </tr>`;
     }).join('');
     return `<div class="tab-pane fade ${i === 0 ? 'show active' : ''}" id="pad-tab-${d}">
       <table class="table table-sm align-middle mb-0">
         <thead style="background:#f8f9fa;position:sticky;top:0">
-          <tr><th>Produto</th><th class="text-center">☀️ Almoço</th><th class="text-center">🌙 Jantar</th></tr>
+          <tr><th>Produto</th><th class="text-center">Qtd. Padrão</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -2552,14 +2534,11 @@ function salvarPadroes() {
     const key = p.nome.trim().toUpperCase();
     if (!padroes[key] || typeof padroes[key] !== 'object') padroes[key] = {};
     todasDias.forEach(d => {
-      ['almoco','jantar'].forEach(t => {
-        const input = document.getElementById(`pad-${d}-${t}-${pi}`);
-        if (!input) return;
-        const val = input.value.trim();
-        const chave = `${d}_${t}`;
-        if (val === '') delete padroes[key][chave];
-        else padroes[key][chave] = parseFloat(val) || 0;
-      });
+      const input = document.getElementById(`pad-${d}-${pi}`);
+      if (!input) return;
+      const val = input.value.trim();
+      if (val === '') delete padroes[key][d];
+      else padroes[key][d] = parseFloat(val) || 0;
     });
     if (Object.keys(padroes[key]).length === 0) delete padroes[key];
   });
