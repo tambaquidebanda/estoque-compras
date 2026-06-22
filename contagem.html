@@ -458,7 +458,7 @@
           <button class="setor-btn" onclick="pedirPinSetor('SALAO')">🪑<br>Salão</button>
           <button class="setor-btn" onclick="pedirPinSetor('ASG')">🧹<br>ASG</button>
           <button class="setor-btn" onclick="pedirPinSetor('DELIVERY')">🛵<br>Delivery</button>
-          <button class="setor-btn" onclick="selecionarEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">🏪<br>Estoque da Loja</button>
+          <button class="setor-btn" onclick="pedirPinEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">🏪<br>Estoque da Loja</button>
         </div>
       </div>
 
@@ -923,6 +923,16 @@ function pedirPinEstoque() {
   atualizarPinDisplay();
   mostrarModal('modal-pin');
 }
+function pedirPinEstoqueLoja() {
+  const pin = _pins['ESTOQUE'];
+  if (!pin) { selecionarEstoqueLoja(); return; }
+  _pinTarget = { tipo: 'estoque_loja' };
+  _pinBuffer = '';
+  document.getElementById('pin-nome-setor').textContent = '🔐 Estoque da Loja';
+  document.getElementById('pin-erro').textContent = '';
+  atualizarPinDisplay();
+  mostrarModal('modal-pin');
+}
 function pinKey(d) {
   if (_pinBuffer.length >= 4) return;
   _pinBuffer += d;
@@ -948,6 +958,8 @@ function pinConfirm() {
     fecharModal('modal-pin');
     if (_pinTarget.tipo === 'setor') {
       _pedirNomeParaSetor(_pinTarget.setor);
+    } else if (_pinTarget.tipo === 'estoque_loja') {
+      selecionarEstoqueLoja();
     } else {
       _estoqueDesbloqueado = true;
       _abrirSubTabEstoque();
