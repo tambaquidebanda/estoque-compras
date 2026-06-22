@@ -2475,8 +2475,8 @@ async function selecionarSetorInv(setor) {
 
   grupoTitulo.textContent = `GRUPOS — ${setor}`;
   grupoBtns.innerHTML = grupos.map(g =>
-    `<button class="btn btn-outline-secondary inv-grupo-btn" data-grupo="${esc(g)}"
-      onclick="selecionarGrupoInv('${esc(g)}')" style="border-radius:20px">${esc(g)}</button>`
+    `<button class="saldo-grupo-btn inv-grupo-btn" data-grupo="${esc(g)}"
+      onclick="selecionarGrupoInv('${esc(g)}')">${esc(g)}</button>`
   ).join('');
 
   grupoSection.classList.remove('d-none');
@@ -2499,9 +2499,7 @@ async function selecionarGrupoInv(grupo) {
 
   // Destaca botão de grupo
   document.querySelectorAll('.inv-grupo-btn').forEach(b => {
-    const ativo = b.dataset.grupo === grupo;
-    b.className = 'btn inv-grupo-btn ' + (ativo ? 'btn-success' : 'btn-outline-secondary');
-    b.style.borderRadius = '20px';
+    b.className = 'saldo-grupo-btn inv-grupo-btn' + (b.dataset.grupo === grupo ? ' ativo' : '');
   });
 
   // Monta lista de produtos (respeita mapeamentos e exclusões)
