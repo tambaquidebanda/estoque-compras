@@ -865,7 +865,7 @@ function atualizarBtnsDia() {
 async function carregarProdutos() {
   let todos = [], pag = 0;
   while (true) {
-    const { data } = await sb.from('est_produtos').select('id,nome,unidade_uso')
+    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp')
       .eq('ativo', true).range(pag * 1000, pag * 1000 + 999);
     if (!data?.length) break;
     todos = todos.concat(data);
@@ -1034,7 +1034,7 @@ async function selecionarGrupo(grupo) {
     .map(nome => {
       const nomeReal = _mapeamentos[nome] || nome;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
-      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '' };
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' };
     });
 
   // Adições manuais do setor atual
@@ -1043,7 +1043,7 @@ async function selecionarGrupo(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nome));
-      _grupoProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '' });
+      _grupoProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' });
       nomesExistentes.add(norm(nome));
     });
   };

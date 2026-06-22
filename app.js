@@ -2493,7 +2493,7 @@ async function selecionarGrupoInv(grupo) {
       const nomeBusca = mapeamentos[nome] || nome;
       const nomNorm   = norm(nomeBusca.trim());
       const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '', adicionado: false };
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', adicionado: false };
     });
 
   // Produtos adicionados manualmente via "+"
@@ -2502,7 +2502,7 @@ async function selecionarGrupoInv(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
-      _invProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '', adicionado: true });
+      _invProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', adicionado: true });
       nomesExistentes.add(norm(nome));
     });
   };
@@ -2978,7 +2978,7 @@ async function abrirEditarContagem(invId) {
   const rows = (itens || []).map(it => {
     const ped     = Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
     const prodCad = cProdutosFT.find(p => p.id === it.produto_id);
-    const unidade = prodCad?.unidade_uso || '';
+    const unidade = prodCad?.unidade_comp || '';
     return `<tr>
       <td>${esc(it.nome)}</td>
       <td class="text-center text-muted small">${esc(unidade || '—')}</td>
