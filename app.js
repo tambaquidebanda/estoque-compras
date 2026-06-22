@@ -2985,8 +2985,12 @@ function _renderPedEstoque(peds, todosItens) {
         </div>
         <div class="d-flex align-items-center gap-2">
           ${_STATUS_PED[ped.status] || ped.status}
-          ${ped.status === 'pendente' ? `<button class="btn btn-sm btn-success" onclick="abrirLiberarPedido('${ped.id}')">
+          ${ped.status === 'pendente' ? `
+          <button class="btn btn-sm btn-success" onclick="abrirLiberarPedido('${ped.id}')">
             <i class="bi bi-box-arrow-right"></i> Liberar
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="cancelarPedidoInterno('${ped.id}','${ped.num_pedido}')">
+            <i class="bi bi-x-circle"></i> Cancelar
           </button>` : ''}
         </div>
       </div>
@@ -3042,6 +3046,15 @@ function _renderMeusPedidos(peds, todosItens) {
       ${ped.responsavel ? `<div class="card-footer py-1 small text-muted">Responsável: ${esc(ped.responsavel)}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+async function cancelarPedidoInterno(id, num) {
+  if (!confirm(`Cancelar pedido ${num}?\n\nO setor poderá enviar um novo pedido hoje.`)) return;
+  const { error } = await sb.from('pedidos_internos')
+    .update({ status: 'cancelado' }).eq('id', id).eq('status', 'pendente');
+  if (error) { toast('Erro ao cancelar: ' + error.message, 'erro'); return; }
+  toast(`${num} cancelado.`, 'ok');
+  carregarPedidosInternos();
 }
 
 let _pedLiberarId = null;

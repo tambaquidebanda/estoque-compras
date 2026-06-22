@@ -346,6 +346,12 @@
     #toast.ok  { background: #198754; }
     #toast.err { background: var(--danger); }
 
+    .btn-cancelar-ped {
+      background: none; border: 1px solid var(--danger); border-radius: 8px;
+      color: var(--danger); padding: .5rem .9rem; cursor: pointer; font-size: .85rem;
+      white-space: nowrap;
+    }
+    .btn-cancelar-ped:active { background: rgba(220,53,69,.1); }
     .btn-primary-full {
       width: 100%; background: var(--verde); color: #fff; border: none;
       border-radius: 10px; font-size: 1rem; font-weight: 600;
@@ -1114,7 +1120,10 @@ function _cardPedEstoque(ped, its) {
       <span class="badge-status" style="background:${cor};color:${ped.status==='pendente'?'#000':'#fff'}">${txt}</span>
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th></tr></thead><tbody>${rows}</tbody></table>
-    ${ped.status==='pendente'?`<button class="btn-liberar" onclick="abrirLiberarPedido('${ped.id}')">📦 Liberar Pedido</button>`:''}
+    ${ped.status==='pendente'?`<div style="display:flex;gap:.5rem;padding:.5rem .75rem .75rem">
+      <button class="btn-liberar" style="flex:1" onclick="abrirLiberarPedido('${ped.id}')">📦 Liberar Pedido</button>
+      <button class="btn-cancelar-ped" onclick="cancelarPedidoInterno('${ped.id}','${esc(ped.num_pedido)}')">🗑️ Cancelar</button>
+    </div>`:''}
   </div>`;
 }
 
@@ -1178,6 +1187,15 @@ async function confirmarLiberacao() {
   await sb.from('pedidos_internos').update({status:'liberado',liberado_em:new Date().toISOString()}).eq('id',_pedLiberarId);
   fecharModal('modal-liberar');
   toast('Pedido liberado! ✅','ok');
+  carregarPedidosEstoque();
+}
+
+async function cancelarPedidoInterno(id, num) {
+  if (!confirm(`Cancelar pedido ${num}?\n\nO setor poderá enviar um novo pedido hoje.`)) return;
+  const { error } = await sb.from('pedidos_internos')
+    .update({ status: 'cancelado' }).eq('id', id).eq('status', 'pendente');
+  if (error) { toast('Erro ao cancelar: ' + error.message, 'err'); return; }
+  toast(`${num} cancelado.`, 'ok');
   carregarPedidosEstoque();
 }
 
