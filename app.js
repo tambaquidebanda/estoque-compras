@@ -2335,7 +2335,7 @@ let _invFeriado      = false;
 let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispositivos)
 let _invExcluidos    = new Set();
 let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
-let _invPadroes      = {};   // { "PRODUTO": { "seg": 5, "ter": 3, ... } }
+let _invPadroes      = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -2633,8 +2633,12 @@ function calcPedidoInv(i) {
   pedEl.textContent = ped % 1 === 0 ? String(ped) : ped.toFixed(3).replace(/\.?0+$/, '');
 }
 
+function _padKey(nome) {
+  return `${_invSetor}|${_invGrupo}|${nome.trim().toUpperCase()}`;
+}
+
 function _getPadrao(nome) {
-  const entry = _invPadroes[nome.trim().toUpperCase()];
+  const entry = _invPadroes[_padKey(nome)];
   if (entry === undefined || entry === null) return null;
   if (typeof entry === 'number') return entry;
   const val = entry[_chavePadrao()];
@@ -2642,7 +2646,7 @@ function _getPadrao(nome) {
 }
 
 function _setPadrao(nome, chave, val) {
-  const key = nome.trim().toUpperCase();
+  const key = _padKey(nome);
   if (!_invPadroes[key] || typeof _invPadroes[key] !== 'object') _invPadroes[key] = {};
   _invPadroes[key][chave] = val;
 }
@@ -2669,7 +2673,7 @@ function abrirEditarPadroes() {
 
   const tabPanes = todasDias.map((d, i) => {
     const rows = _invProds.map((p, pi) => {
-      const obj = padroes[p.nome.trim().toUpperCase()];
+      const obj = padroes[_padKey(p.nome)];
       const val = (obj && typeof obj === 'object') ? (obj[d] ?? '') : (typeof obj === 'number' ? obj : '');
       return `<tr>
         <td class="small">${esc(p.nome)}</td>
@@ -2711,7 +2715,7 @@ async function salvarPadroes() {
   const todasDias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
 
   _invProds.forEach((p, pi) => {
-    const key = p.nome.trim().toUpperCase();
+    const key = _padKey(p.nome);
     if (!_invPadroes[key] || typeof _invPadroes[key] !== 'object') _invPadroes[key] = {};
     todasDias.forEach(d => {
       const input = document.getElementById(`pad-${d}-${pi}`);

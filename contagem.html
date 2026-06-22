@@ -750,7 +750,7 @@ let _grupoProds    = [];
 let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop)
 let _excluidos     = new Set();
 let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
-let _padroes       = {};   // { "PRODUTO": { "seg": 5, "ter": 3, ... } }
+let _padroes       = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
 let _pedLiberarId  = null, _pedReceberId = null;
 let _pins              = {};
 let _pinBuffer         = '';
@@ -764,7 +764,8 @@ function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').
 function esc(s)  { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function getPadrao(nome) {
-  const entry = _padroes[nome.trim().toUpperCase()];
+  const key   = `${_setor}|${_grupo}|${nome.trim().toUpperCase()}`;
+  const entry = _padroes[key];
   if (entry === undefined || entry === null) return null;
   if (typeof entry === 'number') return entry;
   const chave = _feriado ? 'feriado' : _dia;
