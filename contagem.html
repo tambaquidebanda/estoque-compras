@@ -578,6 +578,23 @@
   </div>
 </div>
 
+<!-- ══ MODAL: RESPONSÁVEL ══ -->
+<div id="modal-nome" class="modal-overlay" style="display:none">
+  <div class="modal-sheet" style="max-width:340px;margin:auto">
+    <div class="modal-handle"></div>
+    <div class="pin-nome" id="nome-setor-label">👤 Responsável</div>
+    <p style="text-align:center;color:var(--txt2);font-size:.85rem;margin:.25rem 0 1.25rem">
+      Quem está fazendo a contagem?
+    </p>
+    <input type="text" id="inp-nome-resp"
+      style="width:100%;padding:.75rem 1rem;border-radius:10px;border:1.5px solid var(--brd);background:var(--bg2);color:var(--txt);font-size:1rem;text-align:center;margin-bottom:1rem;box-sizing:border-box;outline:none"
+      placeholder="Seu nome" autocomplete="name" autocorrect="off" spellcheck="false"
+      onkeydown="if(event.key==='Enter')confirmarNome()">
+    <button class="btn-confirm blue" onclick="confirmarNome()">✔ Confirmar</button>
+    <button class="pin-cancelar" onclick="fecharModal('modal-nome')">Cancelar</button>
+  </div>
+</div>
+
 <!-- ══ MODAL: LIBERAR ══ -->
 <div id="modal-liberar" class="modal-overlay" style="display:none" onclick="fecharSePano(event,'modal-liberar')">
   <div class="modal-sheet">
@@ -725,6 +742,8 @@ let _pins              = {};
 let _pinBuffer         = '';
 let _pinTarget         = null;   // { tipo: 'setor'|'estoque', setor?: string }
 let _estoqueDesbloqueado = false;
+let _nomeResponsavel     = '';
+let _nomeSetor           = null;
 
 // ─── HELPERS ─────────────────────────────────────────────────────
 function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
@@ -869,7 +888,7 @@ function _abrirSubTabEstoque() {
 // ─── PIN ─────────────────────────────────────────────────────────
 function pedirPinSetor(setor) {
   const pin = _pins[setor];
-  if (!pin) { selecionarSetor(setor); return; }
+  if (!pin) { _pedirNomeParaSetor(setor); return; }
   _pinTarget = { tipo: 'setor', setor };
   _pinBuffer = '';
   document.getElementById('pin-nome-setor').textContent = `🔐 ${setor.charAt(0) + setor.slice(1).toLowerCase()}`;
@@ -912,7 +931,7 @@ function pinConfirm() {
   if (_pinBuffer === esperado) {
     fecharModal('modal-pin');
     if (_pinTarget.tipo === 'setor') {
-      selecionarSetor(_pinTarget.setor);
+      _pedirNomeParaSetor(_pinTarget.setor);
     } else {
       _estoqueDesbloqueado = true;
       _abrirSubTabEstoque();
@@ -930,6 +949,28 @@ function pinConfirm() {
       atualizarPinDisplay();
     }, 900);
   }
+}
+
+function _pedirNomeParaSetor(setor) {
+  _nomeSetor = setor;
+  document.getElementById('nome-setor-label').textContent =
+    `👤 ${setor.charAt(0) + setor.slice(1).toLowerCase()}`;
+  const inp = document.getElementById('inp-nome-resp');
+  inp.value = _nomeResponsavel || '';
+  inp.style.borderColor = '';
+  mostrarModal('modal-nome');
+  setTimeout(() => inp.focus(), 350);
+}
+
+function confirmarNome() {
+  const nome = (document.getElementById('inp-nome-resp')?.value || '').trim();
+  if (!nome) {
+    document.getElementById('inp-nome-resp').style.borderColor = '#ef4444';
+    return;
+  }
+  _nomeResponsavel = nome;
+  fecharModal('modal-nome');
+  selecionarSetor(_nomeSetor);
 }
 
 // ─── SETOR / GRUPO ───────────────────────────────────────────────
@@ -1067,7 +1108,7 @@ async function enviarPedido() {
     toast(`Pedido de ${_setor} / ${_grupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err'); return;
   }
 
-  const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const btn  = document.getElementById('btn-enviar');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
@@ -1272,7 +1313,7 @@ function abrirEmergencia() {
   document.getElementById('emerg-prod-sel').style.display  = 'none';
   document.getElementById('emerg-qtd').value = '';
   document.getElementById('emerg-obs').value = '';
-  const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('emerg-resp').value = resp;
   mostrarModal('modal-emerg');
 }
