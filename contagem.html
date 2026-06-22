@@ -1036,21 +1036,41 @@ async function salvarSaldoContagem() {
   const btn = document.getElementById('btn-salvar-saldo');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
 
+  const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const data  = document.getElementById('data-inv').value;
   const agora = new Date().toISOString();
-  const rows = _grupoProds
-    .filter(p => p.produto_id)
-    .map((p, i) => ({
-      produto_id: p.produto_id,
-      local: 'ESTOQUE_LOJA',
-      saldo: parseQtd(document.getElementById(`est-${i}`)?.value),
-      updated_at: agora,
-    }));
 
-  if (rows.length) {
-    await sb.from('est_saldo_local').upsert(rows);
+  // Coleta contagens
+  const itensCont = _grupoProds.map((p, i) => ({
+    produto_id:   p.produto_id || null,
+    nome:         p.nome,
+    estoque:      parseQtd(document.getElementById(`est-${i}`)?.value),
+    pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0,
+    total: parseQtd(document.getElementById(`est-${i}`)?.value),
+    unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
+  }));
+
+  // Registra em est_inventarios para histórico auditável
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
+  const ultNum  = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
+  const num_inv = 'INV-' + String(ultNum+1).padStart(4,'0');
+  const { data: inv } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _local, responsavel: resp,
+    setor: 'ESTOQUE DA LOJA', grupo: _grupo, total_geral: 0,
+  }]).select().single();
+  if (inv) {
+    await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
   }
 
-  toast(`Saldo de ${_grupo} salvo! ✅`, 'ok');
+  // Atualiza saldo absoluto em est_saldo_local
+  const saldoRows = itensCont
+    .filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora }));
+  if (saldoRows.length) {
+    await sb.from('est_saldo_local').upsert(saldoRows);
+  }
+
+  toast(`${num_inv} salvo por ${resp}! ✅`, 'ok');
   limparCampos();
   btn.disabled = false; btn.textContent = '💾 Salvar Saldo';
 }
