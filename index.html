@@ -1137,7 +1137,7 @@
             <span class="badge ms-2" style="background:#FF6B35" id="inv-local-badge2">Centro</span>
           </div>
           <div class="d-flex gap-2">
-            <button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarPadroes()">
+            <button class="btn btn-sm btn-outline-secondary" id="inv-btn-padroes" onclick="abrirEditarPadroes()">
               <i class="bi bi-gear"></i> Configurar Padrões
             </button>
             <button class="btn btn-success" onclick="enviarPedidoInterno()">
@@ -1151,11 +1151,11 @@
               <tr>
                 <th>Produto</th>
                 <th class="text-center" style="min-width:110px">Estoque</th>
-                <th class="text-center" style="min-width:120px">
+                <th class="text-center" style="min-width:120px" id="inv-th-padrao">
                   Ped. Padrão
                   <i class="bi bi-lock-fill ms-1" style="font-size:.65rem;color:#ffc107"></i>
                 </th>
-                <th class="text-center fw-bold" style="min-width:100px;color:#06D6A0">Pedido</th>
+                <th class="text-center fw-bold" style="min-width:100px;color:#06D6A0" id="inv-th-pedido">Pedido</th>
               </tr>
             </thead>
             <tbody id="lst-inventario">

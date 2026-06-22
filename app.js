@@ -2521,13 +2521,20 @@ function selecionarGrupoInv(grupo) {
   if (e2) e2.textContent = _invLocal;
 
   document.getElementById('inv-tabela-section').classList.remove('d-none');
+
+  const isEL = _invSetor === 'ESTOQUE DA LOJA';
+  document.getElementById('inv-btn-padroes')?.classList.toggle('d-none', isEL);
+  document.getElementById('inv-th-padrao')?.classList.toggle('d-none', isEL);
+  document.getElementById('inv-th-pedido')?.classList.toggle('d-none', isEL);
+
   renderInventario();
 }
 
 function renderInventario() {
   const tbody = document.getElementById('lst-inventario');
+  const isEL  = _invSetor === 'ESTOQUE DA LOJA';
   if (!_invProds.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${isEL ? 2 : 4}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
     return;
   }
   tbody.innerHTML = _invProds.map((p, i) => {
@@ -2546,12 +2553,12 @@ function renderInventario() {
           id="inv-est-${i}" min="0" step="1" value="0"
           style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
-      <td class="text-center">
+      ${isEL ? '' : `<td class="text-center">
         <span class="badge bg-secondary" id="inv-pad-${i}">${padraoTxt}</span>
       </td>
       <td class="text-center fw-bold" id="inv-ped-${i}" style="color:#06D6A0;font-size:1.05rem">
         ${padrao !== null ? Math.max(0, padrao - 0) : '—'}
-      </td>
+      </td>`}
     </tr>`;
   }).join('');
 }

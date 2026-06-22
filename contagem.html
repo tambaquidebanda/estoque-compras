@@ -1006,7 +1006,8 @@ function selecionarGrupo(grupo) {
 }
 
 function renderProdutos() {
-  const el = document.getElementById('lista-produtos');
+  const el   = document.getElementById('lista-produtos');
+  const isEL = _setor === 'ESTOQUE DA LOJA';
   if (!_grupoProds.length) {
     el.innerHTML = '<div class="vazio">Nenhum produto neste grupo.</div>';
     return;
@@ -1018,19 +1019,21 @@ function renderProdutos() {
     const semProd = !p.produto_id ? ' class="sem-prod"' : '';
     return `<tr>
       <td${semProd}>${esc(p.nome)}${!p.produto_id ? ' ⚠️' : ''}</td>
-      <td class="td-center td-pad">${padTxt}</td>
+      ${isEL ? '' : `<td class="td-center td-pad">${padTxt}</td>`}
       <td class="td-center">
         <input type="number" class="inp-est" id="est-${i}"
           min="0" step="1" value="0" inputmode="decimal"
           oninput="calcPedido(${i})">
       </td>
-      <td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${pedIni}</td>
+      ${isEL ? '' : `<td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${pedIni}</td>`}
     </tr>`;
   }).join('');
   el.innerHTML = `<table class="prod-table">
     <thead><tr>
-      <th>Produto</th><th class="td-center">Pad.</th>
-      <th class="td-center">Estoque</th><th class="td-center">Pedido</th>
+      <th>Produto</th>
+      ${isEL ? '' : '<th class="td-center">Pad.</th>'}
+      <th class="td-center">Estoque</th>
+      ${isEL ? '' : '<th class="td-center">Pedido</th>'}
     </tr></thead>
     <tbody>${linhas}</tbody>
   </table>`;
