@@ -2944,6 +2944,9 @@ async function carregarHistoricoInv() {
       <div class="d-flex align-items-center gap-2">
         <span class="text-muted small me-1">Pedido:</span>
         <strong class="text-primary">${inv.total_geral ?? 0}</strong>
+        <button class="btn btn-sm btn-outline-secondary" title="Editar contagem" onclick="abrirEditarContagem('${inv.id}')">
+          <i class="bi bi-pencil"></i>
+        </button>
         <button class="btn btn-sm btn-outline-danger" onclick="excluirInventario('${inv.id}')">
           <i class="bi bi-trash"></i>
         </button>
@@ -2956,6 +2959,113 @@ async function excluirInventario(id) {
   if (!confirm('Excluir esta contagem?')) return;
   await sb.from('est_inventarios').delete().eq('id', id);
   toast('Contagem excluída.', 'ok');
+  carregarHistoricoInv();
+}
+
+let _editContagemInv = null;
+
+async function abrirEditarContagem(invId) {
+  const { data: inv   } = await sb.from('est_inventarios').select('*').eq('id', invId).single();
+  const { data: itens } = await sb.from('est_inventario_itens').select('*').eq('inventario_id', invId).order('nome');
+  _editContagemInv = inv;
+
+  const padroes = Object.fromEntries((itens || []).map(i => [i.id, i.pedido_padrao ?? 0]));
+  const rows = (itens || []).map(it => {
+    const ped = Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
+    return `<tr>
+      <td>${esc(it.nome)}</td>
+      <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
+      <td class="text-center" style="width:120px">
+        <input type="number" class="form-control form-control-sm text-center"
+          id="cont-est-${it.id}" value="${it.estoque ?? 0}" min="0" step="1"
+          oninput="_recalcPed('${it.id}',${it.pedido_padrao ?? 0})">
+      </td>
+      <td class="text-center fw-bold text-primary" id="cont-ped-${it.id}" style="width:90px">${ped}</td>
+    </tr>`;
+  }).join('');
+
+  const dataBR = (inv?.data || '').split('-').reverse().join('/');
+  document.getElementById('modal-editar-contagem-body').innerHTML = `
+    <div class="alert alert-secondary py-2 mb-3">
+      <strong>${esc(inv?.num_inv || '—')}</strong> ·
+      ${esc(inv?.setor || '')} · ${esc(inv?.grupo || '')} · ${dataBR}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light"><tr>
+          <th>Produto</th>
+          <th class="text-center">Padrão</th>
+          <th class="text-center">Estoque Contado</th>
+          <th class="text-center">Pedido</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <input type="hidden" id="cont-itens-ids" value='${JSON.stringify((itens || []).map(i => i.id))}'>
+    <input type="hidden" id="cont-padroes"   value='${JSON.stringify(padroes)}'>`;
+
+  new bootstrap.Modal(document.getElementById('modal-editar-contagem')).show();
+}
+
+function _recalcPed(itId, padrao) {
+  const est = parseQtd(document.getElementById(`cont-est-${itId}`)?.value);
+  const el  = document.getElementById(`cont-ped-${itId}`);
+  if (el) el.textContent = Math.max(0, padrao - est);
+}
+
+async function confirmarEdicaoContagem() {
+  if (!_editContagemInv) return;
+  const ids     = JSON.parse(document.getElementById('cont-itens-ids')?.value || '[]');
+  const padroes = JSON.parse(document.getElementById('cont-padroes')?.value || '{}');
+
+  const updates = ids.map(id => {
+    const estoque = parseQtd(document.getElementById(`cont-est-${id}`)?.value);
+    const pedido  = Math.max(0, (padroes[id] ?? 0) - estoque);
+    return { id, estoque, pedido };
+  });
+
+  await Promise.all(updates.map(u =>
+    sb.from('est_inventario_itens').update({ estoque: u.estoque, pedido: u.pedido }).eq('id', u.id)
+  ));
+
+  const totalGeral = updates.reduce((s, u) => s + u.pedido, 0);
+  await sb.from('est_inventarios').update({ total_geral: totalGeral }).eq('id', _editContagemInv.id);
+
+  // Atualiza pedido pendente do mesmo setor+grupo
+  const { data: peds } = await sb.from('pedidos_internos')
+    .select('id').eq('setor', _editContagemInv.setor).eq('obs', _editContagemInv.grupo)
+    .eq('status', 'pendente').limit(1);
+
+  if (peds?.length) {
+    const pedidoId = peds[0].id;
+    const { data: pedItens  } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+    const { data: contItens } = await sb.from('est_inventario_itens').select('id,nome,produto_id').eq('inventario_id', _editContagemInv.id);
+    const nomeMap = Object.fromEntries((contItens || []).map(c => [c.id, c]));
+
+    const toUpdate = [], toInsert = [];
+    for (const u of updates) {
+      const info  = nomeMap[u.id];
+      if (!info) continue;
+      const pedIt = pedItens?.find(p => (info.produto_id && p.produto_id === info.produto_id) || p.nome === info.nome);
+      if (pedIt) {
+        toUpdate.push({ pedItId: pedIt.id, qtd_pedida: u.pedido });
+      } else if (u.pedido > 0) {
+        toInsert.push({ pedido_id: pedidoId, produto_id: info.produto_id || null, nome: info.nome, qtd_pedida: u.pedido });
+      }
+    }
+
+    await Promise.all([
+      ...toUpdate.map(u => sb.from('pedidos_internos_itens').update({ qtd_pedida: u.qtd_pedida }).eq('id', u.pedItId)),
+      toInsert.length ? sb.from('pedidos_internos_itens').insert(toInsert) : null,
+    ].filter(Boolean));
+
+    bootstrap.Modal.getInstance(document.getElementById('modal-editar-contagem'))?.hide();
+    toast('Contagem atualizada e pedido recalculado! ✅', 'ok');
+  } else {
+    bootstrap.Modal.getInstance(document.getElementById('modal-editar-contagem'))?.hide();
+    toast('Contagem atualizada.', 'ok');
+  }
+
   carregarHistoricoInv();
 }
 

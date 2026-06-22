@@ -1405,6 +1405,27 @@
         </div>
       </div>
 
+      <!-- Modal: Editar Contagem -->
+      <div class="modal fade" id="modal-editar-contagem" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#6c757d;color:#fff">
+              <h5 class="modal-title"><i class="bi bi-pencil-fill"></i> Editar Contagem</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-editar-contagem-body">
+              <p class="text-muted text-center py-3">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-warning" onclick="confirmarEdicaoContagem()">
+                <i class="bi bi-save-fill"></i> Salvar e Recalcular Pedido
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Modal: Editar Pedido -->
       <div class="modal fade" id="modal-editar-pedido" tabindex="-1">
         <div class="modal-dialog modal-lg">
