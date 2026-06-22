@@ -718,6 +718,7 @@ let _todosProdutos = [];
 let _grupoProds    = [];
 let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop)
 let _excluidos     = new Set();
+let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _pedLiberarId  = null, _pedReceberId = null;
 let _pins              = {};
 let _pinBuffer         = '';
@@ -787,12 +788,13 @@ async function entrar() {
 
 async function carregarMapeamentos() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes']);
   if (data) {
     data.forEach(row => {
       if (row.chave === 'mapeamentos') _mapeamentos = row.valor || {};
       if (row.chave === 'excluidos')   _excluidos   = new Set(row.valor || []);
       if (row.chave === 'pins')        _pins        = row.valor || {};
+      if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
     });
   }
 }
@@ -976,6 +978,28 @@ function selecionarGrupo(grupo) {
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
       return { nome, produto_id: prod?.id || null };
     });
+
+  // Adições manuais do setor atual
+  const nomesExistentes = new Set(_grupoProds.map(p => norm(p.nome)));
+  const _addDe = (chave) => {
+    (_invAdicoes[chave] || []).forEach(nome => {
+      if (nomesExistentes.has(norm(nome))) return;
+      const prod = _todosProdutos.find(p => norm(p.nome) === norm(nome));
+      _grupoProds.push({ nome, produto_id: prod?.id || null });
+      nomesExistentes.add(norm(nome));
+    });
+  };
+
+  if (_setor === 'ESTOQUE DA LOJA') {
+    // Agrega adições de todos os setores reais que têm este grupo
+    Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
+      if (s === 'ESTOQUE DA LOJA') return;
+      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(`${s}|${grupo}`);
+    });
+  } else {
+    _addDe(`${_setor}|${grupo}`);
+  }
+
   renderProdutos();
   document.getElementById('btn-enviar').disabled = false;
 }

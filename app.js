@@ -2483,13 +2483,24 @@ function selecionarGrupoInv(grupo) {
     });
 
   // Produtos adicionados manualmente via "+"
-  const addKey  = `${_invSetor}|${grupo}`;
-  const adicoes = _invAdicoes[addKey] || [];
-  adicoes.forEach(nome => {
-    if (_invProds.find(p => norm(p.nome) === norm(nome))) return; // evita duplicata
-    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
-    _invProds.push({ nome, produto_id: prod?.id || null, adicionado: true });
-  });
+  const nomesExistentes = new Set(_invProds.map(p => norm(p.nome)));
+  const _addDe = (chave) => {
+    (_invAdicoes[chave] || []).forEach(nome => {
+      if (nomesExistentes.has(norm(nome))) return;
+      const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
+      _invProds.push({ nome, produto_id: prod?.id || null, adicionado: true });
+      nomesExistentes.add(norm(nome));
+    });
+  };
+  if (_invSetor === 'ESTOQUE DA LOJA') {
+    // Agrega adições de todos os setores reais que têm este grupo
+    Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
+      if (s === 'ESTOQUE DA LOJA') return;
+      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(`${s}|${grupo}`);
+    });
+  } else {
+    _addDe(`${_invSetor}|${grupo}`);
+  }
 
   // Breadcrumb
   document.getElementById('inv-breadcrumb').textContent = `${_invSetor} / ${grupo}`;
