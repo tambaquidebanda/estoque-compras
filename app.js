@@ -2382,12 +2382,33 @@ function mudarLocalInv(local) {
 async function carregarMapeamentosInv() {
   const { data } = await sb.from('inv_configuracoes')
     .select('chave,valor').in('chave', ['mapeamentos','excluidos']);
+  let mapeamentos = {}, excluidos = new Set();
   if (data) {
     data.forEach(row => {
-      if (row.chave === 'mapeamentos') _invMapeamentos = row.valor || {};
-      if (row.chave === 'excluidos')   _invExcluidos   = new Set(row.valor || []);
+      if (row.chave === 'mapeamentos') mapeamentos = row.valor || {};
+      if (row.chave === 'excluidos')   excluidos   = new Set(row.valor || []);
     });
   }
+
+  // Migração única: se Supabase está vazio e localStorage tem dados, migra automaticamente
+  if (Object.keys(mapeamentos).length === 0 && excluidos.size === 0) {
+    const lsMap  = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
+    const lsExcl = JSON.parse(localStorage.getItem('inv_excluidos')   || '[]');
+    if (Object.keys(lsMap).length > 0 || lsExcl.length > 0) {
+      await sb.from('inv_configuracoes').upsert([
+        { chave: 'mapeamentos', valor: lsMap  },
+        { chave: 'excluidos',   valor: lsExcl },
+      ]);
+      mapeamentos = lsMap;
+      excluidos   = new Set(lsExcl);
+      localStorage.removeItem('inv_mapeamentos');
+      localStorage.removeItem('inv_excluidos');
+      toast('Configurações de divergências migradas para a nuvem ✅', 'ok');
+    }
+  }
+
+  _invMapeamentos = mapeamentos;
+  _invExcluidos   = excluidos;
 }
 
 async function carregarInventario() {
