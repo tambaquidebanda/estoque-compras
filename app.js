@@ -2364,22 +2364,20 @@ function toggleFeriado() {
 }
 
 function atualizarBtnsDia() {
-  _DIAS_SEM.forEach(d => {
-    const btn = document.querySelector(`[data-dia="${d}"]`);
-    if (!btn) return;
-    btn.className = `btn btn-sm ${d === _invDia && !_invFeriado ? 'btn-primary' : 'btn-outline-primary'}`;
+  document.querySelectorAll('.inv-dia-btn').forEach(b => {
+    b.className = 'saldo-grupo-btn inv-dia-btn' + (b.dataset.dia === _invDia && !_invFeriado ? ' ativo' : '');
   });
   const btnFer = document.getElementById('btn-inv-feriado');
-  if (btnFer) btnFer.className = `btn btn-sm ${_invFeriado ? 'btn-warning' : 'btn-outline-warning'}`;
+  if (btnFer) btnFer.className = 'saldo-grupo-btn inv-feriado-btn' + (_invFeriado ? ' ativo' : '');
 }
 
 function mudarLocalInv(local) {
   _invLocal = local;
-  document.getElementById('inv-local-badge').textContent = local;
   const e2 = document.getElementById('inv-local-badge2');
   if (e2) e2.textContent = local;
-  document.getElementById('btn-inv-centro').className = local === 'Centro' ? 'btn btn-primary' : 'btn btn-outline-primary';
-  document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
+  document.querySelectorAll('.inv-local-btn').forEach(b => {
+    b.className = 'saldo-grupo-btn inv-local-btn' + (b.dataset.local === local ? ' ativo' : '');
+  });
 }
 
 async function carregarMapeamentosInv() {
@@ -2461,11 +2459,14 @@ async function selecionarSetorInv(setor) {
   _invProds = [];
 
   // Destaca botão de setor
+  const isEL = setor === 'ESTOQUE DA LOJA';
   document.querySelectorAll('.inv-setor-btn').forEach(b => {
-    const ativo = b.dataset.setor === setor;
-    b.className = 'btn inv-setor-btn ' + (ativo ? 'btn-primary' : 'btn-outline-secondary');
-    b.style.borderRadius = '20px';
+    b.className = 'saldo-grupo-btn inv-setor-btn' + (b.dataset.setor === setor ? ' ativo' : '')
+      + (b.dataset.setor === 'ESTOQUE DA LOJA' ? ' inv-setor-el' : '');
   });
+  document.getElementById('inv-btn-enviar')?.classList.toggle('d-none', isEL);
+  document.getElementById('inv-btn-padroes')?.classList.toggle('d-none', isEL);
+  document.getElementById('inv-btn-salvar-saldo')?.classList.toggle('d-none', !isEL);
 
   // Monta botões de grupo
   const grupos = Object.keys(INVENTARIO_ESTRUTURA[setor] || {});
@@ -3176,6 +3177,43 @@ async function enviarPedidoInterno() {
   await sb.from('pedidos_internos_itens').insert(itensPed.map(it => ({ ...it, pedido_id: ped.id })));
 
   toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅`, 'ok');
+  carregarHistoricoInv();
+  _limparCamposEstoque();
+}
+
+async function salvarSaldoContagemDesktop() {
+  if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
+  const data = document.getElementById('inv-data').value;
+  const resp = (document.getElementById('inv-resp').value || '').trim();
+  const btn  = document.getElementById('inv-btn-salvar-saldo');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+
+  const agora = new Date().toISOString();
+  const itensCont = _invProds.map((p, i) => ({
+    produto_id: p.produto_id || null, nome: p.nome,
+    estoque: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
+    pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0,
+    total: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
+    unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
+  }));
+
+  // Registra em est_inventarios para histórico
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
+  const num_inv   = 'INV-' + String(ultimoNum+1).padStart(4,'0');
+  const { data: inv } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _invLocal, responsavel: resp,
+    setor: 'ESTOQUE DA LOJA', grupo: _invGrupo, total_geral: 0,
+  }]).select().single();
+  if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
+
+  // Atualiza saldo absoluto
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora }));
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows);
+
+  toast(`${num_inv} salvo! ✅`, 'ok');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; }
   carregarHistoricoInv();
   _limparCamposEstoque();
 }

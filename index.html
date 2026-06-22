@@ -1061,66 +1061,59 @@
       <div class="tab-pane fade show active" id="tab-contagem">
 
       <!-- Local + Data + Responsável -->
-      <div class="card-grafico mb-3">
-        <div class="d-flex flex-wrap align-items-center gap-3">
-          <div class="d-flex gap-2">
-            <button id="btn-inv-centro" class="btn btn-primary" onclick="mudarLocalInv('Centro')">📍 Centro</button>
-            <button id="btn-inv-p10" class="btn btn-outline-primary" onclick="mudarLocalInv('P10')">📍 P10</button>
+      <div class="card-grafico p-0 mb-3">
+        <div class="saldo-grupos-bar">
+          <div>
+            <button class="saldo-grupo-btn inv-local-btn ativo" id="btn-inv-centro" data-local="Centro" onclick="mudarLocalInv('Centro')">📍 CENTRO</button>
+            <button class="saldo-grupo-btn inv-local-btn" id="btn-inv-p10" data-local="P10" onclick="mudarLocalInv('P10')">📍 P10</button>
           </div>
-          <span class="badge fs-6" id="inv-local-badge" style="background:#FF6B35">Centro</span>
-          <div class="ms-auto d-flex flex-wrap gap-3 align-items-center">
-            <div class="d-flex align-items-center gap-2">
-              <label class="form-label mb-0 fw-semibold text-nowrap">📅 Data</label>
-              <input type="date" class="form-control" id="inv-data" style="width:160px">
-            </div>
-            <div class="d-flex align-items-center gap-2">
-              <label class="form-label mb-0 fw-semibold text-nowrap">👤 Responsável</label>
-              <input type="text" class="form-control" id="inv-resp" placeholder="Nome" style="width:180px">
-            </div>
+        </div>
+        <div class="px-3 py-2 d-flex flex-wrap align-items-center gap-3">
+          <div class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 fw-semibold text-nowrap small">📅 Data</label>
+            <input type="date" class="form-control form-control-sm" id="inv-data" style="width:150px">
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 fw-semibold text-nowrap small">👤 Responsável</label>
+            <input type="text" class="form-control form-control-sm" id="inv-resp" placeholder="Nome" style="width:170px">
           </div>
         </div>
       </div>
 
-      <!-- Dia da Semana + Feriado -->
-      <div class="card-grafico mb-3">
-        <div class="d-flex flex-wrap gap-4 align-items-center">
+      <!-- Dia da Semana -->
+      <div class="card-grafico p-0 mb-3">
+        <div class="px-3 pt-2 pb-0">
+          <span class="text-muted fw-semibold" style="font-size:.7rem;letter-spacing:.05em">DIA DA SEMANA</span>
+        </div>
+        <div class="saldo-grupos-bar">
           <div>
-            <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">DIA DA SEMANA</div>
-            <div class="btn-group" role="group">
-              <button class="btn btn-sm btn-outline-primary" data-dia="seg" onclick="setInvDia('seg')">SEG</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="ter" onclick="setInvDia('ter')">TER</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="qua" onclick="setInvDia('qua')">QUA</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="qui" onclick="setInvDia('qui')">QUI</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="sex" onclick="setInvDia('sex')">SEX</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="sab" onclick="setInvDia('sab')">SAB</button>
-              <button class="btn btn-sm btn-outline-primary" data-dia="dom" onclick="setInvDia('dom')">DOM</button>
-            </div>
-          </div>
-          <div>
-            <div class="text-muted fw-semibold small mb-2">&nbsp;</div>
-            <button class="btn btn-sm btn-outline-warning" id="btn-inv-feriado" onclick="toggleFeriado()">
-              🎉 Feriado
-            </button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="seg" onclick="setInvDia('seg')">SEG</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="ter" onclick="setInvDia('ter')">TER</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="qua" onclick="setInvDia('qua')">QUA</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="qui" onclick="setInvDia('qui')">QUI</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="sex" onclick="setInvDia('sex')">SEX</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="sab" onclick="setInvDia('sab')">SAB</button>
+            <button class="saldo-grupo-btn inv-dia-btn" data-dia="dom" onclick="setInvDia('dom')">DOM</button>
+            <button class="saldo-grupo-btn inv-feriado-btn" id="btn-inv-feriado" onclick="toggleFeriado()">🎉 FERIADO</button>
           </div>
         </div>
       </div>
 
-      <!-- Seleção de Setor -->
-      <div class="card-grafico mb-3">
-        <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">SETOR</div>
-        <div class="d-flex flex-wrap gap-2" id="inv-setor-btns">
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('CHURRASQUEIRA')" data-setor="CHURRASQUEIRA"
-            style="border-radius:20px">🔥 Churrasqueira</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('COZINHA')" data-setor="COZINHA"
-            style="border-radius:20px">🍳 Cozinha</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('BAR')" data-setor="BAR"
-            style="border-radius:20px">🍹 Bar</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('SALAO')" data-setor="SALAO"
-            style="border-radius:20px">🪑 Salão</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('ASG')" data-setor="ASG"
-            style="border-radius:20px">🧹 ASG</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('DELIVERY')" data-setor="DELIVERY"
-            style="border-radius:20px">🛵 Delivery</button>
+      <!-- Setor -->
+      <div class="card-grafico p-0 mb-3">
+        <div class="px-3 pt-2 pb-0">
+          <span class="text-muted fw-semibold" style="font-size:.7rem;letter-spacing:.05em">SETOR</span>
+        </div>
+        <div class="saldo-grupos-bar">
+          <div id="inv-setor-btns">
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="CHURRASQUEIRA" onclick="selecionarSetorInv('CHURRASQUEIRA')">🔥 CHURRASQUEIRA</button>
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="COZINHA" onclick="selecionarSetorInv('COZINHA')">🍳 COZINHA</button>
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="BAR" onclick="selecionarSetorInv('BAR')">🍹 BAR</button>
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="SALAO" onclick="selecionarSetorInv('SALAO')">🪑 SALÃO</button>
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="ASG" onclick="selecionarSetorInv('ASG')">🧹 ASG</button>
+            <button class="saldo-grupo-btn inv-setor-btn" data-setor="DELIVERY" onclick="selecionarSetorInv('DELIVERY')">🛵 DELIVERY</button>
+            <button class="saldo-grupo-btn inv-setor-btn inv-setor-el" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>
+          </div>
         </div>
       </div>
 
@@ -1145,8 +1138,11 @@
             <button class="btn btn-sm btn-outline-secondary" id="inv-btn-padroes" onclick="abrirEditarPadroes()">
               <i class="bi bi-gear"></i> Configurar Padrões
             </button>
-            <button class="btn btn-success" onclick="enviarPedidoInterno()">
+            <button class="btn btn-success" id="inv-btn-enviar" onclick="enviarPedidoInterno()">
               <i class="bi bi-send-fill"></i> Enviar Pedido
+            </button>
+            <button class="btn btn-success d-none" id="inv-btn-salvar-saldo" onclick="salvarSaldoContagemDesktop()">
+              <i class="bi bi-floppy-fill"></i> Salvar Saldo
             </button>
           </div>
         </div>
