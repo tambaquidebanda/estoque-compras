@@ -719,6 +719,7 @@ let _grupoProds    = [];
 let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop)
 let _excluidos     = new Set();
 let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
+let _padroes       = {};   // { "PRODUTO": { "seg": 5, "ter": 3, ... } }
 let _pedLiberarId  = null, _pedReceberId = null;
 let _pins              = {};
 let _pinBuffer         = '';
@@ -730,8 +731,7 @@ function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').
 function esc(s)  { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function getPadrao(nome) {
-  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
-  const entry   = padroes[nome.trim().toUpperCase()];
+  const entry = _padroes[nome.trim().toUpperCase()];
   if (entry === undefined || entry === null) return null;
   if (typeof entry === 'number') return entry;
   const chave = _feriado ? 'feriado' : _dia;
@@ -788,13 +788,14 @@ async function entrar() {
 
 async function carregarMapeamentos() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes','padroes']);
   if (data) {
     data.forEach(row => {
       if (row.chave === 'mapeamentos') _mapeamentos = row.valor || {};
       if (row.chave === 'excluidos')   _excluidos   = new Set(row.valor || []);
       if (row.chave === 'pins')        _pins        = row.valor || {};
       if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
+      if (row.chave === 'padroes')     _padroes     = row.valor || {};
     });
   }
 }

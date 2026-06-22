@@ -2334,6 +2334,7 @@ let _invFeriado      = false;
 let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispositivos)
 let _invExcluidos    = new Set();
 let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
+let _invPadroes      = {};   // { "PRODUTO": { "seg": 5, "ter": 3, ... } }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -2382,17 +2383,18 @@ function mudarLocalInv(local) {
 
 async function carregarMapeamentosInv() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes','padroes']);
   let mapeamentos = {}, excluidos = new Set();
   if (data) {
     data.forEach(row => {
-      if (row.chave === 'mapeamentos') mapeamentos     = row.valor || {};
-      if (row.chave === 'excluidos')   excluidos       = new Set(row.valor || []);
-      if (row.chave === 'adicoes')     _invAdicoes     = row.valor || {};
+      if (row.chave === 'mapeamentos') mapeamentos  = row.valor || {};
+      if (row.chave === 'excluidos')   excluidos    = new Set(row.valor || []);
+      if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
+      if (row.chave === 'padroes')     _invPadroes  = row.valor || {};
     });
   }
 
-  // Migração única: se Supabase está vazio e localStorage tem dados, migra automaticamente
+  // Migração única: mapeamentos/excluidos do localStorage → Supabase
   if (Object.keys(mapeamentos).length === 0 && excluidos.size === 0) {
     const lsMap  = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
     const lsExcl = JSON.parse(localStorage.getItem('inv_excluidos')   || '[]');
@@ -2406,6 +2408,17 @@ async function carregarMapeamentosInv() {
       localStorage.removeItem('inv_mapeamentos');
       localStorage.removeItem('inv_excluidos');
       toast('Configurações de divergências migradas para a nuvem ✅', 'ok');
+    }
+  }
+
+  // Migração única: inv_padroes do localStorage → Supabase
+  if (Object.keys(_invPadroes).length === 0) {
+    const lsPad = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
+    if (Object.keys(lsPad).length > 0) {
+      await sb.from('inv_configuracoes').upsert({ chave: 'padroes', valor: lsPad });
+      _invPadroes = lsPad;
+      localStorage.removeItem('inv_padroes');
+      toast('Pedidos Padrão migrados para a nuvem ✅', 'ok');
     }
   }
 
@@ -2599,26 +2612,22 @@ function calcPedidoInv(i) {
 }
 
 function _getPadrao(nome) {
-  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
-  const entry = padroes[nome.trim().toUpperCase()];
+  const entry = _invPadroes[nome.trim().toUpperCase()];
   if (entry === undefined || entry === null) return null;
-  // Compatibilidade: formato antigo era número plano
   if (typeof entry === 'number') return entry;
   const val = entry[_chavePadrao()];
   return val !== undefined ? Number(val) : null;
 }
 
 function _setPadrao(nome, chave, val) {
-  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
   const key = nome.trim().toUpperCase();
-  if (!padroes[key] || typeof padroes[key] !== 'object') padroes[key] = {};
-  padroes[key][chave] = val;
-  localStorage.setItem('inv_padroes', JSON.stringify(padroes));
+  if (!_invPadroes[key] || typeof _invPadroes[key] !== 'object') _invPadroes[key] = {};
+  _invPadroes[key][chave] = val;
 }
 
 function abrirEditarPadroes() {
   if (!_invProds.length) { toast('Selecione um grupo primeiro.', 'erro'); return; }
-  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
+  const padroes = _invPadroes;
   const todasDias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
 
   const navTabs = todasDias.map((d, i) =>
@@ -2674,24 +2683,23 @@ function abrirEditarPadroes() {
   new bootstrap.Modal(document.getElementById('modal-padroes')).show();
 }
 
-function salvarPadroes() {
+async function salvarPadroes() {
   const todasDias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
-  const padroes = JSON.parse(localStorage.getItem('inv_padroes') || '{}');
 
   _invProds.forEach((p, pi) => {
     const key = p.nome.trim().toUpperCase();
-    if (!padroes[key] || typeof padroes[key] !== 'object') padroes[key] = {};
+    if (!_invPadroes[key] || typeof _invPadroes[key] !== 'object') _invPadroes[key] = {};
     todasDias.forEach(d => {
       const input = document.getElementById(`pad-${d}-${pi}`);
       if (!input) return;
       const val = input.value.trim();
-      if (val === '') delete padroes[key][d];
-      else padroes[key][d] = parseFloat(val) || 0;
+      if (val === '') delete _invPadroes[key][d];
+      else _invPadroes[key][d] = parseFloat(val) || 0;
     });
-    if (Object.keys(padroes[key]).length === 0) delete padroes[key];
+    if (Object.keys(_invPadroes[key]).length === 0) delete _invPadroes[key];
   });
 
-  localStorage.setItem('inv_padroes', JSON.stringify(padroes));
+  await sb.from('inv_configuracoes').upsert({ chave: 'padroes', valor: _invPadroes });
   toast('Padrões salvos!', 'ok');
   bootstrap.Modal.getInstance(document.getElementById('modal-padroes'))?.hide();
   renderInventario();

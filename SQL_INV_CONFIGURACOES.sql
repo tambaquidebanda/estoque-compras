@@ -13,3 +13,4 @@ INSERT INTO inv_configuracoes (chave, valor) VALUES ('mapeamentos', '{}') ON CON
 INSERT INTO inv_configuracoes (chave, valor) VALUES ('excluidos',   '[]') ON CONFLICT DO NOTHING;
 INSERT INTO inv_configuracoes (chave, valor) VALUES ('pins',        '{}') ON CONFLICT DO NOTHING;
 INSERT INTO inv_configuracoes (chave, valor) VALUES ('adicoes',     '{}') ON CONFLICT DO NOTHING;
+INSERT INTO inv_configuracoes (chave, valor) VALUES ('padroes',     '{}') ON CONFLICT DO NOTHING;
