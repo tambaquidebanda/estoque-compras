@@ -7049,9 +7049,9 @@ async function selecionarGrupoSaldo(grupo) {
   (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
   _saldoList.forEach(p => { if (p.produto_id) p.saldo = saldoMap[p.produto_id] ?? 0; });
 
-  // Setores que têm este grupo
+  // Setores fixos (sempre todos)
   _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA)
-    .filter(s => s !== 'ESTOQUE DA LOJA' && INVENTARIO_ESTRUTURA[s]?.[grupo]);
+    .filter(s => s !== 'ESTOQUE DA LOJA');
 
   // Última contagem de cada setor para este grupo
   _saldoMatrix = {};
@@ -7096,11 +7096,14 @@ function renderSaldo() {
       </th>
       ${_saldoSetores.map(s => {
         const cor = _SETOR_COR[s] || '#6c757d';
-        return `<th class="text-center" style="min-width:110px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
+        return `<th class="text-center" style="min-width:100px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
           ${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}<br>
-          <small style="font-weight:400;font-size:.68rem;opacity:.75">última contagem</small>
+          <small style="font-weight:400;font-size:.68rem;opacity:.75">últ. contagem</small>
         </th>`;
       }).join('')}
+      <th class="text-center" style="min-width:90px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
+        Total
+      </th>
     </tr>`;
   }
 
@@ -7110,16 +7113,21 @@ function renderSaldo() {
     const semProd  = !p.produto_id ? ' <span class="text-danger" title="Não cadastrado">⚠</span>' : '';
     const bgRow    = idx % 2 === 0 ? '#fff' : '#f8fffe';
 
+    let total = p.saldo;
     const setorCells = _saldoSetores.map(s => {
       const cor = _SETOR_COR[s] || '#6c757d';
       const val = _saldoMatrix[key]?.[s];
-      if (val === undefined) return `<td class="text-center text-muted" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
-      const numBg = val <= 0 ? '#fff5f5' : bgRow;
+      if (val === undefined) return `<td class="text-center" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
+      total += val;
+      const numBg  = val <= 0 ? '#fff5f5' : bgRow;
       const numCor = val <= 0 ? '#dc3545' : '#212529';
       return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val}</td>`;
     }).join('');
 
-    const elBg = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+    const elBg    = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+    const totalFmt = total % 1 === 0 ? String(total) : parseFloat(total).toFixed(3).replace(/\.?0+$/, '');
+    const totalCor = total <= 0 ? '#dc3545' : '#b45309';
+
     return `<tr style="background:${bgRow}">
       <td style="padding:.6rem 1rem"><strong>${esc(p.nome)}</strong>${semProd}</td>
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
@@ -7133,6 +7141,7 @@ function renderSaldo() {
           : '<span class="text-muted">—</span>'}
       </td>
       ${setorCells}
+      <td class="text-center fw-bold" style="border-left:2px solid #ffc10733;color:${totalCor};font-size:1rem">${totalFmt}</td>
     </tr>`;
   }).join('');
 }
