@@ -7052,10 +7052,8 @@ async function carregarSaldo() {
   const container = document.getElementById('saldo-grupo-btns');
   if (container) {
     container.innerHTML = grupos.map(g =>
-      `<button class="btn btn-outline-secondary saldo-grupo-btn" data-grupo="${esc(g)}"
-        onclick="selecionarGrupoSaldo('${esc(g)}')" style="border-radius:20px">
-        ${esc(g)}
-      </button>`
+      `<button class="saldo-grupo-btn" data-grupo="${esc(g)}"
+        onclick="selecionarGrupoSaldo('${esc(g)}')">${esc(g)}</button>`
     ).join('');
   }
 
@@ -7066,8 +7064,7 @@ async function carregarSaldo() {
 async function selecionarGrupoSaldo(grupo) {
   _saldoGrupo = grupo;
   document.querySelectorAll('.saldo-grupo-btn').forEach(b => {
-    b.className = 'btn saldo-grupo-btn ' + (b.dataset.grupo === grupo ? 'btn-success' : 'btn-outline-secondary');
-    b.style.borderRadius = '20px';
+    b.className = 'saldo-grupo-btn' + (b.dataset.grupo === grupo ? ' ativo' : '');
   });
 
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
