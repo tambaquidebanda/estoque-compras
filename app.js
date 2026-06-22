@@ -2435,15 +2435,6 @@ async function carregarInventario() {
 }
 
 async function selecionarSetorInv(setor) {
-  const hoje = new Date().toISOString().slice(0, 10);
-  const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', hoje).eq('setor', setor)
-    .neq('status', 'cancelado').limit(1);
-  if (pedHoje?.length) {
-    toast(`Já existe um pedido para ${setor} hoje: ${pedHoje[0].num_pedido}`, 'erro');
-    return;
-  }
-
   _invSetor = setor;
   _invGrupo = null;
   _invProds = [];
@@ -2473,7 +2464,17 @@ async function selecionarSetorInv(setor) {
     '<tr><td colspan="4" class="text-center text-muted py-4">Selecione um grupo acima.</td></tr>';
 }
 
-function selecionarGrupoInv(grupo) {
+async function selecionarGrupoInv(grupo) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const data = document.getElementById('inv-data')?.value || hoje;
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', data).eq('setor', _invSetor).eq('obs', grupo)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Pedido de ${_invSetor} / ${grupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro');
+    return;
+  }
+
   _invGrupo = grupo;
 
   // Destaca botão de grupo
@@ -2971,10 +2972,10 @@ async function enviarPedidoInterno() {
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
   const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', data).eq('setor', _invSetor)
+    .select('num_pedido').eq('data', data).eq('setor', _invSetor).eq('obs', _invGrupo)
     .neq('status', 'cancelado').limit(1);
   if (pedHoje?.length) {
-    toast(`Pedido de ${_invSetor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro'); return;
+    toast(`Pedido de ${_invSetor} / ${_invGrupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro'); return;
   }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();

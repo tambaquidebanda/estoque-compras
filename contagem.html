@@ -934,14 +934,6 @@ function pinConfirm() {
 
 // ─── SETOR / GRUPO ───────────────────────────────────────────────
 async function selecionarSetor(setor) {
-  const hoje = new Date().toISOString().slice(0, 10);
-  const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', hoje).eq('setor', setor)
-    .neq('status', 'cancelado').limit(1);
-  if (pedHoje?.length) {
-    toast(`Pedido de ${setor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err');
-    return;
-  }
 
   _setor = setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display      = 'none';
@@ -968,7 +960,17 @@ function renderGrupos() {
     document.getElementById('lista-produtos').innerHTML = '<div class="vazio">Selecione um grupo acima.</div>';
   }
 }
-function selecionarGrupo(grupo) {
+async function selecionarGrupo(grupo) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const data = document.getElementById('data-inv')?.value || hoje;
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', data).eq('setor', _setor).eq('obs', grupo)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Pedido de ${_setor} / ${grupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err');
+    return;
+  }
+
   _grupo = grupo;
   renderGrupos();
   const nomes = INVENTARIO_ESTRUTURA[_setor]?.[grupo] || [];
@@ -1059,10 +1061,10 @@ async function enviarPedido() {
   if (!data) { toast('Selecione a data.', 'err'); return; }
 
   const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', data).eq('setor', _setor)
+    .select('num_pedido').eq('data', data).eq('setor', _setor).eq('obs', _grupo)
     .neq('status', 'cancelado').limit(1);
   if (pedHoje?.length) {
-    toast(`Pedido de ${_setor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err'); return;
+    toast(`Pedido de ${_setor} / ${_grupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err'); return;
   }
 
   const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
