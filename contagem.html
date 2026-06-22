@@ -864,7 +864,7 @@ function atualizarBtnsDia() {
 async function carregarProdutos() {
   let todos = [], pag = 0;
   while (true) {
-    const { data } = await sb.from('est_produtos').select('id,nome')
+    const { data } = await sb.from('est_produtos').select('id,nome,unidade_uso')
       .eq('ativo', true).range(pag * 1000, pag * 1000 + 999);
     if (!data?.length) break;
     todos = todos.concat(data);
@@ -1033,7 +1033,7 @@ async function selecionarGrupo(grupo) {
     .map(nome => {
       const nomeReal = _mapeamentos[nome] || nome;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
-      return { nome, produto_id: prod?.id || null };
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '' };
     });
 
   // Adições manuais do setor atual
@@ -1042,7 +1042,7 @@ async function selecionarGrupo(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nome));
-      _grupoProds.push({ nome, produto_id: prod?.id || null });
+      _grupoProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '' });
       nomesExistentes.add(norm(nome));
     });
   };
@@ -1075,6 +1075,7 @@ function renderProdutos() {
     const semProd = !p.produto_id ? ' class="sem-prod"' : '';
     return `<tr>
       <td${semProd}>${esc(p.nome)}${!p.produto_id ? ' ⚠️' : ''}</td>
+      <td class="td-center" style="color:#888;font-size:.78rem;white-space:nowrap">${esc(p.unidade || '—')}</td>
       ${isEL ? '' : `<td class="td-center td-pad">${padTxt}</td>`}
       <td class="td-center">
         <input type="number" class="inp-est" id="est-${i}"
@@ -1087,6 +1088,7 @@ function renderProdutos() {
   el.innerHTML = `<table class="prod-table">
     <thead><tr>
       <th>Produto</th>
+      <th class="td-center">Un.</th>
       ${isEL ? '' : '<th class="td-center">Pad.</th>'}
       <th class="td-center">Estoque</th>
       ${isEL ? '' : '<th class="td-center">Pedido</th>'}

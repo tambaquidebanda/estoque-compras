@@ -2493,7 +2493,7 @@ async function selecionarGrupoInv(grupo) {
       const nomeBusca = mapeamentos[nome] || nome;
       const nomNorm   = norm(nomeBusca.trim());
       const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-      return { nome, produto_id: prod?.id || null, adicionado: false };
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '', adicionado: false };
     });
 
   // Produtos adicionados manualmente via "+"
@@ -2502,7 +2502,7 @@ async function selecionarGrupoInv(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
-      _invProds.push({ nome, produto_id: prod?.id || null, adicionado: true });
+      _invProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || '', adicionado: true });
       nomesExistentes.add(norm(nome));
     });
   };
@@ -2535,7 +2535,7 @@ function renderInventario() {
   const tbody = document.getElementById('lst-inventario');
   const isEL  = _invSetor === 'ESTOQUE DA LOJA';
   if (!_invProds.length) {
-    tbody.innerHTML = `<tr><td colspan="${isEL ? 2 : 4}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${isEL ? 3 : 5}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
     return;
   }
   tbody.innerHTML = _invProds.map((p, i) => {
@@ -2551,6 +2551,7 @@ function renderInventario() {
             <i class="bi bi-trash3"></i></button>`;
     return `<tr>
       <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
+      <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center"
           id="inv-est-${i}" min="0" step="1" value="0"
@@ -2971,9 +2972,12 @@ async function abrirEditarContagem(invId) {
 
   const padroes = Object.fromEntries((itens || []).map(i => [i.id, i.pedido_padrao ?? 0]));
   const rows = (itens || []).map(it => {
-    const ped = Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
+    const ped     = Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
+    const prodCad = cProdutosFT.find(p => p.id === it.produto_id);
+    const unidade = prodCad?.unidade_uso || '';
     return `<tr>
       <td>${esc(it.nome)}</td>
+      <td class="text-center text-muted small">${esc(unidade || '—')}</td>
       <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
       <td class="text-center" style="width:120px">
         <input type="number" class="form-control form-control-sm text-center"
@@ -2994,6 +2998,7 @@ async function abrirEditarContagem(invId) {
       <table class="table table-sm align-middle">
         <thead class="table-light"><tr>
           <th>Produto</th>
+          <th class="text-center">Un.</th>
           <th class="text-center">Padrão</th>
           <th class="text-center">Estoque Contado</th>
           <th class="text-center">Pedido</th>
