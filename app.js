@@ -2465,13 +2465,12 @@ async function selecionarSetorInv(setor) {
 }
 
 async function selecionarGrupoInv(grupo) {
-  const hoje = new Date().toISOString().slice(0, 10);
-  const data = document.getElementById('inv-data')?.value || hoje;
-  const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', data).eq('setor', _invSetor).eq('obs', grupo)
-    .neq('status', 'cancelado').limit(1);
-  if (pedHoje?.length) {
-    toast(`Pedido de ${_invSetor} / ${grupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro');
+  const { data: pedAberto } = await sb.from('pedidos_internos')
+    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo)
+    .in('status', ['pendente', 'liberado']).limit(1);
+  if (pedAberto?.length) {
+    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
+    toast(`${_invSetor} / ${grupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'erro');
     return;
   }
 
@@ -2984,11 +2983,12 @@ async function enviarPedidoInterno() {
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
-  const { data: pedHoje } = await sb.from('pedidos_internos')
-    .select('num_pedido').eq('data', data).eq('setor', _invSetor).eq('obs', _invGrupo)
-    .neq('status', 'cancelado').limit(1);
-  if (pedHoje?.length) {
-    toast(`Pedido de ${_invSetor} / ${_invGrupo} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro'); return;
+  const { data: pedAberto } = await sb.from('pedidos_internos')
+    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', _invGrupo)
+    .in('status', ['pendente', 'liberado']).limit(1);
+  if (pedAberto?.length) {
+    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
+    toast(`${_invSetor} / ${_invGrupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'erro'); return;
   }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();
