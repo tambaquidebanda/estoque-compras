@@ -6993,8 +6993,14 @@ function fecharAjusteHistoricoCompExterno() {
 }
 
 // ─── SALDO ESTOQUE DA LOJA ────────────────────────────────────────
-let _saldoList  = [];
-let _saldoGrupo = null;
+const _SETOR_EMOJI = { CHURRASQUEIRA:'🔥', COZINHA:'🍳', BAR:'🍹', SALAO:'🪑', ASG:'🧹', DELIVERY:'🛵' };
+const _SETOR_COR   = { CHURRASQUEIRA:'#dc3545', COZINHA:'#fd7e14', BAR:'#6f42c1', SALAO:'#0d6efd', ASG:'#20c997', DELIVERY:'#e6ac00' };
+const _SETOR_LABEL = { CHURRASQUEIRA:'Churrasqueira', COZINHA:'Cozinha', BAR:'Bar', SALAO:'Salão', ASG:'ASG', DELIVERY:'Delivery' };
+
+let _saldoList   = [];
+let _saldoGrupo  = null;
+let _saldoMatrix = {};
+let _saldoSetores = [];
 
 async function carregarSaldo() {
   if (!cProdutosFT.length) await carregarCaches();
@@ -7003,7 +7009,6 @@ async function carregarSaldo() {
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
   const grupos    = Object.keys(estrutura);
 
-  // Chips de grupo
   const container = document.getElementById('saldo-grupo-btns');
   if (container) {
     container.innerHTML = grupos.map(g =>
@@ -7014,88 +7019,137 @@ async function carregarSaldo() {
     ).join('');
   }
 
-  // Monta lista completa (todos os grupos, sem dedup — mesmo produto pode aparecer em grupos distintos)
-  const lista = [];
-  grupos.forEach(grupo => {
-    (estrutura[grupo] || []).forEach(nome => {
-      const nomeBusca = _invMapeamentos[nome] || nome;
-      const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
-      lista.push({ nome, grupo, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' });
-    });
-  });
-
-  const ids = lista.filter(p => p.produto_id).map(p => p.produto_id);
-  const { data: saldos } = ids.length
-    ? await sb.from('est_saldo').select('produto_id,saldo').in('produto_id', ids)
-    : { data: [] };
-  const saldoMap = {};
-  (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
-
-  _saldoList = lista.map(p => ({ ...p, saldo: p.produto_id ? (saldoMap[p.produto_id] ?? 0) : 0 }));
-
-  // Seleciona primeiro grupo se nenhum selecionado
-  if (!_saldoGrupo && grupos.length) selecionarGrupoSaldo(grupos[0]);
-  else if (_saldoGrupo) selecionarGrupoSaldo(_saldoGrupo);
-  else renderSaldo();
+  if (!_saldoGrupo && grupos.length) await selecionarGrupoSaldo(grupos[0]);
+  else if (_saldoGrupo)              await selecionarGrupoSaldo(_saldoGrupo);
 }
 
-function selecionarGrupoSaldo(grupo) {
+async function selecionarGrupoSaldo(grupo) {
   _saldoGrupo = grupo;
   document.querySelectorAll('.saldo-grupo-btn').forEach(b => {
     b.className = 'btn saldo-grupo-btn ' + (b.dataset.grupo === grupo ? 'btn-success' : 'btn-outline-secondary');
     b.style.borderRadius = '20px';
   });
+
+  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+  const nomes = estrutura[grupo] || [];
+
+  // Lista de produtos deste grupo
+  _saldoList = nomes.map(nome => {
+    const nomeBusca = _invMapeamentos[nome] || nome;
+    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
+    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', saldo: 0 };
+  });
+
+  // Saldo ESTOQUE DA LOJA
+  const ids = _saldoList.filter(p => p.produto_id).map(p => p.produto_id);
+  const { data: saldos } = ids.length
+    ? await sb.from('est_saldo').select('produto_id,saldo').in('produto_id', ids)
+    : { data: [] };
+  const saldoMap = {};
+  (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
+  _saldoList.forEach(p => { if (p.produto_id) p.saldo = saldoMap[p.produto_id] ?? 0; });
+
+  // Setores que têm este grupo
+  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA)
+    .filter(s => s !== 'ESTOQUE DA LOJA' && INVENTARIO_ESTRUTURA[s]?.[grupo]);
+
+  // Última contagem de cada setor para este grupo
+  _saldoMatrix = {};
+  await Promise.all(_saldoSetores.map(async setor => {
+    const { data: invs } = await sb.from('est_inventarios')
+      .select('id').eq('setor', setor).eq('grupo', grupo)
+      .order('criado_em', { ascending: false }).limit(1);
+    if (!invs?.length) return;
+    const { data: itens } = await sb.from('est_inventario_itens')
+      .select('nome,produto_id,estoque').eq('inventario_id', invs[0].id);
+    (itens || []).forEach(it => {
+      const key = it.produto_id || norm(it.nome);
+      if (!_saldoMatrix[key]) _saldoMatrix[key] = {};
+      _saldoMatrix[key][setor] = it.estoque ?? 0;
+    });
+  }));
+
   renderSaldo();
 }
 
 function renderSaldo() {
   const busca = norm(document.getElementById('saldo-busca')?.value || '');
-
-  const filtrado = _saldoList.filter(p =>
-    (!_saldoGrupo || p.grupo === _saldoGrupo) &&
-    (!busca || norm(p.nome).includes(busca))
-  );
+  const filtrado = _saldoList.filter(p => !busca || norm(p.nome).includes(busca));
 
   document.getElementById('saldo-contador').textContent = `${filtrado.length} produto(s)`;
 
+  const thead = document.getElementById('thead-saldo');
   const tbody = document.getElementById('lst-saldo');
   if (!filtrado.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    if (thead) thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = filtrado.map(p => {
-    const fundo    = p.saldo <= 0 ? 'style="background:#fff5f5"' : '';
-    const saldoFmt = p.saldo % 1 === 0 ? p.saldo : parseFloat(p.saldo).toFixed(3).replace(/\.?0+$/, '');
-    const semProd  = !p.produto_id ? ' <span class="text-danger small" title="Produto não cadastrado">⚠</span>' : '';
-    const rowId    = `saldo-row-${p.produto_id || norm(p.nome)}`;
-    return `<tr ${fundo} id="${rowId}">
-      <td><strong>${esc(p.nome)}</strong>${semProd}</td>
+  // Header
+  if (thead) {
+    thead.innerHTML = `<tr style="background:#1a1a2e;color:#fff">
+      <th style="min-width:200px;padding:.75rem 1rem">Produto</th>
+      <th class="text-center" style="min-width:60px">Un.</th>
+      <th class="text-center" style="min-width:120px;background:#166534;color:#fff;border-left:3px solid #16a34a">
+        🏪 Estoque<br><small style="font-weight:400;opacity:.85;font-size:.7rem">da Loja</small>
+      </th>
+      ${_saldoSetores.map(s => {
+        const cor = _SETOR_COR[s] || '#6c757d';
+        return `<th class="text-center" style="min-width:110px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
+          ${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}<br>
+          <small style="font-weight:400;font-size:.68rem;opacity:.75">última contagem</small>
+        </th>`;
+      }).join('')}
+    </tr>`;
+  }
+
+  tbody.innerHTML = filtrado.map((p, idx) => {
+    const key      = p.produto_id || norm(p.nome);
+    const saldoFmt = p.saldo % 1 === 0 ? String(p.saldo) : parseFloat(p.saldo).toFixed(3).replace(/\.?0+$/, '');
+    const semProd  = !p.produto_id ? ' <span class="text-danger" title="Não cadastrado">⚠</span>' : '';
+    const bgRow    = idx % 2 === 0 ? '#fff' : '#f8fffe';
+
+    const setorCells = _saldoSetores.map(s => {
+      const cor = _SETOR_COR[s] || '#6c757d';
+      const val = _saldoMatrix[key]?.[s];
+      if (val === undefined) return `<td class="text-center text-muted" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
+      const numBg = val <= 0 ? '#fff5f5' : bgRow;
+      const numCor = val <= 0 ? '#dc3545' : '#212529';
+      return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val}</td>`;
+    }).join('');
+
+    const elBg = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+    return `<tr style="background:${bgRow}">
+      <td style="padding:.6rem 1rem"><strong>${esc(p.nome)}</strong>${semProd}</td>
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
-      <td class="text-center" style="width:140px">
+      <td class="text-center" style="background:${elBg};border-left:3px solid #16a34a">
         ${p.produto_id
           ? `<input type="number" class="form-control form-control-sm text-center"
               id="saldo-inp-${p.produto_id}" value="${saldoFmt}" min="0" step="1"
+              style="width:85px;margin:auto;border-color:#16a34a;font-weight:600"
               onblur="salvarSaldoItem('${p.produto_id}',this)"
               onkeydown="if(event.key==='Enter')this.blur()">`
           : '<span class="text-muted">—</span>'}
       </td>
+      ${setorCells}
     </tr>`;
   }).join('');
 }
 
 async function salvarSaldoItem(produto_id, el) {
   const saldo = parseQtd(el.value);
-  el.value = saldo % 1 === 0 ? saldo : parseFloat(saldo).toFixed(3).replace(/\.?0+$/, '');
+  el.value = saldo % 1 === 0 ? String(saldo) : parseFloat(saldo).toFixed(3).replace(/\.?0+$/, '');
 
   const { error } = await sb.from('est_saldo')
     .upsert({ produto_id, saldo, updated_at: new Date().toISOString() });
   if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
 
-  const item = _saldoList.find(p => p.produto_id === produto_id && p.grupo === _saldoGrupo);
-  if (item) item.saldo = saldo;
-
-  const row = document.getElementById(`saldo-row-${produto_id}`);
-  if (row) row.style.background = saldo <= 0 ? '#fff5f5' : '';
+  const item = _saldoList.find(p => p.produto_id === produto_id);
+  if (item) {
+    item.saldo = saldo;
+    const td = el.closest('td');
+    if (td) td.style.background = saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+  }
   toast('Saldo salvo.', 'ok');
 }
