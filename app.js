@@ -2423,6 +2423,27 @@ async function carregarMapeamentosInv() {
     }
   }
 
+  // Migração única: padrões no formato antigo (PRODUTO) → novo (SETOR|GRUPO|PRODUTO)
+  const keysAntigas = Object.keys(_invPadroes).filter(k => !k.includes('|'));
+  if (keysAntigas.length > 0) {
+    const novos = {};
+    Object.keys(_invPadroes).filter(k => k.includes('|')).forEach(k => { novos[k] = _invPadroes[k]; });
+    keysAntigas.forEach(prodNome => {
+      const val = _invPadroes[prodNome];
+      Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
+        if (setor === 'ESTOQUE DA LOJA') return;
+        Object.entries(grupos).forEach(([grupo, prods]) => {
+          if (prods.some(p => p.trim().toUpperCase() === prodNome)) {
+            novos[`${setor}|${grupo}|${prodNome}`] = val;
+          }
+        });
+      });
+    });
+    _invPadroes = novos;
+    await sb.from('inv_configuracoes').upsert({ chave: 'padroes', valor: _invPadroes });
+    toast('Pedidos Padrão recuperados ✅', 'ok');
+  }
+
   _invMapeamentos = mapeamentos;
   _invExcluidos   = excluidos;
 }
