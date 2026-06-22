@@ -422,8 +422,10 @@
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
     <div class="local-pills">
-      <div class="pill ativo" id="pill-centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
-      <div class="pill" id="pill-p10" onclick="selecionarLocal('P10')">📍 P10</div>
+      <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
+      <div class="pill" data-local="Delivery P10" onclick="selecionarLocal('Delivery P10')">📍 Delivery P10</div>
+      <div class="pill" data-local="Produção" onclick="selecionarLocal('Produção')">🏭 Produção</div>
+      <div class="pill" data-local="Estoque Central" onclick="selecionarLocal('Estoque Central')">🏪 Est. Central</div>
     </div>
     <div class="info-linha">
       <span>📅</span>
@@ -832,8 +834,9 @@ async function sair() { await sb.auth.signOut(); location.reload(); }
 // ─── LOCAL ───────────────────────────────────────────────────────
 function selecionarLocal(l) {
   _local = l;
-  document.getElementById('pill-centro').className = 'pill' + (l === 'Centro' ? ' ativo' : '');
-  document.getElementById('pill-p10').className    = 'pill' + (l === 'P10'    ? ' ativo' : '');
+  document.querySelectorAll('.local-pills .pill').forEach(el => {
+    el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
+  });
 }
 
 // ─── DIA ─────────────────────────────────────────────────────────
