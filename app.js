@@ -2397,7 +2397,16 @@ async function carregarInventario() {
   carregarHistoricoInv();
 }
 
-function selecionarSetorInv(setor) {
+async function selecionarSetorInv(setor) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', hoje).eq('setor', setor)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Já existe um pedido para ${setor} hoje: ${pedHoje[0].num_pedido}`, 'erro');
+    return;
+  }
+
   _invSetor = setor;
   _invGrupo = null;
   _invProds = [];
@@ -2850,6 +2859,13 @@ async function enviarPedidoInterno() {
   const data = document.getElementById('inv-data').value;
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
+
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', data).eq('setor', _invSetor)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Pedido de ${_invSetor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'erro'); return;
+  }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();
 

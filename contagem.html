@@ -924,7 +924,16 @@ function pinConfirm() {
 }
 
 // ─── SETOR / GRUPO ───────────────────────────────────────────────
-function selecionarSetor(setor) {
+async function selecionarSetor(setor) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', hoje).eq('setor', setor)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Pedido de ${setor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err');
+    return;
+  }
+
   _setor = setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display      = 'none';
   document.getElementById('grupos-produtos').style.display = 'block';
@@ -1012,6 +1021,14 @@ async function enviarPedido() {
   if (!_setor || !_grupo) { toast('Selecione setor e grupo.', 'err'); return; }
   const data = document.getElementById('data-inv').value;
   if (!data) { toast('Selecione a data.', 'err'); return; }
+
+  const { data: pedHoje } = await sb.from('pedidos_internos')
+    .select('num_pedido').eq('data', data).eq('setor', _setor)
+    .neq('status', 'cancelado').limit(1);
+  if (pedHoje?.length) {
+    toast(`Pedido de ${_setor} já enviado hoje: ${pedHoje[0].num_pedido}`, 'err'); return;
+  }
+
   const resp = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const btn  = document.getElementById('btn-enviar');
   btn.disabled = true;
