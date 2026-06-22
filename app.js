@@ -2333,6 +2333,7 @@ let _invDia          = '';   // 'seg'|'ter'|'qua'|'qui'|'sex'|'sab'|'dom'
 let _invFeriado      = false;
 let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispositivos)
 let _invExcluidos    = new Set();
+let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -2381,12 +2382,13 @@ function mudarLocalInv(local) {
 
 async function carregarMapeamentosInv() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes']);
   let mapeamentos = {}, excluidos = new Set();
   if (data) {
     data.forEach(row => {
-      if (row.chave === 'mapeamentos') mapeamentos = row.valor || {};
-      if (row.chave === 'excluidos')   excluidos   = new Set(row.valor || []);
+      if (row.chave === 'mapeamentos') mapeamentos     = row.valor || {};
+      if (row.chave === 'excluidos')   excluidos       = new Set(row.valor || []);
+      if (row.chave === 'adicoes')     _invAdicoes     = row.valor || {};
     });
   }
 
@@ -2477,8 +2479,17 @@ function selecionarGrupoInv(grupo) {
       const nomeBusca = mapeamentos[nome] || nome;
       const nomNorm   = norm(nomeBusca.trim());
       const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-      return { nome, produto_id: prod?.id || null };
+      return { nome, produto_id: prod?.id || null, adicionado: false };
     });
+
+  // Produtos adicionados manualmente via "+"
+  const addKey  = `${_invSetor}|${grupo}`;
+  const adicoes = _invAdicoes[addKey] || [];
+  adicoes.forEach(nome => {
+    if (_invProds.find(p => norm(p.nome) === norm(nome))) return; // evita duplicata
+    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
+    _invProds.push({ nome, produto_id: prod?.id || null, adicionado: true });
+  });
 
   // Breadcrumb
   document.getElementById('inv-breadcrumb').textContent = `${_invSetor} / ${grupo}`;
@@ -2499,8 +2510,13 @@ function renderInventario() {
     const padrao = _getPadrao(p.nome);
     const padraoTxt = padrao !== null ? padrao : '—';
     const semProd = !p.produto_id ? ' title="Produto não encontrado no cadastro" style="color:#dc3545"' : '';
+    const btnRemover = p.adicionado
+      ? ` <button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="Remover deste grupo"
+            onclick="removerProdInv('${esc(p.nome)}')" style="font-size:.75rem;vertical-align:middle">
+            <i class="bi bi-trash3"></i></button>`
+      : '';
     return `<tr>
-      <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}</td>
+      <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center"
           id="inv-est-${i}" min="0" step="0.001" value="0"
@@ -2514,6 +2530,50 @@ function renderInventario() {
       </td>
     </tr>`;
   }).join('');
+}
+
+// ─── ADICIONAR / REMOVER PRODUTO NO GRUPO ────────────────────────
+function abrirAdicionarProdInv() {
+  const painel = document.getElementById('inv-add-search');
+  painel.style.display = 'block';
+  const input = document.getElementById('inv-add-input');
+  input.value = '';
+  document.getElementById('inv-add-sugestoes').innerHTML = '';
+  input.focus();
+}
+function fecharAdicionarProdInv() {
+  document.getElementById('inv-add-search').style.display = 'none';
+}
+function filtrarProdAdd(query) {
+  const q = norm(query.trim());
+  const el = document.getElementById('inv-add-sugestoes');
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  const jaExiste = new Set(_invProds.map(p => norm(p.nome)));
+  const matches  = cProdutosFT.filter(p => norm(p.nome).includes(q) && !jaExiste.has(norm(p.nome))).slice(0, 12);
+  el.innerHTML = matches.length
+    ? matches.map(p => `<button class="list-group-item list-group-item-action py-1 small"
+        onclick="confirmarAdicionarProdInv('${esc(p.nome)}')">${esc(p.nome)}</button>`).join('')
+    : '<div class="list-group-item text-muted small">Nenhum produto encontrado.</div>';
+}
+async function confirmarAdicionarProdInv(nome) {
+  const key   = `${_invSetor}|${_invGrupo}`;
+  const atual = _invAdicoes[key] || [];
+  if (atual.find(n => norm(n) === norm(nome))) { toast('Produto já está no grupo.', 'erro'); return; }
+  _invAdicoes[key] = [...atual, nome];
+  await sb.from('inv_configuracoes').upsert({ chave: 'adicoes', valor: _invAdicoes });
+  fecharAdicionarProdInv();
+  selecionarGrupoInv(_invGrupo);
+  toast(`${nome} adicionado ao grupo ✅`, 'ok');
+}
+async function removerProdInv(nome) {
+  if (!confirm(`Remover "${nome}" deste grupo?`)) return;
+  const key = `${_invSetor}|${_invGrupo}`;
+  const atual = _invAdicoes[key] || [];
+  _invAdicoes[key] = atual.filter(n => norm(n) !== norm(nome));
+  if (!_invAdicoes[key].length) delete _invAdicoes[key];
+  await sb.from('inv_configuracoes').upsert({ chave: 'adicoes', valor: _invAdicoes });
+  selecionarGrupoInv(_invGrupo);
+  toast(`${nome} removido do grupo.`, 'ok');
 }
 
 function calcPedidoInv(i) {

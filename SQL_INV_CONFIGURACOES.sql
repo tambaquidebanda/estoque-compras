@@ -11,3 +11,5 @@ CREATE TABLE IF NOT EXISTS inv_configuracoes (
 -- Linhas iniciais (não sobrescreve se já existirem)
 INSERT INTO inv_configuracoes (chave, valor) VALUES ('mapeamentos', '{}') ON CONFLICT DO NOTHING;
 INSERT INTO inv_configuracoes (chave, valor) VALUES ('excluidos',   '[]') ON CONFLICT DO NOTHING;
+INSERT INTO inv_configuracoes (chave, valor) VALUES ('pins',        '{}') ON CONFLICT DO NOTHING;
+INSERT INTO inv_configuracoes (chave, valor) VALUES ('adicoes',     '{}') ON CONFLICT DO NOTHING;

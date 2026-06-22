@@ -1163,6 +1163,20 @@
             </tbody>
           </table>
         </div>
+        <div class="border-top pt-3 mt-1 px-1">
+          <button class="btn btn-sm btn-outline-secondary" onclick="abrirAdicionarProdInv()">
+            <i class="bi bi-plus-circle"></i> Adicionar produto a este grupo
+          </button>
+          <div id="inv-add-search" style="display:none" class="mt-2">
+            <div class="input-group input-group-sm" style="max-width:420px">
+              <input type="text" class="form-control" id="inv-add-input"
+                placeholder="Buscar produto cadastrado..."
+                oninput="filtrarProdAdd(this.value)" autocomplete="off">
+              <button class="btn btn-outline-secondary" onclick="fecharAdicionarProdInv()">✕</button>
+            </div>
+            <div id="inv-add-sugestoes" class="list-group mt-1" style="max-width:420px;max-height:220px;overflow-y:auto;position:relative;z-index:10"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Histórico -->
