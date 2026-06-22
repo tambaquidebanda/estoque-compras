@@ -2308,12 +2308,14 @@ const INVENTARIO_ESTRUTURA = {
   }
 };
 
-let _invLocal   = 'Centro';
-let _invSetor   = null;
-let _invGrupo   = null;
-let _invProds   = [];   // { nome, produto_id } array do grupo atual
-let _invDia     = '';   // 'seg'|'ter'|'qua'|'qui'|'sex'|'sab'|'dom'
-let _invFeriado = false;
+let _invLocal        = 'Centro';
+let _invSetor        = null;
+let _invGrupo        = null;
+let _invProds        = [];   // { nome, produto_id } array do grupo atual
+let _invDia          = '';   // 'seg'|'ter'|'qua'|'qui'|'sex'|'sab'|'dom'
+let _invFeriado      = false;
+let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispositivos)
+let _invExcluidos    = new Set();
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -2360,9 +2362,21 @@ function mudarLocalInv(local) {
   document.getElementById('btn-inv-p10').className    = local === 'P10'    ? 'btn btn-primary' : 'btn btn-outline-primary';
 }
 
+async function carregarMapeamentosInv() {
+  const { data } = await sb.from('inv_configuracoes')
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos']);
+  if (data) {
+    data.forEach(row => {
+      if (row.chave === 'mapeamentos') _invMapeamentos = row.valor || {};
+      if (row.chave === 'excluidos')   _invExcluidos   = new Set(row.valor || []);
+    });
+  }
+}
+
 async function carregarInventario() {
   if (!cProdutosFT.length) await carregarProdutosFT();
   if (!_invDia) initInvDia();
+  await carregarMapeamentosInv();
   carregarHistoricoInv();
 }
 
@@ -2407,8 +2421,8 @@ function selecionarGrupoInv(grupo) {
   });
 
   // Monta lista de produtos (respeita mapeamentos e exclusões)
-  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
-  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
+  const mapeamentos = _invMapeamentos;
+  const excluidos   = _invExcluidos;
   const nomes = INVENTARIO_ESTRUTURA[_invSetor]?.[grupo] || [];
   _invProds = nomes
     .filter(nome => !excluidos.has(nome))
@@ -2635,8 +2649,8 @@ async function salvarInventario() {
 }
 
 function _preencherModalDivergencias() {
-  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
-  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
+  const mapeamentos = _invMapeamentos;
+  const excluidos   = _invExcluidos;
   const divergencias = [];
   const todosProd = [...cProdutosFT].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
@@ -2715,9 +2729,9 @@ function verDivergenciasInv() {
   new bootstrap.Modal(document.getElementById('modal-divergencias-inv')).show();
 }
 
-function salvarCorrecoesDivergencias() {
-  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
-  const excluidos   = new Set(JSON.parse(localStorage.getItem('inv_excluidos') || '[]'));
+async function salvarCorrecoesDivergencias() {
+  const mapeamentos = { ..._invMapeamentos };
+  const excluidos   = new Set(_invExcluidos);
   let countMap = 0, countExcl = 0;
 
   document.querySelectorAll('[id^="div-sel-"]').forEach(sel => {
@@ -2736,8 +2750,15 @@ function salvarCorrecoesDivergencias() {
     }
   });
 
-  localStorage.setItem('inv_mapeamentos', JSON.stringify(mapeamentos));
-  localStorage.setItem('inv_excluidos',   JSON.stringify([...excluidos]));
+  // Grava no Supabase (compartilhado entre dispositivos)
+  await sb.from('inv_configuracoes').upsert([
+    { chave: 'mapeamentos', valor: mapeamentos },
+    { chave: 'excluidos',   valor: [...excluidos] },
+  ]);
+
+  // Atualiza cache em memória
+  _invMapeamentos = mapeamentos;
+  _invExcluidos   = excluidos;
 
   const msgs = [];
   if (countMap)  msgs.push(`${countMap} mapeamento(s)`);

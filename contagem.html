@@ -626,8 +626,10 @@ let _local = 'Centro';
 let _setor = null, _grupo = null;
 let _dia = '', _feriado = false;
 let _todosProdutos = [];
-let _grupoProds = [];
-let _pedLiberarId = null, _pedReceberId = null;
+let _grupoProds    = [];
+let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop)
+let _excluidos     = new Set();
+let _pedLiberarId  = null, _pedReceberId = null;
 
 // ─── HELPERS ─────────────────────────────────────────────────────
 function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
@@ -687,7 +689,18 @@ async function entrar() {
   document.getElementById('tela-principal').style.display = 'flex';
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
-  await carregarProdutos();
+  await Promise.all([carregarProdutos(), carregarMapeamentos()]);
+}
+
+async function carregarMapeamentos() {
+  const { data } = await sb.from('inv_configuracoes')
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos']);
+  if (data) {
+    data.forEach(row => {
+      if (row.chave === 'mapeamentos') _mapeamentos = row.valor || {};
+      if (row.chave === 'excluidos')   _excluidos   = new Set(row.valor || []);
+    });
+  }
 }
 
 async function sair() { await sb.auth.signOut(); location.reload(); }
@@ -778,13 +791,14 @@ function renderGrupos() {
 function selecionarGrupo(grupo) {
   _grupo = grupo;
   renderGrupos();
-  const mapeamentos = JSON.parse(localStorage.getItem('inv_mapeamentos') || '{}');
   const nomes = INVENTARIO_ESTRUTURA[_setor]?.[grupo] || [];
-  _grupoProds = nomes.map(nome => {
-    const nomeReal = mapeamentos[nome] || nome;
-    const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
-    return { nome, produto_id: prod?.id || null };
-  });
+  _grupoProds = nomes
+    .filter(nome => !_excluidos.has(nome))
+    .map(nome => {
+      const nomeReal = _mapeamentos[nome] || nome;
+      const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
+      return { nome, produto_id: prod?.id || null };
+    });
   renderProdutos();
   document.getElementById('btn-enviar').disabled = false;
 }
