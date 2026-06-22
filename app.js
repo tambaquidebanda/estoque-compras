@@ -206,7 +206,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
-  if (['recebimento','inventario','saldo'].includes(nome)) {
+  if (['recebimento','inventario','saldo','estrutura'].includes(nome)) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
@@ -224,6 +224,7 @@ function ir(nome, el) {
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'saldo')         carregarSaldo();
+  if (nome === 'estrutura')     carregarEditorEstrutura();
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
@@ -2309,13 +2310,13 @@ const INVENTARIO_ESTRUTURA = {
   }
 };
 
-// Gera o setor "ESTOQUE DA LOJA" mesclando todos os setores, deduplicando por grupo
-(function() {
+function _gerarEstoqueLojaEstrutura() {
   const _n = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
   const forceMerge = { 'material expediente': 'MATERIAL DE EXPEDIENTE' };
   const result = {}, seen = {}, normToCanonical = {};
-  Object.values(INVENTARIO_ESTRUTURA).forEach(setorGrupos => {
-    Object.entries(setorGrupos).forEach(([grupo, prods]) => {
+  Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
+    if (setor === 'ESTOQUE DA LOJA') return;
+    Object.entries(grupos).forEach(([grupo, prods]) => {
       const ng = _n(grupo);
       const canonical = forceMerge[ng] || normToCanonical[ng] || grupo;
       if (!normToCanonical[ng]) normToCanonical[ng] = canonical;
@@ -2324,7 +2325,18 @@ const INVENTARIO_ESTRUTURA = {
     });
   });
   INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = result;
-})();
+}
+_gerarEstoqueLojaEstrutura(); // initial call (replaces IIFE)
+
+const _UNIDADES_LOCAIS = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
+let _todasEstruturas = {};
+
+function _aplicarEstruturaLocal(local) {
+  const base = _todasEstruturas[local] || _todasEstruturas['Centro'] || {};
+  Object.keys(INVENTARIO_ESTRUTURA).forEach(k => { if (k !== 'ESTOQUE DA LOJA') delete INVENTARIO_ESTRUTURA[k]; });
+  Object.assign(INVENTARIO_ESTRUTURA, base);
+  _gerarEstoqueLojaEstrutura();
+}
 
 let _invLocal        = 'Centro';
 let _invSetor        = null;
@@ -2373,6 +2385,10 @@ function atualizarBtnsDia() {
 
 function mudarLocalInv(local) {
   _invLocal = local;
+  _aplicarEstruturaLocal(local);
+  _invSetor = null; _invGrupo = null; _invProds = [];
+  document.getElementById('inv-grupo-section')?.classList.add('d-none');
+  document.getElementById('inv-tabela-section')?.classList.add('d-none');
   const e2 = document.getElementById('inv-local-badge2');
   if (e2) e2.textContent = local;
   document.querySelectorAll('.inv-local-btn').forEach(b => {
@@ -2382,7 +2398,7 @@ function mudarLocalInv(local) {
 
 async function carregarMapeamentosInv() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes','padroes']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes','padroes','estrutura']);
   let mapeamentos = {}, excluidos = new Set();
   if (data) {
     data.forEach(row => {
@@ -2390,6 +2406,7 @@ async function carregarMapeamentosInv() {
       if (row.chave === 'excluidos')   excluidos    = new Set(row.valor || []);
       if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
       if (row.chave === 'padroes')     _invPadroes  = row.valor || {};
+      if (row.chave === 'estrutura')   _todasEstruturas = row.valor || {};
     });
   }
 
@@ -2441,6 +2458,23 @@ async function carregarMapeamentosInv() {
     await sb.from('inv_configuracoes').upsert({ chave: 'padroes', valor: _invPadroes });
     toast('Pedidos Padrão recuperados ✅', 'ok');
   }
+
+  // Seed estrutura por unidade se vazio
+  const _centroBase = {};
+  Object.entries(INVENTARIO_ESTRUTURA).forEach(([k,v]) => { if (k !== 'ESTOQUE DA LOJA') _centroBase[k] = v; });
+  let _estruturaMudou = false;
+  if (!_todasEstruturas['Centro']) {
+    _todasEstruturas['Centro'] = JSON.parse(JSON.stringify(_centroBase));
+    _estruturaMudou = true;
+  }
+  _UNIDADES_LOCAIS.forEach(u => {
+    if (!_todasEstruturas[u]) {
+      _todasEstruturas[u] = JSON.parse(JSON.stringify(_todasEstruturas['Centro']));
+      _estruturaMudou = true;
+    }
+  });
+  if (_estruturaMudou) await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
+  if (_invLocal && _invLocal !== 'Centro') _aplicarEstruturaLocal(_invLocal);
 
   _invMapeamentos = mapeamentos;
   _invExcluidos   = excluidos;
@@ -7227,4 +7261,184 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
   if (item && local === 'ESTOQUE_LOJA') item.saldo = novoSaldo;
   toast('Saldo ajustado.', 'ok');
   renderSaldo();
+}
+
+// ─── EDITOR DE ESTRUTURA ──────────────────────────────────────────
+let _estEditorLocal = 'Centro';
+
+async function carregarEditorEstrutura() {
+  if (!Object.keys(_todasEstruturas).length) await carregarMapeamentosInv();
+  _estEditorLocal = _invLocal || 'Centro';
+  renderEditorEstrutura();
+}
+
+function setEstEditorLocal(local) {
+  _estEditorLocal = local;
+  renderEditorEstrutura();
+}
+
+function _estId(s) { return String(s).replace(/[^a-z0-9]/gi, '_'); }
+
+function renderEditorEstrutura() {
+  const tabsEl = document.getElementById('est-editor-tabs');
+  const treeEl = document.getElementById('est-editor-tree');
+  if (!tabsEl || !treeEl) return;
+
+  tabsEl.innerHTML = _UNIDADES_LOCAIS.map(u =>
+    `<button class="saldo-grupo-btn${u === _estEditorLocal ? ' ativo' : ''}" onclick="setEstEditorLocal('${esc(u)}')">${esc(u.toUpperCase())}</button>`
+  ).join('');
+
+  const estrutura = _todasEstruturas[_estEditorLocal] || {};
+  const setores = Object.keys(estrutura).filter(s => s !== 'ESTOQUE DA LOJA');
+  let html = '';
+
+  setores.forEach(setor => {
+    const sid = _estId(setor);
+    const grupos = Object.keys(estrutura[setor] || {});
+    html += `<div class="card-grafico mb-3">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="mb-0 fw-bold fs-6">${esc(setor)}</h6>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" data-setor="${esc(setor)}" onclick="renomearSetorEst(this.dataset.setor)">✏️ Renomear</button>
+          <button class="btn btn-sm btn-outline-danger" data-setor="${esc(setor)}" onclick="removerSetorEst(this.dataset.setor)">🗑️</button>
+        </div>
+      </div>
+      <div class="ms-3">`;
+
+    grupos.forEach(grupo => {
+      const gid = _estId(grupo);
+      const prods = estrutura[setor][grupo] || [];
+      html += `<div class="mb-3">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="fw-semibold text-muted small text-uppercase">${esc(grupo)}</span>
+          <button class="btn btn-sm btn-link p-0 text-secondary" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="renomearGrupoEst(this.dataset.setor,this.dataset.grupo)">✏️</button>
+          <button class="btn btn-sm btn-link p-0 text-danger" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="removerGrupoEst(this.dataset.setor,this.dataset.grupo)">🗑️</button>
+        </div>
+        <div class="ms-2 mb-2">
+          ${prods.map(p => `<span class="badge bg-light border text-dark me-1 mb-1" style="font-size:.75rem">
+            ${esc(p)}
+            <button class="btn-close ms-1" style="font-size:.45rem;vertical-align:middle" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" data-prod="${esc(p)}" onclick="removerProdutoEst(this.dataset.setor,this.dataset.grupo,this.dataset.prod)"></button>
+          </span>`).join('')}
+        </div>
+        <div class="d-flex gap-2">
+          <input type="text" class="form-control form-control-sm" id="inp-prod-${sid}-${gid}" placeholder="Nome do produto" style="max-width:280px" onkeydown="if(event.key==='Enter')adicionarProdutoEst('${esc(setor)}','${esc(grupo)}')">
+          <button class="btn btn-sm btn-outline-success" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="adicionarProdutoEst(this.dataset.setor,this.dataset.grupo)">+ Produto</button>
+        </div>
+      </div>`;
+    });
+
+    html += `<div class="d-flex gap-2 mt-2 pt-2 border-top">
+        <input type="text" class="form-control form-control-sm" id="inp-grupo-${sid}" placeholder="Nome do grupo" style="max-width:220px" onkeydown="if(event.key==='Enter')adicionarGrupoEst('${esc(setor)}')">
+        <button class="btn btn-sm btn-outline-primary" data-setor="${esc(setor)}" onclick="adicionarGrupoEst(this.dataset.setor)">+ Grupo</button>
+      </div>
+      </div>
+    </div>`;
+  });
+
+  html += `<div class="card-grafico">
+    <div class="fw-semibold small mb-2 text-muted">ADICIONAR SETOR</div>
+    <div class="d-flex gap-2">
+      <input type="text" class="form-control form-control-sm" id="inp-novo-setor" placeholder="Nome do setor" style="max-width:220px" onkeydown="if(event.key==='Enter')adicionarSetorEst()">
+      <button class="btn btn-sm btn-success" onclick="adicionarSetorEst()">+ Setor</button>
+    </div>
+  </div>`;
+
+  treeEl.innerHTML = html;
+}
+
+async function _salvarEstruturaSupabase() {
+  await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
+  if (_estEditorLocal === (_invLocal || 'Centro')) {
+    _aplicarEstruturaLocal(_invLocal || 'Centro');
+  }
+}
+
+async function adicionarSetorEst() {
+  const inp = document.getElementById('inp-novo-setor');
+  const nome = (inp?.value || '').trim().toUpperCase();
+  if (!nome) return;
+  if (!_todasEstruturas[_estEditorLocal]) _todasEstruturas[_estEditorLocal] = {};
+  if (_todasEstruturas[_estEditorLocal][nome]) { toast('Setor já existe.', 'erro'); return; }
+  _todasEstruturas[_estEditorLocal][nome] = {};
+  await _salvarEstruturaSupabase();
+  inp.value = '';
+  renderEditorEstrutura();
+  toast(`Setor ${nome} adicionado!`, 'ok');
+}
+
+async function removerSetorEst(setor) {
+  if (!confirm(`Remover setor "${setor}" e todos os seus grupos/produtos?`)) return;
+  delete _todasEstruturas[_estEditorLocal][setor];
+  await _salvarEstruturaSupabase();
+  renderEditorEstrutura();
+  toast(`Setor ${setor} removido.`, 'ok');
+}
+
+async function renomearSetorEst(setor) {
+  const novo = (prompt(`Renomear setor "${setor}":`, setor) || '').trim().toUpperCase();
+  if (!novo || novo === setor) return;
+  const est = _todasEstruturas[_estEditorLocal];
+  est[novo] = est[setor];
+  delete est[setor];
+  await _salvarEstruturaSupabase();
+  renderEditorEstrutura();
+  toast(`Setor renomeado para ${novo}.`, 'ok');
+}
+
+async function adicionarGrupoEst(setor) {
+  const sid = _estId(setor);
+  const inp = document.getElementById(`inp-grupo-${sid}`);
+  const nome = (inp?.value || '').trim().toUpperCase();
+  if (!nome) return;
+  if (!_todasEstruturas[_estEditorLocal][setor]) _todasEstruturas[_estEditorLocal][setor] = {};
+  if (_todasEstruturas[_estEditorLocal][setor][nome]) { toast('Grupo já existe.', 'erro'); return; }
+  _todasEstruturas[_estEditorLocal][setor][nome] = [];
+  await _salvarEstruturaSupabase();
+  if (inp) inp.value = '';
+  renderEditorEstrutura();
+  toast(`Grupo ${nome} adicionado!`, 'ok');
+}
+
+async function removerGrupoEst(setor, grupo) {
+  if (!confirm(`Remover grupo "${grupo}" do setor "${setor}"?`)) return;
+  delete _todasEstruturas[_estEditorLocal][setor][grupo];
+  await _salvarEstruturaSupabase();
+  renderEditorEstrutura();
+  toast(`Grupo ${grupo} removido.`, 'ok');
+}
+
+async function renomearGrupoEst(setor, grupo) {
+  const novo = (prompt(`Renomear grupo "${grupo}":`, grupo) || '').trim().toUpperCase();
+  if (!novo || novo === grupo) return;
+  const s = _todasEstruturas[_estEditorLocal][setor];
+  s[novo] = s[grupo];
+  delete s[grupo];
+  await _salvarEstruturaSupabase();
+  renderEditorEstrutura();
+  toast(`Grupo renomeado para ${novo}.`, 'ok');
+}
+
+async function adicionarProdutoEst(setor, grupo) {
+  const sid = _estId(setor), gid = _estId(grupo);
+  const inp = document.getElementById(`inp-prod-${sid}-${gid}`);
+  const nome = (inp?.value || '').trim().toUpperCase();
+  if (!nome) return;
+  const arr = _todasEstruturas[_estEditorLocal][setor][grupo];
+  if (arr.includes(nome)) { toast('Produto já existe no grupo.', 'erro'); return; }
+  arr.push(nome);
+  await _salvarEstruturaSupabase();
+  if (inp) inp.value = '';
+  renderEditorEstrutura();
+  toast(`${nome} adicionado!`, 'ok');
+}
+
+async function removerProdutoEst(setor, grupo, prod) {
+  const arr = _todasEstruturas[_estEditorLocal]?.[setor]?.[grupo];
+  if (!arr) return;
+  const idx = arr.indexOf(prod);
+  if (idx < 0) return;
+  arr.splice(idx, 1);
+  await _salvarEstruturaSupabase();
+  renderEditorEstrutura();
+  toast(`${prod} removido.`, 'ok');
 }

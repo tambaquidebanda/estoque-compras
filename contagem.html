@@ -714,13 +714,13 @@ const INVENTARIO_ESTRUTURA = {
   }
 };
 
-// Gera o setor "ESTOQUE DA LOJA" mesclando todos os setores, deduplicando por grupo
-(function() {
+function _gerarEstoqueLojaEstruturaMob() {
   const _n = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
   const forceMerge = { 'material expediente': 'MATERIAL DE EXPEDIENTE' };
   const result = {}, seen = {}, normToCanonical = {};
-  Object.values(INVENTARIO_ESTRUTURA).forEach(setorGrupos => {
-    Object.entries(setorGrupos).forEach(([grupo, prods]) => {
+  Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
+    if (setor === 'ESTOQUE DA LOJA') return;
+    Object.entries(grupos).forEach(([grupo, prods]) => {
       const ng = _n(grupo);
       const canonical = forceMerge[ng] || normToCanonical[ng] || grupo;
       if (!normToCanonical[ng]) normToCanonical[ng] = canonical;
@@ -729,7 +729,10 @@ const INVENTARIO_ESTRUTURA = {
     });
   });
   INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = result;
-})();
+}
+_gerarEstoqueLojaEstruturaMob(); // initial call
+
+let _todasEstruturasMob = {};
 
 // ─── ESTADO ──────────────────────────────────────────────────────
 const DIAS_SEM = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -817,14 +820,15 @@ async function entrar() {
 
 async function carregarMapeamentos() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes','padroes']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes','padroes','estrutura']);
   if (data) {
     data.forEach(row => {
-      if (row.chave === 'mapeamentos') _mapeamentos = row.valor || {};
-      if (row.chave === 'excluidos')   _excluidos   = new Set(row.valor || []);
-      if (row.chave === 'pins')        _pins        = row.valor || {};
-      if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
-      if (row.chave === 'padroes')     _padroes     = row.valor || {};
+      if (row.chave === 'mapeamentos') _mapeamentos     = row.valor || {};
+      if (row.chave === 'excluidos')   _excluidos       = new Set(row.valor || []);
+      if (row.chave === 'pins')        _pins            = row.valor || {};
+      if (row.chave === 'adicoes')     _invAdicoes      = row.valor || {};
+      if (row.chave === 'padroes')     _padroes         = row.valor || {};
+      if (row.chave === 'estrutura')   _todasEstruturasMob = row.valor || {};
     });
   }
 }
@@ -834,9 +838,17 @@ async function sair() { await sb.auth.signOut(); location.reload(); }
 // ─── LOCAL ───────────────────────────────────────────────────────
 function selecionarLocal(l) {
   _local = l;
+  if (Object.keys(_todasEstruturasMob).length) _aplicarEstruturaLocalMob(l);
   document.querySelectorAll('.local-pills .pill').forEach(el => {
     el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
   });
+}
+
+function _aplicarEstruturaLocalMob(local) {
+  const base = _todasEstruturasMob[local] || _todasEstruturasMob['Centro'] || {};
+  Object.keys(INVENTARIO_ESTRUTURA).forEach(k => { if (k !== 'ESTOQUE DA LOJA') delete INVENTARIO_ESTRUTURA[k]; });
+  Object.assign(INVENTARIO_ESTRUTURA, base);
+  _gerarEstoqueLojaEstruturaMob();
 }
 
 // ─── DIA ─────────────────────────────────────────────────────────
