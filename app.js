@@ -2543,7 +2543,7 @@ function renderInventario() {
       <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center"
-          id="inv-est-${i}" min="0" step="0.001" value="0"
+          id="inv-est-${i}" min="0" step="1" value="0"
           style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
       <td class="text-center">
@@ -2600,8 +2600,10 @@ async function removerProdInv(nome) {
   toast(`${nome} removido do grupo.`, 'ok');
 }
 
+function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
+
 function calcPedidoInv(i) {
-  const est    = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
+  const est    = parseQtd(document.getElementById(`inv-est-${i}`)?.value);
   const nome   = _invProds[i]?.nome || '';
   const padrao = _getPadrao(nome);
   const pedEl  = document.getElementById(`inv-ped-${i}`);
@@ -3169,7 +3171,7 @@ async function abrirLiberarPedido(pedidoId) {
     <td class="text-center">${it.qtd_pedida ?? '—'}</td>
     <td class="text-center" style="width:130px">
       <input type="number" class="form-control form-control-sm text-center"
-        id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="0.001">
+        id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
     </td>
   </tr>`).join('');
 
@@ -3199,7 +3201,7 @@ async function confirmarLiberacao() {
   const itenIds = JSON.parse(document.getElementById('lib-itens')?.value || '[]');
 
   await Promise.all(itenIds.map(id => {
-    const qtd = parseFloat(document.getElementById(`lib-qtd-${id}`)?.value) || 0;
+    const qtd = parseQtd(document.getElementById(`lib-qtd-${id}`)?.value);
     return sb.from('pedidos_internos_itens').update({ qtd_liberada: qtd }).eq('id', id);
   }));
 
@@ -3225,7 +3227,7 @@ async function abrirReceberPedido(pedidoId) {
     <td class="text-center">${it.qtd_liberada ?? '—'}</td>
     <td class="text-center" style="width:130px">
       <input type="number" class="form-control form-control-sm text-center"
-        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="0.001">
+        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="1">
     </td>
   </tr>`).join('');
 
@@ -3254,7 +3256,7 @@ async function confirmarRecebimentoInv() {
   const itenIds = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
 
   await Promise.all(itenIds.map(id => {
-    const qtd = parseFloat(document.getElementById(`rec-qtd-${id}`)?.value) || 0;
+    const qtd = parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
     return sb.from('pedidos_internos_itens').update({ qtd_recebida: qtd }).eq('id', id);
   }));
 
@@ -3305,7 +3307,7 @@ async function enviarEmergencia() {
   const setor    = document.getElementById('emerg-setor')?.value?.trim();
   const prodId   = document.getElementById('emerg-produto-id')?.value?.trim();
   const prodNome = document.getElementById('emerg-produto-busca')?.value?.trim();
-  const qtd      = parseFloat(document.getElementById('emerg-qtd')?.value) || 0;
+  const qtd      = parseQtd(document.getElementById('emerg-qtd')?.value);
   const resp     = (document.getElementById('emerg-resp')?.value || '').trim();
   const obs      = (document.getElementById('emerg-obs')?.value  || '').trim();
 
