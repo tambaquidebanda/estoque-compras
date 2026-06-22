@@ -1121,8 +1121,6 @@
             style="border-radius:20px">🧹 ASG</button>
           <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('DELIVERY')" data-setor="DELIVERY"
             style="border-radius:20px">🛵 Delivery</button>
-          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('ESTOQUE DA LOJA')" data-setor="ESTOQUE DA LOJA"
-            style="border-radius:20px">🏪 Estoque da Loja</button>
         </div>
       </div>
 
@@ -1509,44 +1507,37 @@
     <section id="pg-saldo" class="pagina">
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h1 class="mb-0"><i class="bi bi-archive-fill"></i> Saldo — ESTOQUE DA LOJA</h1>
+        <input type="search" class="form-control form-control-sm" id="saldo-busca"
+          placeholder="Buscar produto..." oninput="renderSaldo()" style="max-width:260px">
       </div>
 
+      <!-- Grupos -->
       <div class="card-grafico mb-3">
-        <div class="row g-2 align-items-center">
-          <div class="col-md-4">
-            <select class="form-select form-select-sm" id="saldo-filtro-grupo" onchange="renderSaldo()">
-              <option value="">Todos os grupos</option>
-            </select>
-          </div>
-          <div class="col-md-5">
-            <input type="search" class="form-control form-control-sm" id="saldo-busca"
-              placeholder="Buscar produto..." oninput="renderSaldo()">
-          </div>
-          <div class="col-md-3 text-end">
-            <span class="text-muted small" id="saldo-contador"></span>
-          </div>
+        <div class="text-muted fw-semibold small mb-2" style="letter-spacing:.05em">GRUPO</div>
+        <div class="d-flex flex-wrap gap-2" id="saldo-grupo-btns">
+          <span class="text-muted small">Carregando...</span>
         </div>
       </div>
 
       <div class="card-grafico">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="text-muted small" id="saldo-contador"></span>
+          <span class="text-muted small"><i class="bi bi-info-circle"></i> Pressione Enter ou clique fora para salvar</span>
+        </div>
         <div class="table-responsive">
           <table class="table table-sm table-hover align-middle mb-0">
             <thead style="background:#1a1a2e;color:#fff">
               <tr>
                 <th>Produto</th>
-                <th class="text-center" style="min-width:160px">Grupo</th>
+                <th class="text-center" style="min-width:70px">Un.</th>
                 <th class="text-center" style="min-width:130px">Saldo Atual</th>
               </tr>
             </thead>
             <tbody id="lst-saldo">
-              <tr><td colspan="3" class="text-center text-muted py-4">Carregando...</td></tr>
+              <tr><td colspan="3" class="text-center text-muted py-4">Selecione um grupo acima.</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="text-muted small mt-2 mb-0">
-          <i class="bi bi-info-circle"></i>
-          Fundo vermelho = saldo zerado. Edite o campo e pressione Enter ou clique fora para salvar.
-        </p>
       </div>
     </section>
 

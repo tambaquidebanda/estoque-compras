@@ -6993,7 +6993,8 @@ function fecharAjusteHistoricoCompExterno() {
 }
 
 // ─── SALDO ESTOQUE DA LOJA ────────────────────────────────────────
-let _saldoList = [];
+let _saldoList  = [];
+let _saldoGrupo = null;
 
 async function carregarSaldo() {
   if (!cProdutosFT.length) await carregarCaches();
@@ -7002,23 +7003,24 @@ async function carregarSaldo() {
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
   const grupos    = Object.keys(estrutura);
 
-  const sel = document.getElementById('saldo-filtro-grupo');
-  if (sel) {
-    const current = sel.value;
-    sel.innerHTML = '<option value="">Todos os grupos</option>' +
-      grupos.map(g => `<option value="${esc(g)}"${current === g ? ' selected' : ''}>${esc(g)}</option>`).join('');
+  // Chips de grupo
+  const container = document.getElementById('saldo-grupo-btns');
+  if (container) {
+    container.innerHTML = grupos.map(g =>
+      `<button class="btn btn-outline-secondary saldo-grupo-btn" data-grupo="${esc(g)}"
+        onclick="selecionarGrupoSaldo('${esc(g)}')" style="border-radius:20px">
+        ${esc(g)}
+      </button>`
+    ).join('');
   }
 
+  // Monta lista completa (todos os grupos, sem dedup — mesmo produto pode aparecer em grupos distintos)
   const lista = [];
-  const visto = new Set();
   grupos.forEach(grupo => {
     (estrutura[grupo] || []).forEach(nome => {
-      const key = norm(nome);
-      if (visto.has(key)) return;
-      visto.add(key);
       const nomeBusca = _invMapeamentos[nome] || nome;
-      const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
-      lista.push({ nome, grupo, produto_id: prod?.id || null });
+      const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
+      lista.push({ nome, grupo, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' });
     });
   });
 
@@ -7030,15 +7032,27 @@ async function carregarSaldo() {
   (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
 
   _saldoList = lista.map(p => ({ ...p, saldo: p.produto_id ? (saldoMap[p.produto_id] ?? 0) : 0 }));
+
+  // Seleciona primeiro grupo se nenhum selecionado
+  if (!_saldoGrupo && grupos.length) selecionarGrupoSaldo(grupos[0]);
+  else if (_saldoGrupo) selecionarGrupoSaldo(_saldoGrupo);
+  else renderSaldo();
+}
+
+function selecionarGrupoSaldo(grupo) {
+  _saldoGrupo = grupo;
+  document.querySelectorAll('.saldo-grupo-btn').forEach(b => {
+    b.className = 'btn saldo-grupo-btn ' + (b.dataset.grupo === grupo ? 'btn-success' : 'btn-outline-secondary');
+    b.style.borderRadius = '20px';
+  });
   renderSaldo();
 }
 
 function renderSaldo() {
-  const grupoFiltro = document.getElementById('saldo-filtro-grupo')?.value || '';
-  const busca       = norm(document.getElementById('saldo-busca')?.value || '');
+  const busca = norm(document.getElementById('saldo-busca')?.value || '');
 
   const filtrado = _saldoList.filter(p =>
-    (!grupoFiltro || p.grupo === grupoFiltro) &&
+    (!_saldoGrupo || p.grupo === _saldoGrupo) &&
     (!busca || norm(p.nome).includes(busca))
   );
 
@@ -7057,7 +7071,7 @@ function renderSaldo() {
     const rowId    = `saldo-row-${p.produto_id || norm(p.nome)}`;
     return `<tr ${fundo} id="${rowId}">
       <td><strong>${esc(p.nome)}</strong>${semProd}</td>
-      <td class="text-center text-muted small">${esc(p.grupo)}</td>
+      <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
       <td class="text-center" style="width:140px">
         ${p.produto_id
           ? `<input type="number" class="form-control form-control-sm text-center"
@@ -7078,9 +7092,10 @@ async function salvarSaldoItem(produto_id, el) {
     .upsert({ produto_id, saldo, updated_at: new Date().toISOString() });
   if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
 
-  const item = _saldoList.find(p => p.produto_id === produto_id);
+  const item = _saldoList.find(p => p.produto_id === produto_id && p.grupo === _saldoGrupo);
   if (item) item.saldo = saldo;
 
   const row = document.getElementById(`saldo-row-${produto_id}`);
   if (row) row.style.background = saldo <= 0 ? '#fff5f5' : '';
+  toast('Saldo salvo.', 'ok');
 }
