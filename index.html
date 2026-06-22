@@ -103,6 +103,9 @@
         <a href="#" onclick="ir('inventario',this)">
           <i class="bi bi-clipboard-check-fill"></i> Contagem/Pedido
         </a>
+        <a href="#" onclick="ir('saldo',this)">
+          <i class="bi bi-archive-fill"></i> Saldo Estoque
+        </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
@@ -1457,6 +1460,51 @@
         </div>
       </div>
 
+    </section>
+
+    <!-- ══════ SALDO ESTOQUE ══════ -->
+    <section id="pg-saldo" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-archive-fill"></i> Saldo — ESTOQUE DA LOJA</h1>
+      </div>
+
+      <div class="card-grafico mb-3">
+        <div class="row g-2 align-items-center">
+          <div class="col-md-4">
+            <select class="form-select form-select-sm" id="saldo-filtro-grupo" onchange="renderSaldo()">
+              <option value="">Todos os grupos</option>
+            </select>
+          </div>
+          <div class="col-md-5">
+            <input type="search" class="form-control form-control-sm" id="saldo-busca"
+              placeholder="Buscar produto..." oninput="renderSaldo()">
+          </div>
+          <div class="col-md-3 text-end">
+            <span class="text-muted small" id="saldo-contador"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-grafico">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead style="background:#1a1a2e;color:#fff">
+              <tr>
+                <th>Produto</th>
+                <th class="text-center" style="min-width:160px">Grupo</th>
+                <th class="text-center" style="min-width:130px">Saldo Atual</th>
+              </tr>
+            </thead>
+            <tbody id="lst-saldo">
+              <tr><td colspan="3" class="text-center text-muted py-4">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-muted small mt-2 mb-0">
+          <i class="bi bi-info-circle"></i>
+          Fundo vermelho = saldo zerado. Edite o campo e pressione Enter ou clique fora para salvar.
+        </p>
+      </div>
     </section>
 
     <!-- ══════ PLANEJAMENTO ══════ -->

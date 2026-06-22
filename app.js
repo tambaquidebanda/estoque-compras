@@ -206,7 +206,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
-  if (['recebimento','inventario'].includes(nome)) {
+  if (['recebimento','inventario','saldo'].includes(nome)) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
@@ -223,6 +223,7 @@ function ir(nome, el) {
   if (nome === 'historico')   carregarHistorico();
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
+  if (nome === 'saldo')         carregarSaldo();
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
@@ -3221,12 +3222,14 @@ async function confirmarLiberacao() {
   carregarPedidosInternos();
 }
 
-let _pedReceberId = null;
+let _pedReceberId    = null;
+let _pedReceberItens = [];
 
 async function abrirReceberPedido(pedidoId) {
   _pedReceberId = pedidoId;
   const { data: ped } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+  _pedReceberItens = itens || [];
 
   const rows = (itens || []).map(it => `<tr>
     <td>${esc(it.nome)}</td>
@@ -3270,6 +3273,15 @@ async function confirmarRecebimentoInv() {
   await sb.from('pedidos_internos').update({
     status: 'recebido', recebido_em: new Date().toISOString(),
   }).eq('id', _pedReceberId);
+
+  // Baixar saldo do ESTOQUE DA LOJA para cada item com produto cadastrado
+  await Promise.all(_pedReceberItens.filter(it => it.produto_id).map(async it => {
+    const qtd = parseQtd(document.getElementById(`rec-qtd-${it.id}`)?.value);
+    if (!qtd) return;
+    const { data: cur } = await sb.from('est_saldo').select('saldo').eq('produto_id', it.produto_id).maybeSingle();
+    const novoSaldo = Math.max(0, (cur?.saldo ?? 0) - qtd);
+    await sb.from('est_saldo').upsert({ produto_id: it.produto_id, saldo: novoSaldo, updated_at: new Date().toISOString() });
+  }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
   toast('Recebimento confirmado! ✅', 'ok');
@@ -6796,4 +6808,97 @@ async function registrarDespesaRealHistorico(idx) {
 
 function fecharAjusteHistoricoCompExterno() {
   document.getElementById('modal-ajuste-comp-ext').classList.add('d-none');
+}
+
+// ─── SALDO ESTOQUE DA LOJA ────────────────────────────────────────
+let _saldoList = [];
+
+async function carregarSaldo() {
+  if (!cProdutosFT.length) await carregarCaches();
+  if (!Object.keys(_invMapeamentos).length) await carregarMapeamentosInv();
+
+  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+  const grupos    = Object.keys(estrutura);
+
+  const sel = document.getElementById('saldo-filtro-grupo');
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Todos os grupos</option>' +
+      grupos.map(g => `<option value="${esc(g)}"${current === g ? ' selected' : ''}>${esc(g)}</option>`).join('');
+  }
+
+  const lista = [];
+  const visto = new Set();
+  grupos.forEach(grupo => {
+    (estrutura[grupo] || []).forEach(nome => {
+      const key = norm(nome);
+      if (visto.has(key)) return;
+      visto.add(key);
+      const nomeBusca = _invMapeamentos[nome] || nome;
+      const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
+      lista.push({ nome, grupo, produto_id: prod?.id || null });
+    });
+  });
+
+  const ids = lista.filter(p => p.produto_id).map(p => p.produto_id);
+  const { data: saldos } = ids.length
+    ? await sb.from('est_saldo').select('produto_id,saldo').in('produto_id', ids)
+    : { data: [] };
+  const saldoMap = {};
+  (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
+
+  _saldoList = lista.map(p => ({ ...p, saldo: p.produto_id ? (saldoMap[p.produto_id] ?? 0) : 0 }));
+  renderSaldo();
+}
+
+function renderSaldo() {
+  const grupoFiltro = document.getElementById('saldo-filtro-grupo')?.value || '';
+  const busca       = norm(document.getElementById('saldo-busca')?.value || '');
+
+  const filtrado = _saldoList.filter(p =>
+    (!grupoFiltro || p.grupo === grupoFiltro) &&
+    (!busca || norm(p.nome).includes(busca))
+  );
+
+  document.getElementById('saldo-contador').textContent = `${filtrado.length} produto(s)`;
+
+  const tbody = document.getElementById('lst-saldo');
+  if (!filtrado.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">Nenhum produto encontrado.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtrado.map(p => {
+    const fundo    = p.saldo <= 0 ? 'style="background:#fff5f5"' : '';
+    const saldoFmt = p.saldo % 1 === 0 ? p.saldo : parseFloat(p.saldo).toFixed(3).replace(/\.?0+$/, '');
+    const semProd  = !p.produto_id ? ' <span class="text-danger small" title="Produto não cadastrado">⚠</span>' : '';
+    const rowId    = `saldo-row-${p.produto_id || norm(p.nome)}`;
+    return `<tr ${fundo} id="${rowId}">
+      <td><strong>${esc(p.nome)}</strong>${semProd}</td>
+      <td class="text-center text-muted small">${esc(p.grupo)}</td>
+      <td class="text-center" style="width:140px">
+        ${p.produto_id
+          ? `<input type="number" class="form-control form-control-sm text-center"
+              id="saldo-inp-${p.produto_id}" value="${saldoFmt}" min="0" step="1"
+              onblur="salvarSaldoItem('${p.produto_id}',this)"
+              onkeydown="if(event.key==='Enter')this.blur()">`
+          : '<span class="text-muted">—</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function salvarSaldoItem(produto_id, el) {
+  const saldo = parseQtd(el.value);
+  el.value = saldo % 1 === 0 ? saldo : parseFloat(saldo).toFixed(3).replace(/\.?0+$/, '');
+
+  const { error } = await sb.from('est_saldo')
+    .upsert({ produto_id, saldo, updated_at: new Date().toISOString() });
+  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
+
+  const item = _saldoList.find(p => p.produto_id === produto_id);
+  if (item) item.saldo = saldo;
+
+  const row = document.getElementById(`saldo-row-${produto_id}`);
+  if (row) row.style.background = saldo <= 0 ? '#fff5f5' : '';
 }
