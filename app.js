@@ -2544,10 +2544,12 @@ function renderInventario() {
     const padraoTxt = padrao !== null ? padrao : '—';
     const semProd = !p.produto_id ? ' title="Produto não encontrado no cadastro" style="color:#dc3545"' : '';
     const btnRemover = p.adicionado
-      ? ` <button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="Remover deste grupo"
+      ? ` <button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="Remover produto adicionado"
             onclick="removerProdInv('${esc(p.nome)}')" style="font-size:.75rem;vertical-align:middle">
             <i class="bi bi-trash3"></i></button>`
-      : '';
+      : ` <button class="btn btn-link btn-sm p-0 ms-1 text-secondary" title="Excluir da contagem"
+            onclick="excluirProdInv('${esc(p.nome)}')" style="font-size:.75rem;vertical-align:middle;opacity:.4" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.4">
+            <i class="bi bi-trash3"></i></button>`;
     return `<tr>
       <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
       <td class="text-center">
@@ -2607,6 +2609,15 @@ async function removerProdInv(nome) {
   await sb.from('inv_configuracoes').upsert({ chave: 'adicoes', valor: _invAdicoes });
   selecionarGrupoInv(_invGrupo);
   toast(`${nome} removido do grupo.`, 'ok');
+}
+
+async function excluirProdInv(nome) {
+  if (!confirm(`Excluir "${nome}" da contagem?\n\nO produto não aparecerá mais nas listas. Para desfazer, use o painel de divergências.`)) return;
+  _invExcluidos.add(nome);
+  await sb.from('inv_configuracoes').upsert({ chave: 'excluidos', valor: [..._invExcluidos] });
+  _invProds = _invProds.filter(p => p.nome !== nome);
+  renderInventario();
+  toast(`"${nome}" excluído da contagem.`, 'ok');
 }
 
 function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
