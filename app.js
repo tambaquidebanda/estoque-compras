@@ -7003,7 +7003,7 @@ let _saldoMatrix = {};
 let _saldoSetores = [];
 
 async function carregarSaldo() {
-  if (!cProdutosFT.length) await carregarCaches();
+  if (!cProdutosFT.length) await carregarProdutosFT();
   if (!Object.keys(_invMapeamentos).length) await carregarMapeamentosInv();
 
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
