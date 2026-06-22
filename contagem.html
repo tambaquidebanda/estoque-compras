@@ -750,7 +750,7 @@ let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop
 let _excluidos     = new Set();
 let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _padroes       = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
-let _pedLiberarId  = null, _pedReceberId = null;
+let _pedLiberarId  = null, _pedReceberId = null, _pedReceberSetor = null;
 let _pins              = {};
 let _pinBuffer         = '';
 let _pinTarget         = null;   // { tipo: 'setor'|'estoque', setor?: string }
@@ -1326,6 +1326,7 @@ async function confirmarEdicaoMob() {
 async function abrirReceberPedido(id) {
   _pedReceberId = id;
   const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
+  _pedReceberSetor = ped?.setor || null;
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td>
@@ -1342,12 +1343,25 @@ async function abrirReceberPedido(id) {
 }
 async function confirmarRecebimento() {
   if (!_pedReceberId) return;
-  const ids = JSON.parse(document.getElementById('rec-itens')?.value||'[]');
-  await Promise.all(ids.map(id => {
+  const ids   = JSON.parse(document.getElementById('rec-itens')?.value||'[]');
+  const itens = await Promise.all(ids.map(async id => {
     const qtd = parseQtd(document.getElementById(`rec-${id}`)?.value);
-    return sb.from('pedidos_internos_itens').update({qtd_recebida:qtd}).eq('id',id);
+    await sb.from('pedidos_internos_itens').update({qtd_recebida:qtd}).eq('id',id);
+    const { data: it } = await sb.from('pedidos_internos_itens').select('produto_id,nome').eq('id',id).single();
+    return { ...it, qtd };
   }));
   await sb.from('pedidos_internos').update({status:'recebido',recebido_em:new Date().toISOString()}).eq('id',_pedReceberId);
+
+  // Movimentar saldo
+  await Promise.all(itens.filter(it => it.produto_id && it.qtd).map(async it => {
+    const { data: cur1 } = await sb.from('est_saldo_local').select('saldo').eq('produto_id',it.produto_id).eq('local','ESTOQUE_LOJA').maybeSingle();
+    await sb.from('est_saldo_local').upsert({produto_id:it.produto_id,local:'ESTOQUE_LOJA',saldo:(cur1?.saldo??0)-it.qtd,updated_at:new Date().toISOString()});
+    if (_pedReceberSetor) {
+      const { data: cur2 } = await sb.from('est_saldo_local').select('saldo').eq('produto_id',it.produto_id).eq('local',_pedReceberSetor).maybeSingle();
+      await sb.from('est_saldo_local').upsert({produto_id:it.produto_id,local:_pedReceberSetor,saldo:(cur2?.saldo??0)+it.qtd,updated_at:new Date().toISOString()});
+    }
+  }));
+
   fecharModal('modal-receber');
   toast('Recebimento confirmado! ✅','ok');
   carregarMeusPedidos();

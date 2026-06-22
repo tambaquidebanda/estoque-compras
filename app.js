@@ -3406,12 +3406,23 @@ async function confirmarEdicaoPedido() {
 
 let _pedReceberId    = null;
 let _pedReceberItens = [];
+let _pedReceberSetor = null;
+
+async function _movSaldo(produto_id, local, delta) {
+  if (!produto_id || !delta) return;
+  const { data: cur } = await sb.from('est_saldo_local')
+    .select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
+  const novoSaldo = (cur?.saldo ?? 0) + delta;
+  await sb.from('est_saldo_local')
+    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() });
+}
 
 async function abrirReceberPedido(pedidoId) {
   _pedReceberId = pedidoId;
   const { data: ped } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
   _pedReceberItens = itens || [];
+  _pedReceberSetor = ped?.setor || null;
 
   const rows = (itens || []).map(it => `<tr>
     <td>${esc(it.nome)}</td>
@@ -3456,13 +3467,12 @@ async function confirmarRecebimentoInv() {
     status: 'recebido', recebido_em: new Date().toISOString(),
   }).eq('id', _pedReceberId);
 
-  // Baixar saldo do ESTOQUE DA LOJA para cada item com produto cadastrado
+  // Movimentar saldo: diminui ESTOQUE_LOJA, aumenta setor
   await Promise.all(_pedReceberItens.filter(it => it.produto_id).map(async it => {
     const qtd = parseQtd(document.getElementById(`rec-qtd-${it.id}`)?.value);
     if (!qtd) return;
-    const { data: cur } = await sb.from('est_saldo').select('saldo').eq('produto_id', it.produto_id).maybeSingle();
-    const novoSaldo = Math.max(0, (cur?.saldo ?? 0) - qtd);
-    await sb.from('est_saldo').upsert({ produto_id: it.produto_id, saldo: novoSaldo, updated_at: new Date().toISOString() });
+    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', -qtd);
+    if (_pedReceberSetor) await _movSaldo(it.produto_id, _pedReceberSetor, +qtd);
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
@@ -4698,6 +4708,15 @@ async function confirmarRecebimento() {
   if (acrescimo !== (parseFloat(_recebItensAbertos[0]?.acrescimo) || 0)) {
     await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
   }
+
+  // Aumentar saldo ESTOQUE_LOJA para cada item recebido com produto cadastrado
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  await Promise.all(itensReceb.map(async it => {
+    if (!it.qtd_recebida) return;
+    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()));
+    if (!prod) return;
+    await _movSaldo(prod.id, 'ESTOQUE_LOJA', +it.qtd_recebida);
+  }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
   toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
@@ -7040,34 +7059,25 @@ async function selecionarGrupoSaldo(grupo) {
     return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', saldo: 0 };
   });
 
-  // Saldo ESTOQUE DA LOJA
+  // Setores fixos (sempre todos)
+  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA');
+  const todosLocais = ['ESTOQUE_LOJA', ..._saldoSetores];
+
+  // Saldo de todos os locais via est_saldo_local
   const ids = _saldoList.filter(p => p.produto_id).map(p => p.produto_id);
   const { data: saldos } = ids.length
-    ? await sb.from('est_saldo').select('produto_id,saldo').in('produto_id', ids)
+    ? await sb.from('est_saldo_local').select('produto_id,local,saldo').in('produto_id', ids)
     : { data: [] };
-  const saldoMap = {};
-  (saldos || []).forEach(s => { saldoMap[s.produto_id] = Number(s.saldo); });
-  _saldoList.forEach(p => { if (p.produto_id) p.saldo = saldoMap[p.produto_id] ?? 0; });
 
-  // Setores fixos (sempre todos)
-  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA)
-    .filter(s => s !== 'ESTOQUE DA LOJA');
-
-  // Última contagem de cada setor para este grupo
+  // Mapa: produto_id → { local → saldo }
   _saldoMatrix = {};
-  await Promise.all(_saldoSetores.map(async setor => {
-    const { data: invs } = await sb.from('est_inventarios')
-      .select('id').eq('setor', setor).eq('grupo', grupo)
-      .order('criado_em', { ascending: false }).limit(1);
-    if (!invs?.length) return;
-    const { data: itens } = await sb.from('est_inventario_itens')
-      .select('nome,produto_id,estoque').eq('inventario_id', invs[0].id);
-    (itens || []).forEach(it => {
-      const key = it.produto_id || norm(it.nome);
-      if (!_saldoMatrix[key]) _saldoMatrix[key] = {};
-      _saldoMatrix[key][setor] = it.estoque ?? 0;
-    });
-  }));
+  (saldos || []).forEach(s => {
+    if (!_saldoMatrix[s.produto_id]) _saldoMatrix[s.produto_id] = {};
+    _saldoMatrix[s.produto_id][s.local] = Number(s.saldo);
+  });
+  _saldoList.forEach(p => {
+    if (p.produto_id) p.saldo = _saldoMatrix[p.produto_id]?.['ESTOQUE_LOJA'] ?? 0;
+  });
 
   renderSaldo();
 }
@@ -7116,7 +7126,7 @@ function renderSaldo() {
     let total = p.saldo;
     const setorCells = _saldoSetores.map(s => {
       const cor = _SETOR_COR[s] || '#6c757d';
-      const val = _saldoMatrix[key]?.[s];
+      const val = p.produto_id ? (_saldoMatrix[p.produto_id]?.[s]) : undefined;
       if (val === undefined) return `<td class="text-center" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
       total += val;
       const numBg  = val <= 0 ? '#fff5f5' : bgRow;
@@ -7124,41 +7134,43 @@ function renderSaldo() {
       return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val}</td>`;
     }).join('');
 
-    const elBg    = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+    const elBg     = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
+    const elCor    = p.saldo <= 0 ? '#dc3545' : '#166534';
     const totalFmt = total % 1 === 0 ? String(total) : parseFloat(total).toFixed(3).replace(/\.?0+$/, '');
     const totalCor = total <= 0 ? '#dc3545' : '#b45309';
+
+    const elCell = p.produto_id
+      ? `<div class="d-flex align-items-center justify-content-center gap-1">
+           <span class="fw-bold" style="color:${elCor};min-width:36px">${saldoFmt}</span>
+           <button class="btn btn-link btn-sm p-0" style="color:#16a34a;font-size:.7rem;line-height:1"
+             title="Ajustar saldo" onclick="ajustarSaldoLocal('${p.produto_id}','ESTOQUE_LOJA','${esc(p.nome)}')">
+             ✏️
+           </button>
+         </div>`
+      : '<span class="text-muted">—</span>';
 
     return `<tr style="background:${bgRow}">
       <td style="padding:.6rem 1rem"><strong>${esc(p.nome)}</strong>${semProd}</td>
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
-      <td class="text-center" style="background:${elBg};border-left:3px solid #16a34a">
-        ${p.produto_id
-          ? `<input type="number" class="form-control form-control-sm text-center"
-              id="saldo-inp-${p.produto_id}" value="${saldoFmt}" min="0" step="1"
-              style="width:85px;margin:auto;border-color:#16a34a;font-weight:600"
-              onblur="salvarSaldoItem('${p.produto_id}',this)"
-              onkeydown="if(event.key==='Enter')this.blur()">`
-          : '<span class="text-muted">—</span>'}
-      </td>
+      <td class="text-center" style="background:${elBg};border-left:3px solid #16a34a">${elCell}</td>
       ${setorCells}
       <td class="text-center fw-bold" style="border-left:2px solid #ffc10733;color:${totalCor};font-size:1rem">${totalFmt}</td>
     </tr>`;
   }).join('');
 }
 
-async function salvarSaldoItem(produto_id, el) {
-  const saldo = parseQtd(el.value);
-  el.value = saldo % 1 === 0 ? String(saldo) : parseFloat(saldo).toFixed(3).replace(/\.?0+$/, '');
-
-  const { error } = await sb.from('est_saldo')
-    .upsert({ produto_id, saldo, updated_at: new Date().toISOString() });
-  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
-
+async function ajustarSaldoLocal(produto_id, local, nome) {
+  const atual = _saldoMatrix[produto_id]?.[local] ?? 0;
+  const novoStr = prompt(`Ajustar saldo de "${nome}" (${local})\nValor atual: ${atual}\n\nNovo saldo:`, atual);
+  if (novoStr === null) return;
+  const novoSaldo = parseQtd(novoStr);
+  const { error } = await sb.from('est_saldo_local')
+    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() });
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  if (!_saldoMatrix[produto_id]) _saldoMatrix[produto_id] = {};
+  _saldoMatrix[produto_id][local] = novoSaldo;
   const item = _saldoList.find(p => p.produto_id === produto_id);
-  if (item) {
-    item.saldo = saldo;
-    const td = el.closest('td');
-    if (td) td.style.background = saldo <= 0 ? '#fff5f5' : '#f0fdf4';
-  }
-  toast('Saldo salvo.', 'ok');
+  if (item && local === 'ESTOQUE_LOJA') item.saldo = novoSaldo;
+  toast('Saldo ajustado.', 'ok');
+  renderSaldo();
 }
