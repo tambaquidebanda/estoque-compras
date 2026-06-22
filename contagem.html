@@ -352,6 +352,37 @@
       padding: .85rem; cursor: pointer; margin-bottom: 0;
     }
     .btn-primary-full:disabled { opacity: .5; cursor: default; }
+
+    /* ── PIN PAD ── */
+    .pin-display {
+      display: flex; justify-content: center; gap: .9rem; margin: 1rem 0 .5rem;
+    }
+    .pin-dot {
+      width: 15px; height: 15px; border-radius: 50%;
+      border: 2px solid var(--borda); background: transparent; transition: background .1s;
+    }
+    .pin-dot.cheio { background: var(--verde); border-color: var(--verde); }
+    .pin-dot.erro  { background: var(--danger); border-color: var(--danger); }
+    .pin-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: .5rem; max-width: 260px; margin: .75rem auto 0;
+    }
+    .pin-key {
+      background: var(--card); border: 1px solid var(--borda); border-radius: 14px;
+      color: var(--txt); font-size: 1.5rem; font-weight: 600;
+      padding: .9rem; cursor: pointer; text-align: center; transition: background .1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .pin-key:active { background: var(--borda); }
+    .pin-key.del  { font-size: 1.1rem; color: var(--txt2); }
+    .pin-key.ok   { background: var(--verde); color: #fff; border-color: var(--verde); }
+    .pin-key.ok:active { opacity: .8; }
+    .pin-nome { text-align: center; font-weight: 700; font-size: 1.05rem; margin-bottom: .25rem; }
+    .pin-erro { color: var(--danger); text-align: center; font-size: .82rem; min-height: 1.1em; margin-top: .5rem; }
+    .pin-cancelar {
+      width: 100%; background: none; border: none; color: var(--txt2);
+      padding: .9rem; font-size: .9rem; cursor: pointer; margin-top: .25rem;
+    }
   </style>
 </head>
 <body>
@@ -414,12 +445,12 @@
       <div id="setor-grid">
         <div class="section-titulo">Selecione o Setor</div>
         <div class="setor-grid">
-          <button class="setor-btn" onclick="selecionarSetor('CHURRASQUEIRA')">🔥<br>Churrasqueira</button>
-          <button class="setor-btn" onclick="selecionarSetor('COZINHA')">🍳<br>Cozinha</button>
-          <button class="setor-btn" onclick="selecionarSetor('BAR')">🍹<br>Bar</button>
-          <button class="setor-btn" onclick="selecionarSetor('SALAO')">🪑<br>Salão</button>
-          <button class="setor-btn" onclick="selecionarSetor('ASG')">🧹<br>ASG</button>
-          <button class="setor-btn" onclick="selecionarSetor('DELIVERY')">🛵<br>Delivery</button>
+          <button class="setor-btn" onclick="pedirPinSetor('CHURRASQUEIRA')">🔥<br>Churrasqueira</button>
+          <button class="setor-btn" onclick="pedirPinSetor('COZINHA')">🍳<br>Cozinha</button>
+          <button class="setor-btn" onclick="pedirPinSetor('BAR')">🍹<br>Bar</button>
+          <button class="setor-btn" onclick="pedirPinSetor('SALAO')">🪑<br>Salão</button>
+          <button class="setor-btn" onclick="pedirPinSetor('ASG')">🧹<br>ASG</button>
+          <button class="setor-btn" onclick="pedirPinSetor('DELIVERY')">🛵<br>Delivery</button>
         </div>
       </div>
 
@@ -505,6 +536,37 @@
       <span class="nav-icon">📦</span><span>Pedidos</span>
     </button>
   </nav>
+</div>
+
+<!-- ══ MODAL: PIN ══ -->
+<div id="modal-pin" class="modal-overlay" style="display:none">
+  <div class="modal-sheet" style="max-width:340px;margin:auto">
+    <div class="modal-handle"></div>
+    <div class="pin-nome" id="pin-nome-setor"></div>
+    <p style="text-align:center;color:var(--txt2);font-size:.82rem;margin:.25rem 0 0">Digite o PIN de acesso</p>
+    <div class="pin-display">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
+    </div>
+    <p class="pin-erro" id="pin-erro"></p>
+    <div class="pin-grid">
+      <button class="pin-key" onclick="pinKey('1')">1</button>
+      <button class="pin-key" onclick="pinKey('2')">2</button>
+      <button class="pin-key" onclick="pinKey('3')">3</button>
+      <button class="pin-key" onclick="pinKey('4')">4</button>
+      <button class="pin-key" onclick="pinKey('5')">5</button>
+      <button class="pin-key" onclick="pinKey('6')">6</button>
+      <button class="pin-key" onclick="pinKey('7')">7</button>
+      <button class="pin-key" onclick="pinKey('8')">8</button>
+      <button class="pin-key" onclick="pinKey('9')">9</button>
+      <button class="pin-key del" onclick="pinDel()">⌫</button>
+      <button class="pin-key" onclick="pinKey('0')">0</button>
+      <button class="pin-key ok" onclick="pinConfirm()">✓</button>
+    </div>
+    <button class="pin-cancelar" onclick="fecharModal('modal-pin')">Cancelar</button>
+  </div>
 </div>
 
 <!-- ══ MODAL: LIBERAR ══ -->
@@ -630,6 +692,10 @@ let _grupoProds    = [];
 let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop)
 let _excluidos     = new Set();
 let _pedLiberarId  = null, _pedReceberId = null;
+let _pins              = {};
+let _pinBuffer         = '';
+let _pinTarget         = null;   // { tipo: 'setor'|'estoque', setor?: string }
+let _estoqueDesbloqueado = false;
 
 // ─── HELPERS ─────────────────────────────────────────────────────
 function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
@@ -694,11 +760,12 @@ async function entrar() {
 
 async function carregarMapeamentos() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins']);
   if (data) {
     data.forEach(row => {
       if (row.chave === 'mapeamentos') _mapeamentos = row.valor || {};
       if (row.chave === 'excluidos')   _excluidos   = new Set(row.valor || []);
+      if (row.chave === 'pins')        _pins        = row.valor || {};
     });
   }
 }
@@ -751,14 +818,88 @@ function showMainTab(tab) {
   document.getElementById('rodape-contagem').style.display = tab === 'contagem' ? 'flex'  : 'none';
   document.getElementById('nav-contagem').className = 'nav-btn' + (tab === 'contagem' ? ' ativo' : '');
   document.getElementById('nav-pedidos').className  = 'nav-btn' + (tab === 'pedidos'  ? ' ativo' : '');
-  if (tab === 'pedidos') carregarPedidosEstoque();
+  if (tab === 'pedidos') showSubTab('meus');
 }
 function showSubTab(tab) {
-  document.getElementById('subtab-content-estoque').style.display = tab === 'estoque' ? 'block' : 'none';
-  document.getElementById('subtab-content-meus').style.display    = tab === 'meus'    ? 'block' : 'none';
-  document.getElementById('subtab-estoque').className = 'subtab' + (tab === 'estoque' ? ' ativo' : '');
-  document.getElementById('subtab-meus').className    = 'subtab' + (tab === 'meus'    ? ' ativo' : '');
-  if (tab === 'meus') carregarMeusPedidos();
+  if (tab === 'estoque') { pedirPinEstoque(); return; }
+  document.getElementById('subtab-content-estoque').style.display = 'none';
+  document.getElementById('subtab-content-meus').style.display    = 'block';
+  document.getElementById('subtab-estoque').className = 'subtab';
+  document.getElementById('subtab-meus').className    = 'subtab ativo';
+  carregarMeusPedidos();
+}
+function _abrirSubTabEstoque() {
+  document.getElementById('subtab-content-estoque').style.display = 'block';
+  document.getElementById('subtab-content-meus').style.display    = 'none';
+  document.getElementById('subtab-estoque').className = 'subtab ativo';
+  document.getElementById('subtab-meus').className    = 'subtab';
+  carregarPedidosEstoque();
+}
+
+// ─── PIN ─────────────────────────────────────────────────────────
+function pedirPinSetor(setor) {
+  const pin = _pins[setor];
+  if (!pin) { selecionarSetor(setor); return; }
+  _pinTarget = { tipo: 'setor', setor };
+  _pinBuffer = '';
+  document.getElementById('pin-nome-setor').textContent = `🔐 ${setor.charAt(0) + setor.slice(1).toLowerCase()}`;
+  document.getElementById('pin-erro').textContent = '';
+  atualizarPinDisplay();
+  mostrarModal('modal-pin');
+}
+function pedirPinEstoque() {
+  if (_estoqueDesbloqueado) { _abrirSubTabEstoque(); return; }
+  const pin = _pins['ESTOQUE'];
+  if (!pin) { _abrirSubTabEstoque(); return; }
+  _pinTarget = { tipo: 'estoque' };
+  _pinBuffer = '';
+  document.getElementById('pin-nome-setor').textContent = '🔐 Pedidos dos Setores';
+  document.getElementById('pin-erro').textContent = '';
+  atualizarPinDisplay();
+  mostrarModal('modal-pin');
+}
+function pinKey(d) {
+  if (_pinBuffer.length >= 4) return;
+  _pinBuffer += d;
+  atualizarPinDisplay();
+  if (_pinBuffer.length === 4) setTimeout(pinConfirm, 80);
+}
+function pinDel() {
+  _pinBuffer = _pinBuffer.slice(0, -1);
+  atualizarPinDisplay();
+}
+function atualizarPinDisplay() {
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById('pd' + i);
+    el.className = 'pin-dot' + (i < _pinBuffer.length ? ' cheio' : '');
+  }
+}
+function pinConfirm() {
+  if (!_pinTarget) return;
+  const esperado = _pinTarget.tipo === 'setor'
+    ? _pins[_pinTarget.setor]
+    : _pins['ESTOQUE'];
+  if (_pinBuffer === esperado) {
+    fecharModal('modal-pin');
+    if (_pinTarget.tipo === 'setor') {
+      selecionarSetor(_pinTarget.setor);
+    } else {
+      _estoqueDesbloqueado = true;
+      _abrirSubTabEstoque();
+    }
+    _pinTarget = null; _pinBuffer = '';
+  } else {
+    document.getElementById('pin-erro').textContent = 'PIN incorreto. Tente novamente.';
+    for (let i = 0; i < 4; i++) {
+      const el = document.getElementById('pd' + i);
+      el.className = 'pin-dot erro';
+    }
+    _pinBuffer = '';
+    setTimeout(() => {
+      document.getElementById('pin-erro').textContent = '';
+      atualizarPinDisplay();
+    }, 900);
+  }
 }
 
 // ─── SETOR / GRUPO ───────────────────────────────────────────────
