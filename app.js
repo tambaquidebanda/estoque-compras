@@ -2664,7 +2664,7 @@ function abrirEditarPadroes() {
         <td class="small">${esc(p.nome)}</td>
         <td class="text-center">
           <input type="number" class="form-control form-control-sm text-center"
-            id="pad-${d}-${pi}" min="0" step="0.001" value="${val}" placeholder="—" style="width:100px;margin:auto">
+            id="pad-${d}-${pi}" min="0" step="1" value="${val}" placeholder="—" style="width:100px;margin:auto">
         </td>
       </tr>`;
     }).join('');
@@ -2674,22 +2674,24 @@ function abrirEditarPadroes() {
     ).join('');
 
     return `<div class="tab-pane fade ${i === 0 ? 'show active' : ''}" id="pad-tab-${d}">
-      <table class="table table-sm align-middle mb-0">
-        <thead style="background:#f8f9fa;position:sticky;top:0">
-          <tr><th>Produto</th><th class="text-center">Qtd. Padrão</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="d-flex flex-wrap gap-2 align-items-center p-2 border-top bg-light">
+      <div class="d-flex flex-wrap gap-2 align-items-center px-2 py-2 border-bottom bg-light">
         <small class="text-muted fw-semibold">📋 Replicar para:</small>
         ${copyBtns}
+      </div>
+      <div style="max-height:48vh;overflow-y:auto">
+        <table class="table table-sm align-middle mb-0">
+          <thead style="background:#f8f9fa;position:sticky;top:0">
+            <tr><th>Produto</th><th class="text-center">Qtd. Padrão</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
       </div>
     </div>`;
   }).join('');
 
   document.getElementById('lista-padroes').innerHTML =
-    `<ul class="nav nav-tabs mb-2 flex-wrap">${navTabs}</ul>
-     <div class="tab-content" style="max-height:55vh;overflow-y:auto">${tabPanes}</div>`;
+    `<ul class="nav nav-tabs mb-0 flex-wrap">${navTabs}</ul>
+     <div class="tab-content">${tabPanes}</div>`;
 
   new bootstrap.Modal(document.getElementById('modal-padroes')).show();
 }
@@ -2705,7 +2707,7 @@ async function salvarPadroes() {
       if (!input) return;
       const val = input.value.trim();
       if (val === '') delete _invPadroes[key][d];
-      else _invPadroes[key][d] = parseFloat(val) || 0;
+      else _invPadroes[key][d] = parseQtd(val);
     });
     if (Object.keys(_invPadroes[key]).length === 0) delete _invPadroes[key];
   });
