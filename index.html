@@ -1028,9 +1028,14 @@
     <section id="pg-inventario" class="pagina">
       <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
         <h1 class="mb-0">📋 Contagem/Pedido</h1>
-        <button class="btn btn-danger" onclick="abrirEmergencia()">
-          🚨 Pedido de Emergência
-        </button>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" onclick="abrirConfigurarPins()">
+            🔐 PINs Mobile
+          </button>
+          <button class="btn btn-danger" onclick="abrirEmergencia()">
+            🚨 Pedido de Emergência
+          </button>
+        </div>
       </div>
 
       <ul class="nav nav-tabs mb-3" role="tablist">
@@ -1113,6 +1118,8 @@
             style="border-radius:20px">🧹 ASG</button>
           <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('DELIVERY')" data-setor="DELIVERY"
             style="border-radius:20px">🛵 Delivery</button>
+          <button class="btn btn-outline-secondary inv-setor-btn" onclick="selecionarSetorInv('ESTOQUE DA LOJA')" data-setor="ESTOQUE DA LOJA"
+            style="border-radius:20px">🏪 Estoque da Loja</button>
         </div>
       </div>
 
@@ -1208,6 +1215,7 @@
                 <option value="SALAO">🪑 Salão</option>
                 <option value="ASG">🧹 ASG</option>
                 <option value="DELIVERY">🛵 Delivery</option>
+                <option value="ESTOQUE DA LOJA">🏪 Estoque da Loja</option>
               </select>
               <select class="form-select form-select-sm" id="fil-ped-status" style="width:145px"
                 onchange="carregarPedidosInternos()">
@@ -1237,6 +1245,7 @@
                 <option value="SALAO">🪑 Salão</option>
                 <option value="ASG">🧹 ASG</option>
                 <option value="DELIVERY">🛵 Delivery</option>
+                <option value="ESTOQUE DA LOJA">🏪 Estoque da Loja</option>
               </select>
               <select class="form-select form-select-sm" id="fil-meus-status" style="width:145px"
                 onchange="carregarMeusPedidos()">
@@ -1278,6 +1287,59 @@
               <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
               <button class="btn btn-primary" onclick="salvarPadroes()">
                 <i class="bi bi-floppy-fill"></i> Salvar Padrões
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Configurar PINs Mobile -->
+      <div class="modal fade" id="modal-pins" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#1a1a2e;color:#fff">
+              <h5 class="modal-title">🔐 PINs de Acesso Mobile</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <p class="text-muted small mb-3">4 dígitos por setor. Deixe vazio para não exigir PIN naquele setor.</p>
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🔥 Churrasqueira</label>
+                  <input type="text" class="form-control" id="pin-CHURRASQUEIRA" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🍳 Cozinha</label>
+                  <input type="text" class="form-control" id="pin-COZINHA" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🍹 Bar</label>
+                  <input type="text" class="form-control" id="pin-BAR" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🪑 Salão</label>
+                  <input type="text" class="form-control" id="pin-SALAO" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🧹 ASG</label>
+                  <input type="text" class="form-control" id="pin-ASG" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">🛵 Delivery</label>
+                  <input type="text" class="form-control" id="pin-DELIVERY" maxlength="4" placeholder="—" inputmode="numeric">
+                </div>
+                <div class="col-12"><hr class="my-2"></div>
+                <div class="col-12">
+                  <label class="form-label fw-semibold">📦 Estoque — Liberar Pedidos</label>
+                  <input type="text" class="form-control" id="pin-ESTOQUE" maxlength="4" placeholder="—" inputmode="numeric">
+                  <div class="form-text">Necessário para acessar a aba "Pedidos dos Setores" no celular.</div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+              <button class="btn btn-primary" onclick="salvarPins()">
+                <i class="bi bi-floppy-fill"></i> Salvar PINs
               </button>
             </div>
           </div>
@@ -1345,6 +1407,7 @@
                   <option value="SALAO">🪑 Salão</option>
                   <option value="ASG">🧹 ASG</option>
                   <option value="DELIVERY">🛵 Delivery</option>
+                  <option value="ESTOQUE DA LOJA">🏪 Estoque da Loja</option>
                 </select>
               </div>
               <div class="mb-3">

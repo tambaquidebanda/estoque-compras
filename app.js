@@ -2308,6 +2308,23 @@ const INVENTARIO_ESTRUTURA = {
   }
 };
 
+// Gera o setor "ESTOQUE DA LOJA" mesclando todos os setores, deduplicando por grupo
+(function() {
+  const _n = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  const forceMerge = { 'material expediente': 'MATERIAL DE EXPEDIENTE' };
+  const result = {}, seen = {}, normToCanonical = {};
+  Object.values(INVENTARIO_ESTRUTURA).forEach(setorGrupos => {
+    Object.entries(setorGrupos).forEach(([grupo, prods]) => {
+      const ng = _n(grupo);
+      const canonical = forceMerge[ng] || normToCanonical[ng] || grupo;
+      if (!normToCanonical[ng]) normToCanonical[ng] = canonical;
+      if (!result[canonical]) { result[canonical] = []; seen[canonical] = new Set(); }
+      prods.forEach(p => { const np = _n(p); if (!seen[canonical].has(np)) { result[canonical].push(p); seen[canonical].add(np); } });
+    });
+  });
+  INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = result;
+})();
+
 let _invLocal        = 'Centro';
 let _invSetor        = null;
 let _invGrupo        = null;
@@ -3189,6 +3206,28 @@ async function enviarEmergencia() {
 
   bootstrap.Modal.getInstance(document.getElementById('modal-emergencia'))?.hide();
   toast(`${numPed} (emergência) enviado! ✅`, 'ok');
+}
+
+// ─── PINs Mobile ─────────────────────────────────────────────────
+async function abrirConfigurarPins() {
+  const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave','pins').single();
+  const pinsAtual = data?.valor || {};
+  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE'].forEach(s => {
+    const el = document.getElementById(`pin-${s}`);
+    if (el) el.value = pinsAtual[s] || '';
+  });
+  new bootstrap.Modal(document.getElementById('modal-pins')).show();
+}
+
+async function salvarPins() {
+  const pins = {};
+  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE'].forEach(s => {
+    const val = document.getElementById(`pin-${s}`)?.value?.trim();
+    if (val) pins[s] = val;
+  });
+  await sb.from('inv_configuracoes').upsert({ chave: 'pins', valor: pins });
+  bootstrap.Modal.getInstance(document.getElementById('modal-pins'))?.hide();
+  toast('PINs salvos! ✅', 'ok');
 }
 
 // Importação de planilha para o inventário

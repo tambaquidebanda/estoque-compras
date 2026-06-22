@@ -451,6 +451,7 @@
           <button class="setor-btn" onclick="pedirPinSetor('SALAO')">🪑<br>Salão</button>
           <button class="setor-btn" onclick="pedirPinSetor('ASG')">🧹<br>ASG</button>
           <button class="setor-btn" onclick="pedirPinSetor('DELIVERY')">🛵<br>Delivery</button>
+          <button class="setor-btn" onclick="pedirPinSetor('ESTOQUE DA LOJA')" style="grid-column:1/-1;background:rgba(99,102,241,.15);border-color:rgba(99,102,241,.4)">🏪<br>Estoque da Loja</button>
         </div>
       </div>
 
@@ -490,6 +491,7 @@
             <option>SALAO</option>
             <option>ASG</option>
             <option>DELIVERY</option>
+            <option>ESTOQUE DA LOJA</option>
           </select>
           <button class="btn-refresh" onclick="carregarPedidosEstoque()">↺</button>
         </div>
@@ -506,6 +508,7 @@
             <option>SALAO</option>
             <option>ASG</option>
             <option>DELIVERY</option>
+            <option>ESTOQUE DA LOJA</option>
           </select>
           <select id="fil-meus-status" onchange="carregarMeusPedidos()">
             <option value="">Todos</option>
@@ -610,6 +613,7 @@
         <option>SALAO</option>
         <option>ASG</option>
         <option>DELIVERY</option>
+        <option>ESTOQUE DA LOJA</option>
       </select>
       <label>Produto</label>
       <input type="text" id="emerg-busca" placeholder="Buscar produto..." oninput="buscarEmerg()"
@@ -677,6 +681,23 @@ const INVENTARIO_ESTRUTURA = {
     "DESCARTAVEL": ["MC GARFO REFEIÇÃO","MC COLHER REFEIÇÃO DESCARTAVEIS","MC FACA REFEIÇÃO","MC PRATO DESCARTAVEL","MC SACOLA BRANCA 8KG","MC FITA DUREX 50X50","MC COPO DESCARTAVEL 300ML","MC GUARDANAPO DE PAPEL"]
   }
 };
+
+// Gera o setor "ESTOQUE DA LOJA" mesclando todos os setores, deduplicando por grupo
+(function() {
+  const _n = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  const forceMerge = { 'material expediente': 'MATERIAL DE EXPEDIENTE' };
+  const result = {}, seen = {}, normToCanonical = {};
+  Object.values(INVENTARIO_ESTRUTURA).forEach(setorGrupos => {
+    Object.entries(setorGrupos).forEach(([grupo, prods]) => {
+      const ng = _n(grupo);
+      const canonical = forceMerge[ng] || normToCanonical[ng] || grupo;
+      if (!normToCanonical[ng]) normToCanonical[ng] = canonical;
+      if (!result[canonical]) { result[canonical] = []; seen[canonical] = new Set(); }
+      prods.forEach(p => { const np = _n(p); if (!seen[canonical].has(np)) { result[canonical].push(p); seen[canonical].add(np); } });
+    });
+  });
+  INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = result;
+})();
 
 // ─── ESTADO ──────────────────────────────────────────────────────
 const DIAS_SEM = ['dom','seg','ter','qua','qui','sex','sab'];
