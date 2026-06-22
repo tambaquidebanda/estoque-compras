@@ -642,19 +642,13 @@
     <div class="modal-handle"></div>
     <div class="modal-titulo">🚨 Pedido de Emergência</div>
     <div class="modal-body-scroll">
-      <label>Setor</label>
-      <select id="emerg-setor">
-        <option value="">Selecionar...</option>
-        <option>CHURRASQUEIRA</option>
-        <option>COZINHA</option>
-        <option>BAR</option>
-        <option>SALAO</option>
-        <option>ASG</option>
-        <option>DELIVERY</option>
-        <option>ESTOQUE DA LOJA</option>
-      </select>
+      <div style="font-size:.78rem;color:var(--txt2);margin-bottom:1rem">
+        Setor: <strong id="emerg-setor-nome" style="color:var(--txt)"></strong>
+      </div>
+      <label>Grupo</label>
+      <div class="grupos-scroll" id="emerg-grupos" style="margin-bottom:.9rem"></div>
       <label>Produto</label>
-      <input type="text" id="emerg-busca" placeholder="Buscar produto..." oninput="buscarEmerg()"
+      <input type="text" id="emerg-busca" placeholder="Digite para buscar..." oninput="buscarEmerg()"
         autocomplete="off" autocorrect="off" spellcheck="false">
       <div id="emerg-sugestoes" class="sug-wrap" style="display:none"></div>
       <input type="hidden" id="emerg-prod-id">
@@ -662,15 +656,13 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
         <div>
           <label>Quantidade</label>
-          <input type="number" id="emerg-qtd" min="1" step="1" placeholder="0" inputmode="decimal">
+          <input type="number" id="emerg-qtd" min="0" step="1" placeholder="0" inputmode="decimal">
         </div>
         <div>
-          <label>Responsável</label>
-          <input type="text" id="emerg-resp" placeholder="Nome">
+          <label>Obs. <span style="font-weight:400;font-size:.75rem">(opcional)</span></label>
+          <input type="text" id="emerg-obs" placeholder="Motivo">
         </div>
       </div>
-      <label>Obs. <span style="color:var(--txt2);font-weight:400">(opcional)</span></label>
-      <input type="text" id="emerg-obs" placeholder="Motivo do pedido">
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="fecharModal('modal-emerg')">Cancelar</button>
@@ -1444,8 +1436,16 @@ async function confirmarRecebimento() {
 }
 
 // ─── EMERGÊNCIA ──────────────────────────────────────────────────
+let _emergGrupo   = null;
+let _emergProdId  = null;
+let _emergProdNome = null;
+
 function abrirEmergencia() {
-  if (_setor) document.getElementById('emerg-setor').value = _setor;
+  if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
+  _emergGrupo    = null;
+  _emergProdId   = null;
+  _emergProdNome = null;
+  document.getElementById('emerg-setor-nome').textContent = _setor;
   document.getElementById('emerg-busca').value = '';
   document.getElementById('emerg-prod-id').value = '';
   document.getElementById('emerg-sugestoes').innerHTML = '';
@@ -1453,49 +1453,88 @@ function abrirEmergencia() {
   document.getElementById('emerg-prod-sel').style.display  = 'none';
   document.getElementById('emerg-qtd').value = '';
   document.getElementById('emerg-obs').value = '';
-  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  document.getElementById('emerg-resp').value = resp;
+  _renderEmergGrupos();
   mostrarModal('modal-emerg');
 }
+
+function _renderEmergGrupos() {
+  const grupos = Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
+  document.getElementById('emerg-grupos').innerHTML = grupos.map(g =>
+    `<button class="grupo-chip${g === _emergGrupo ? ' ativo' : ''}"
+      onclick="_selecionarEmergGrupo('${g.replace(/'/g,"\\'")}')">${esc(g)}</button>`
+  ).join('');
+}
+
+function _selecionarEmergGrupo(grupo) {
+  _emergGrupo    = grupo;
+  _emergProdId   = null;
+  _emergProdNome = null;
+  document.getElementById('emerg-busca').value = '';
+  document.getElementById('emerg-prod-sel').style.display = 'none';
+  document.getElementById('emerg-sugestoes').style.display = 'none';
+  _renderEmergGrupos();
+}
+
 function buscarEmerg() {
-  const q  = (document.getElementById('emerg-busca')?.value||'').trim().toLowerCase();
+  const q  = norm(document.getElementById('emerg-busca')?.value || '');
   const el = document.getElementById('emerg-sugestoes');
-  if (q.length < 2) { el.style.display='none'; el.innerHTML=''; return; }
-  const hits = _todosProdutos.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 8);
-  if (!hits.length) { el.innerHTML='<div class="sug-item">Nenhum produto encontrado.</div>'; el.style.display='block'; return; }
-  el.innerHTML = hits.map(p=>`<div class="sug-item" onclick="selProdEmerg('${p.id}','${esc(p.nome)}')">${esc(p.nome)}</div>`).join('');
+  if (q.length < 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
+
+  // Produtos candidatos: grupo selecionado → produtos do grupo; sem grupo → todos do setor
+  let candidatos = [];
+  const grupos = _emergGrupo
+    ? [_emergGrupo]
+    : Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
+  grupos.forEach(grp => {
+    (INVENTARIO_ESTRUTURA[_setor]?.[grp] || []).forEach(nome => {
+      if (!candidatos.some(c => c.nome === nome)) {
+        const nomeReal = _mapeamentos[nome] || nome;
+        const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
+        candidatos.push({ nome, produto_id: prod?.id || null });
+      }
+    });
+  });
+
+  const hits = candidatos.filter(c => norm(c.nome).includes(q)).slice(0, 8);
+  if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
+  el.innerHTML = hits.map(c =>
+    `<div class="sug-item" onclick="_selProdEmerg('${esc(c.produto_id||'')}','${esc(c.nome)}')">${esc(c.nome)}</div>`
+  ).join('');
   el.style.display = 'block';
 }
-function selProdEmerg(id, nome) {
-  document.getElementById('emerg-prod-id').value  = id;
-  document.getElementById('emerg-busca').value    = nome;
+
+function _selProdEmerg(id, nome) {
+  _emergProdId   = id;
+  _emergProdNome = nome;
+  document.getElementById('emerg-prod-id').value = id;
+  document.getElementById('emerg-busca').value   = nome;
   document.getElementById('emerg-sugestoes').style.display = 'none';
   const el = document.getElementById('emerg-prod-sel');
-  el.textContent    = '✅ ' + nome;
-  el.style.display  = 'block';
+  el.textContent   = '✅ ' + nome;
+  el.style.display = 'block';
 }
+
 async function enviarEmergencia() {
-  const setor    = document.getElementById('emerg-setor')?.value?.trim();
-  const prodId   = document.getElementById('emerg-prod-id')?.value?.trim();
-  const prodNome = document.getElementById('emerg-busca')?.value?.trim();
+  const prodNome = _emergProdNome || document.getElementById('emerg-busca')?.value?.trim();
+  const prodId   = _emergProdId  || document.getElementById('emerg-prod-id')?.value?.trim();
   const qtd      = parseQtd(document.getElementById('emerg-qtd')?.value);
-  const resp     = (document.getElementById('emerg-resp')?.value||'').trim();
-  const obs      = (document.getElementById('emerg-obs')?.value||'').trim();
-  if (!setor)    { toast('Selecione o setor.','err');    return; }
-  if (!prodNome) { toast('Selecione um produto.','err'); return; }
-  if (qtd <= 0)  { toast('Informe a quantidade.','err'); return; }
-  const data = new Date().toISOString().slice(0,10);
+  const obs      = (document.getElementById('emerg-obs')?.value || '').trim();
+  const resp     = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  if (!prodNome) { toast('Selecione um produto.', 'err'); return; }
+  if (qtd <= 0)  { toast('Informe a quantidade.', 'err'); return; }
+  const data = new Date().toISOString().slice(0, 10);
   const { data: ultPeds } = await sb.from('pedidos_internos').select('num_pedido').order('criado_em',{ascending:false}).limit(1);
   const ultN = ultPeds?.[0]?.num_pedido ? parseInt(ultPeds[0].num_pedido.replace(/\D/g,''))||0 : 0;
   const num_pedido = 'PED-' + String(ultN+1).padStart(4,'0');
   const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
-    num_pedido, data, dia_semana:_feriado?'feriado':_dia,
-    setor, local:_local, tipo:'emergencia', status:'pendente', responsavel:resp, obs,
+    num_pedido, data, dia_semana: _feriado ? 'feriado' : _dia,
+    setor: _setor, local: _local, tipo: 'emergencia', status: 'pendente', responsavel: resp,
+    obs: obs || (_emergGrupo ? `${_emergGrupo} — emergência` : 'emergência'),
   }).select().single();
-  if (e1) { toast('Erro: '+e1.message,'err'); return; }
-  await sb.from('pedidos_internos_itens').insert({ pedido_id:ped.id, produto_id:prodId||null, nome:prodNome, qtd_pedida:qtd });
+  if (e1) { toast('Erro: ' + e1.message, 'err'); return; }
+  await sb.from('pedidos_internos_itens').insert({ pedido_id: ped.id, produto_id: prodId || null, nome: prodNome, qtd_pedida: qtd });
   fecharModal('modal-emerg');
-  toast(`${num_pedido} (emergência) enviado! ✅`,'ok');
+  toast(`${num_pedido} (emergência) enviado! ✅`, 'ok');
 }
 </script>
 </body>
