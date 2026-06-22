@@ -262,14 +262,15 @@
     .ped-table td { padding: .38rem .6rem; border-top: 1px solid var(--borda); vertical-align: middle; }
     .ped-table th:first-child, .ped-table td:first-child { padding-left: .85rem; }
     .ped-table th:not(:first-child), .ped-table td:not(:first-child) { text-align: center; white-space: nowrap; }
-    .btn-liberar, .btn-receber {
+    .btn-liberar, .btn-receber, .btn-editar {
       width: calc(100% - 1.7rem); margin: .6rem .85rem; display: block;
       border: none; border-radius: 10px; font-size: .88rem; font-weight: 700;
       padding: .65rem; cursor: pointer; transition: opacity .15s;
     }
     .btn-liberar { background: #198754; color: #fff; }
     .btn-receber { background: var(--blue); color: #fff; }
-    .btn-liberar:active, .btn-receber:active { opacity: .8; }
+    .btn-editar  { background: #6c757d; color: #fff; }
+    .btn-liberar:active, .btn-receber:active, .btn-editar:active { opacity: .8; }
 
     /* ── MODAIS (bottom sheet) ── */
     .modal-overlay {
@@ -617,6 +618,19 @@
     <div class="modal-footer">
       <button class="btn-cancel" onclick="fecharModal('modal-receber')">Cancelar</button>
       <button class="btn-confirm blue" onclick="confirmarRecebimento()">✅ Confirmar Recebimento</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: EDITAR PEDIDO ══ -->
+<div id="modal-editar-mob" class="modal-overlay" style="display:none" onclick="fecharSePano(event,'modal-editar-mob')">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-titulo">✏️ Editar Pedido</div>
+    <div class="modal-body-scroll" id="modal-editar-mob-body"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="fecharModal('modal-editar-mob')">Cancelar</button>
+      <button class="btn-confirm blue" onclick="confirmarEdicaoMob()">💾 Salvar</button>
     </div>
   </div>
 </div>
@@ -1228,6 +1242,7 @@ function _cardMeusPedidos(ped, its) {
       <span class="badge-status" style="background:${cor};color:${ped.status==='pendente'?'#000':'#fff'}">${txt}</span>
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th><th>Rec.</th></tr></thead><tbody>${rows}</tbody></table>
+    ${ped.status==='pendente'?`<button class="btn-editar" onclick="abrirEditarPedidoMob('${ped.id}')">✏️ Editar Pedido</button>`:''}
     ${ped.status==='liberado'?`<button class="btn-receber" onclick="abrirReceberPedido('${ped.id}')">✅ Confirmar Recebimento</button>`:''}
   </div>`;
 }
@@ -1270,6 +1285,39 @@ async function cancelarPedidoInterno(id, num) {
   if (error) { toast('Erro ao cancelar: ' + error.message, 'err'); return; }
   toast(`${num} cancelado.`, 'ok');
   carregarPedidosEstoque();
+}
+
+// ─── MODAL EDITAR PEDIDO ─────────────────────────────────────────
+let _pedEditarMobId = null;
+
+async function abrirEditarPedidoMob(id) {
+  _pedEditarMobId = id;
+  const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
+  const rows = (itens||[]).map(it=>`<tr>
+    <td>${esc(it.nome)}</td>
+    <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${it.qtd_pedida??0}" min="0" step="1" inputmode="decimal"></td>
+  </tr>`).join('');
+  document.getElementById('modal-editar-mob-body').innerHTML = `
+    <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}${ped?.obs?' · '+esc(ped.obs):''}</div>
+    <table class="ped-table" style="margin-bottom:.75rem">
+      <thead><tr><th>Produto</th><th>Qtd. Pedida</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <input type="hidden" id="editm-itens" value='${JSON.stringify((itens||[]).map(i=>i.id))}'>`;
+  mostrarModal('modal-editar-mob');
+}
+
+async function confirmarEdicaoMob() {
+  if (!_pedEditarMobId) return;
+  const ids = JSON.parse(document.getElementById('editm-itens')?.value||'[]');
+  await Promise.all(ids.map(id => {
+    const qtd = parseQtd(document.getElementById(`editm-${id}`)?.value);
+    return sb.from('pedidos_internos_itens').update({qtd_pedida:qtd}).eq('id',id);
+  }));
+  fecharModal('modal-editar-mob');
+  toast('Pedido atualizado! ✅','ok');
+  carregarMeusPedidos();
 }
 
 // ─── MODAL RECEBER ───────────────────────────────────────────────

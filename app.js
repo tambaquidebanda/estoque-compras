@@ -3151,6 +3151,9 @@ function _renderMeusPedidos(peds, todosItens) {
         </div>
         <div class="d-flex align-items-center gap-2">
           ${_STATUS_PED[ped.status] || ped.status}
+          ${ped.status === 'pendente' ? `<button class="btn btn-sm btn-outline-secondary" onclick="abrirEditarPedido('${ped.id}')">
+            <i class="bi bi-pencil"></i> Editar
+          </button>` : ''}
           ${ped.status === 'liberado' ? `<button class="btn btn-sm btn-primary" onclick="abrirReceberPedido('${ped.id}')">
             <i class="bi bi-check-circle"></i> Confirmar Recebimento
           </button>` : ''}
@@ -3234,6 +3237,52 @@ async function confirmarLiberacao() {
   bootstrap.Modal.getInstance(document.getElementById('modal-liberar-pedido'))?.hide();
   toast('Pedido liberado! ✅', 'ok');
   carregarPedidosInternos();
+}
+
+let _pedEditarId = null;
+
+async function abrirEditarPedido(pedidoId) {
+  _pedEditarId = pedidoId;
+  const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+
+  const rows = (itens || []).map(it => `<tr>
+    <td>${esc(it.nome)}</td>
+    <td class="text-center" style="width:130px">
+      <input type="number" class="form-control form-control-sm text-center"
+        id="edit-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
+    </td>
+  </tr>`).join('');
+
+  document.getElementById('modal-editar-body').innerHTML = `
+    <div class="alert alert-secondary py-2 mb-3">
+      <strong>${esc(ped?.num_pedido || '—')}</strong> ·
+      ${esc(ped?.setor || '')} · ${esc(ped?.obs || '')} · ${ped?.data || ''}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light"><tr>
+          <th>Produto</th>
+          <th class="text-center">Qtd. Pedida</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <input type="hidden" id="edit-itens-ids" value='${JSON.stringify((itens || []).map(i => i.id))}'>`;
+
+  new bootstrap.Modal(document.getElementById('modal-editar-pedido')).show();
+}
+
+async function confirmarEdicaoPedido() {
+  if (!_pedEditarId) return;
+  const ids = JSON.parse(document.getElementById('edit-itens-ids')?.value || '[]');
+  await Promise.all(ids.map(id => {
+    const qtd = parseQtd(document.getElementById(`edit-qtd-${id}`)?.value);
+    return sb.from('pedidos_internos_itens').update({ qtd_pedida: qtd }).eq('id', id);
+  }));
+  bootstrap.Modal.getInstance(document.getElementById('modal-editar-pedido'))?.hide();
+  toast('Pedido atualizado!', 'ok');
+  carregarMeusPedidos();
 }
 
 let _pedReceberId    = null;

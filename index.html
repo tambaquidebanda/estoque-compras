@@ -1405,6 +1405,27 @@
         </div>
       </div>
 
+      <!-- Modal: Editar Pedido -->
+      <div class="modal fade" id="modal-editar-pedido" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#6c757d;color:#fff">
+              <h5 class="modal-title"><i class="bi bi-pencil-fill"></i> Editar Pedido</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-editar-body">
+              <p class="text-muted text-center py-3">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-warning" onclick="confirmarEdicaoPedido()">
+                <i class="bi bi-save-fill"></i> Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Modal: Pedido de Emergência -->
       <div class="modal fade" id="modal-emergencia" tabindex="-1">
         <div class="modal-dialog">
