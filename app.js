@@ -4967,64 +4967,50 @@ async function confirmarRecebimento() {
 
   // Verifica se já foi gerada conta no financeiro (Flow A)
   const { data: contaExist } = await sb.from('cmp_contas_pagar')
-    .select('id,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num).single();
+    .select('id,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
 
-  if (contaExist) {
-    // Já existe — atualiza com dados do recebimento
+  if (isCompExt) {
+    // ── COMPRADOR EXTERNO: acumula total de todos os recebimentos, não envia ao financeiro ainda
+    const { data: todosReceb } = await sb.from('cmp_recebimentos')
+      .select('total_recebido').eq('pedido_num', pedido_num);
+    const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+
+    if (contaExist) {
+      await sb.from('cmp_contas_pagar').update({
+        recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
+      }).eq('id', contaExist.id);
+    } else {
+      await sb.from('cmp_contas_pagar').insert([{
+        pedido_num, recebimento_id: receb.id,
+        fornecedor: ref?.fornecedor_nome || '',
+        data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
+      }]);
+    }
+  } else if (contaExist) {
+    // Fornecedor direto com conta já existente — atualiza valor
     await sb.from('cmp_contas_pagar').update({
-      recebimento_id: receb.id, data_receb: dataRec,
-      vencimento, valor: totalRecebido,
+      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalRecebido,
     }).eq('id', contaExist.id);
-    if (isCompExt && !contaExist.lancamento_id) {
-      // Detecta banco do adiantamento (Nubank=PIX, Caixa=Dinheiro)
-      let bancoDespesa = BANCO_NUBANK_ID;
-      if (contaExist.adiantamento_lancamento_id) {
-        const { data: adLanc } = await sb.from('lancamentos').select('banco_id').eq('id', contaExist.adiantamento_lancamento_id).single();
-        if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
-      }
-      await enviarDespesaCompExterno({
-        pedido_num, conta_id: contaExist.id, itensReceb,
-        totalRecebido, acrescimo, dataRec, vencimento,
-        fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
-        banco_id: bancoDespesa,
-      });
-    } else if (!isCompExt && contaExist.lancamento_id) {
-      // Fornecedor direto: sincroniza valor recebido com o lançamento no financeiro
-      await sb.from('lancamentos').update({
-        valor:     totalItens,
-        acrescimo: acrescimo,
-      }).eq('id', contaExist.lancamento_id);
+    if (contaExist.lancamento_id) {
+      await sb.from('lancamentos').update({ valor: totalItens, acrescimo }).eq('id', contaExist.lancamento_id);
     }
   } else {
-    // Flow B — cria a conta e integra ao financeiro
+    // Fornecedor direto sem conta — cria e integra ao financeiro
     const { data: novaConta, error: errConta } = await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
-      data_receb: dataRec, vencimento, valor: totalRecebido,
-      status: 'pendente',
+      data_receb: dataRec, vencimento, valor: totalRecebido, status: 'pendente',
     }]).select().single();
     if (errConta) { toast('Aviso: conta a pagar não criada — ' + errConta.message, 'erro'); }
-
     if (novaConta) {
-      if (isCompExt) {
-        await enviarDespesaCompExterno({
-          pedido_num, conta_id: novaConta.id, itensReceb,
-          totalRecebido, acrescimo, dataRec, vencimento,
-          fornecedor_id: ref?.fornecedor_id || null, unidade_id, nf,
-          banco_id: BANCO_NUBANK_ID,
-        });
-      } else {
-        await gerarContaFinanceiro({
-          pedido_num, vencimento, valor: totalRecebido,
-          fornecedor_id: ref?.fornecedor_id || null,
-          fornecedor_nome: ref?.fornecedor_nome || '',
-          plano_conta: ref?.plano_conta || '',
-          nf_numero: nf,
-          conta_id: novaConta.id,
-          unidade_id,
-          obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
-        });
-      }
+      await gerarContaFinanceiro({
+        pedido_num, vencimento, valor: totalRecebido,
+        fornecedor_id: ref?.fornecedor_id || null,
+        fornecedor_nome: ref?.fornecedor_nome || '',
+        plano_conta: ref?.plano_conta || '',
+        nf_numero: nf, conta_id: novaConta.id, unidade_id,
+        obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
+      });
     }
   }
 
@@ -5041,6 +5027,21 @@ async function confirmarRecebimento() {
   // Persiste acréscimo atualizado
   if (acrescimo !== (parseFloat(_recebItensAbertos[0]?.acrescimo) || 0)) {
     await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
+  }
+
+  // Comprador Externo: verifica se todos os itens foram recebidos → auto-finalizar
+  if (isCompExt) {
+    const { data: restantes } = await sb.from('cmp_compras')
+      .select('id').eq('pedido_num', pedido_num)
+      .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+    if (!restantes?.length) {
+      const { data: contaFinal } = await sb.from('cmp_contas_pagar')
+        .select('id,adiantamento_lancamento_id,lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
+      if (contaFinal && !contaFinal.lancamento_id) {
+        await _executarFinalizarCompExt(pedido_num, contaFinal, ref, unidade_id, nf);
+        toast(`✅ Pedido ${pedido_num} finalizado e enviado ao financeiro!`, 'ok');
+      }
+    }
   }
 
   // Aumentar saldo ESTOQUE_LOJA para cada item recebido com produto cadastrado
@@ -5781,11 +5782,17 @@ async function carregarCompras() {
 
     let badgeFinanc;
     if (isCompExt) {
-      // Fluxo Comprador Externo: despesa vai automaticamente ao receber
-      if (g.recebido) {
+      // Fluxo Comprador Externo
+      if (lancSet.has(g.pedido_num)) {
         badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`;
       } else if (adiantado) {
-        badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>`;
+        // Adiantamento enviado — mostra botão Finalizar se houver algum recebimento parcial
+        badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>
+          <button class="btn btn-sm btn-outline-success py-0 px-2 d-block mt-1"
+            onclick="event.stopPropagation();finalizarPedidoCompExt('${esc(g.pedido_num)}')"
+            title="Finalizar pedido e enviar despesa ao financeiro">
+            🏁 Finalizar Pedido
+          </button>`;
       } else {
         badgeFinanc = `<span class="badge bg-light text-muted border">Não enviado</span>
           <button class="btn btn-sm btn-outline-warning py-0 px-2 d-block mt-1"
@@ -6983,6 +6990,66 @@ async function sincronizarValoresFinanceiro() {
   }
 
   toast(`✅ ${atualizados} lançamento(s) sincronizado(s)${erros ? ` — ${erros} erro(s)` : ''}.`, 'ok');
+}
+
+// Núcleo da finalização do Comprador Externo — chamado auto (último item) ou manual (botão Finalizar)
+async function _executarFinalizarCompExt(pedido_num, conta, ref, unidade_id, nf) {
+  // Total acumulado de todos os recebimentos
+  const { data: todosReceb } = await sb.from('cmp_recebimentos')
+    .select('total_recebido').eq('pedido_num', pedido_num);
+  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  const acrescimo = parseFloat(_recebItensAbertos?.[0]?.acrescimo) || 0;
+
+  // Detecta banco do adiantamento
+  let bancoDespesa = BANCO_NUBANK_ID;
+  if (conta.adiantamento_lancamento_id) {
+    const { data: adLanc } = await sb.from('lancamentos').select('banco_id').eq('id', conta.adiantamento_lancamento_id).maybeSingle();
+    if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
+  }
+
+  // Busca itens recebidos de todos os recebimentos
+  const { data: recebIds } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  const { data: itensTodos } = await sb.from('cmp_recebimento_itens')
+    .select('*').in('recebimento_id', (recebIds||[]).map(r => r.id));
+
+  const dataRec = new Date().toISOString().split('T')[0];
+  const venc = conta.vencimento || dataRec;
+
+  await enviarDespesaCompExterno({
+    pedido_num, conta_id: conta.id,
+    itensReceb: itensTodos || [],
+    totalRecebido: totalAcumulado, acrescimo,
+    dataRec, vencimento: venc,
+    fornecedor_id: ref?.fornecedor_id || null,
+    unidade_id, nf, banco_id: bancoDespesa,
+  });
+}
+
+// Chamado pelo botão "Finalizar Pedido" na Aba Compras
+async function finalizarPedidoCompExt(pedido_num) {
+  if (!confirm(`Finalizar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados e o total recebido será enviado ao financeiro.`)) return;
+
+  // Marca itens pendentes como dispensados
+  await sb.from('cmp_compras')
+    .update({ status_receb: 'dispensado' })
+    .eq('pedido_num', pedido_num)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+
+  // Busca conta e referência do pedido
+  const { data: conta } = await sb.from('cmp_contas_pagar')
+    .select('id,adiantamento_lancamento_id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+  if (!conta) { toast('Conta a pagar não encontrada.', 'erro'); return; }
+  if (conta.lancamento_id) { toast('Pedido já foi enviado ao financeiro.', 'erro'); return; }
+
+  const { data: refItem } = await sb.from('cmp_compras')
+    .select('fornecedor_nome,fornecedor_id,comprador,unidade_uso').eq('pedido_num', pedido_num).limit(1).maybeSingle();
+
+  if (!cUnidades.length) await carregarCaches();
+  const unidade_id = cUnidades.find(u => u.nome.toLowerCase() === (refItem?.unidade_uso||'').toLowerCase())?.id || null;
+
+  await _executarFinalizarCompExt(pedido_num, conta, refItem, unidade_id, null);
+  toast(`${pedido_num} finalizado e enviado ao financeiro! ✅`, 'ok');
+  renderPendentes();
 }
 
 async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf, banco_id }) {
