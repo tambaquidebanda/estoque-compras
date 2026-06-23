@@ -7079,6 +7079,9 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
 
   if (!producao) {
     // Modo Teste — grava em lancamentos_rascunho
+    const { data: existente } = await sb.from('lancamentos_rascunho').select('id').eq('pedido_num', pedido_num).limit(1);
+    if (existente?.length) { toast(`Rascunho para ${pedido_num} já existe no financeiro.`, 'erro'); return; }
+
     const { data_pagamento: _, tem_rateio: tr, ...dadosRascunho } = { data_pagamento: null, ...dadosBase };
     const { data: rasc, error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
       ...dadosRascunho,
@@ -7103,6 +7106,9 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
   }
 
   // Modo Produção — grava em lancamentos
+  const { data: lancExist } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+  if (lancExist?.length) { toast(`Lançamento para ${pedido_num} já existe no financeiro.`, 'erro'); return; }
+
   const { data: lanc, error } = await sb.from('lancamentos').insert([{
     ...dadosBase, data_pagamento: null,
   }]).select('id').single();
