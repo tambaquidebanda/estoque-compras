@@ -2347,6 +2347,7 @@ let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispo
 let _invExcluidos    = new Set();
 let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _invPadroes      = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
+let _transfItens     = [];   // { produto_id, nome, unidade, qtd }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -3265,7 +3266,7 @@ async function carregarPedidosInternos() {
   const setor  = document.getElementById('fil-ped-setor')?.value  || '';
   const status = document.getElementById('fil-ped-status')?.value || '';
 
-  let q = sb.from('pedidos_internos').select('*').order('criado_em', { ascending: false }).limit(100);
+  let q = sb.from('pedidos_internos').select('*').neq('tipo', 'transferencia').order('criado_em', { ascending: false }).limit(100);
   if (local)  q = q.eq('local', local);
   if (setor)  q = q.eq('setor', setor);
   if (status) q = q.eq('status', status);
@@ -3569,6 +3570,208 @@ async function confirmarRecebimentoInv() {
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
   toast('Recebimento confirmado! ✅', 'ok');
   carregarMeusPedidos();
+}
+
+// ════════════════════════════════════════════════════════════════
+// TRANSFERÊNCIAS ENTRE UNIDADES
+// Estoque Loja (Centro / Delivery P10) solicita ao Estoque Central
+// Estoque Central aprova e envia → saldo sai do Estoque Central
+// Unidade destino confirma recebimento → saldo entra no ESTOQUE_LOJA
+//
+// criarSolicitacaoTransf() é a API pública: pode ser chamada
+// manualmente (origem='manual') ou pela engine de ficha técnica
+// no futuro (origem='automatico').
+// ════════════════════════════════════════════════════════════════
+
+async function carregarTransferencias() {
+  const local = _invLocal || 'Centro';
+  const isEC  = local === 'Estoque Central';
+
+  document.getElementById('transf-solicitar')?.classList.toggle('d-none', isEC);
+  document.getElementById('transf-atender')?.classList.toggle('d-none', !isEC);
+
+  if (isEC) {
+    await _carregarTransfAtender();
+  } else {
+    await _carregarTransfSolicitacoes(local);
+  }
+}
+
+async function _carregarTransfSolicitacoes(local) {
+  const el = document.getElementById('transf-lista-solicitacoes');
+  if (!el) return;
+  const { data, error } = await sb.from('pedidos_internos')
+    .select('*, pedidos_internos_itens(*, est_produtos(nome, unidade_uso))')
+    .eq('tipo', 'transferencia')
+    .eq('local', local)
+    .order('criado_em', { ascending: false })
+    .limit(30);
+  if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
+  if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação ainda.</p>'; return; }
+  el.innerHTML = data.map(p => _renderTransfCard(p, false)).join('');
+}
+
+async function _carregarTransfAtender() {
+  const el = document.getElementById('transf-lista-atender');
+  if (!el) return;
+  const { data, error } = await sb.from('pedidos_internos')
+    .select('*, pedidos_internos_itens(*, est_produtos(nome, unidade_uso))')
+    .eq('tipo', 'transferencia')
+    .eq('unidade_origem', 'Estoque Central')
+    .order('criado_em', { ascending: false })
+    .limit(30);
+  if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
+  if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação recebida.</p>'; return; }
+  el.innerHTML = data.map(p => _renderTransfCard(p, true)).join('');
+}
+
+function _renderTransfCard(p, isSupplier) {
+  const statusMap = { pendente: '🟡 Pendente', aprovado: '🟢 Enviado', entregue: '✅ Entregue', cancelado: '🔴 Cancelado' };
+  const itens = (p.pedidos_internos_itens || []).map(it => {
+    const nome     = it.est_produtos?.nome || it.produto_id;
+    const un       = it.est_produtos?.unidade_uso || '';
+    const aprovada = it.qtd_aprovada != null ? it.qtd_aprovada : it.qtd_pedida;
+    return `<tr><td>${esc(nome)}</td><td class="text-center">${it.qtd_pedida}</td><td class="text-center">${aprovada}</td><td class="text-muted small">${esc(un)}</td></tr>`;
+  }).join('');
+
+  const acoes = isSupplier && p.status === 'pendente'
+    ? `<button class="btn btn-sm btn-success" onclick="aprovarTransferencia('${p.id}')">✅ Aprovar e Enviar</button>`
+    : !isSupplier && p.status === 'aprovado'
+    ? `<button class="btn btn-sm btn-primary" onclick="confirmarRecebimentoTransf('${p.id}')">📦 Confirmar Recebimento</button>`
+    : '';
+
+  return `<div class="card-grafico mb-3">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <div>
+        <span class="fw-bold">${isSupplier ? `📍 ${esc(p.local)}` : '📦 Estoque Central'}</span>
+        <span class="badge bg-secondary ms-2">${statusMap[p.status] || p.status}</span>
+        ${p.origem === 'automatico' ? '<span class="badge bg-info ms-1">🤖 Auto</span>' : ''}
+      </div>
+      <small class="text-muted">${new Date(p.criado_em || p.data).toLocaleDateString('pt-BR')}</small>
+    </div>
+    <table class="table table-sm mb-2">
+      <thead><tr><th>Produto</th><th class="text-center">Solicitado</th><th class="text-center">Aprovado</th><th>Un.</th></tr></thead>
+      <tbody>${itens}</tbody>
+    </table>
+    ${acoes ? `<div class="d-flex justify-content-end">${acoes}</div>` : ''}
+  </div>`;
+}
+
+// ── CRIAR SOLICITAÇÃO ───────────────────────────────────────────
+// Esta função pode ser chamada manualmente (pela UI) OU automaticamente
+// (pela engine de ficha técnica no futuro — origem='automatico')
+async function criarSolicitacaoTransf(itens, origem = 'manual') {
+  const local = _invLocal || 'Centro';
+  const resp  = (document.getElementById('inv-resp')?.value || '').trim();
+  const { data: pedido, error } = await sb.from('pedidos_internos').insert({
+    tipo: 'transferencia',
+    local,
+    setor: 'TRANSFERENCIA',
+    unidade_origem: 'Estoque Central',
+    responsavel: resp,
+    status: 'pendente',
+    data: new Date().toISOString().split('T')[0],
+    origem,
+  }).select().single();
+  if (error || !pedido) { toast('Erro ao criar solicitação.', 'erro'); return null; }
+
+  const itensBd = itens.map(it => ({
+    pedido_id:    pedido.id,
+    produto_id:   it.produto_id,
+    qtd_pedida:   it.qtd,
+    qtd_aprovada: null,
+  }));
+  await sb.from('pedidos_internos_itens').insert(itensBd);
+  return pedido;
+}
+
+function abrirNovaTransferencia() {
+  _transfItens = [];
+  const inp = document.getElementById('transf-busca-prod');
+  if (inp) inp.value = '';
+  document.getElementById('transf-resultados-busca').innerHTML = '';
+  _renderTransfItensSelecionados();
+  new bootstrap.Modal(document.getElementById('modal-nova-transf')).show();
+}
+
+async function buscarProdutosTransf() {
+  const q  = (document.getElementById('transf-busca-prod')?.value || '').trim();
+  const el = document.getElementById('transf-resultados-busca');
+  if (!q || q.length < 2) { el.innerHTML = ''; return; }
+  const { data } = await sb.from('est_produtos').select('id,nome,unidade_uso').ilike('nome', `%${q}%`).limit(8);
+  if (!data?.length) { el.innerHTML = '<p class="text-muted small">Nenhum produto encontrado.</p>'; return; }
+  el.innerHTML = data.map(p =>
+    `<button class="btn btn-sm btn-outline-secondary me-1 mb-1" onclick="adicionarItemTransf('${p.id}','${esc(p.nome)}','${esc(p.unidade_uso||'')}')">
+      + ${esc(p.nome)} <span class="text-muted">(${esc(p.unidade_uso||'')})</span>
+    </button>`
+  ).join('');
+}
+
+function adicionarItemTransf(produto_id, nome, unidade) {
+  if (_transfItens.find(i => i.produto_id === produto_id)) { toast('Produto já adicionado.', 'erro'); return; }
+  _transfItens.push({ produto_id, nome, unidade, qtd: 1 });
+  _renderTransfItensSelecionados();
+  const inp = document.getElementById('transf-busca-prod');
+  if (inp) inp.value = '';
+  document.getElementById('transf-resultados-busca').innerHTML = '';
+}
+
+function _renderTransfItensSelecionados() {
+  const el = document.getElementById('transf-itens-lista');
+  if (!el) return;
+  if (!_transfItens.length) { el.innerHTML = '<p class="text-muted small">Nenhum produto adicionado ainda.</p>'; return; }
+  el.innerHTML = `<table class="table table-sm">
+    <thead><tr><th>Produto</th><th>Un.</th><th style="width:120px">Qtd</th><th></th></tr></thead>
+    <tbody>${_transfItens.map((it, i) => `
+      <tr>
+        <td>${esc(it.nome)}</td>
+        <td class="text-muted small">${esc(it.unidade)}</td>
+        <td><input type="number" class="form-control form-control-sm" min="0.01" step="0.01" value="${it.qtd}" onchange="_transfItens[${i}].qtd=Number(this.value)"></td>
+        <td><button class="btn btn-sm btn-link text-danger p-0" onclick="_transfItens.splice(${i},1);_renderTransfItensSelecionados()">🗑</button></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function enviarSolicitacaoTransf() {
+  if (!_transfItens.length) { toast('Adicione ao menos um produto.', 'erro'); return; }
+  const pedido = await criarSolicitacaoTransf(_transfItens, 'manual');
+  if (!pedido) return;
+  bootstrap.Modal.getInstance(document.getElementById('modal-nova-transf'))?.hide();
+  toast('Solicitação enviada ao Estoque Central! ✅', 'ok');
+  await _carregarTransfSolicitacoes(_invLocal || 'Centro');
+}
+
+// ── ATENDER (Estoque Central) ───────────────────────────────────
+async function aprovarTransferencia(pedidoId) {
+  const { error } = await sb.from('pedidos_internos')
+    .update({ status: 'aprovado' })
+    .eq('id', pedidoId);
+  if (error) { toast('Erro ao aprovar.', 'erro'); return; }
+  // Diminui saldo do Estoque Central ESTOQUE_LOJA
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+  for (const it of itens || []) {
+    const qtd = it.qtd_aprovada ?? it.qtd_pedida;
+    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', -qtd);
+  }
+  toast('Transferência aprovada e enviada! 📦', 'ok');
+  await _carregarTransfAtender();
+}
+
+// ── CONFIRMAR RECEBIMENTO (unidade destino) ─────────────────────
+async function confirmarRecebimentoTransf(pedidoId) {
+  const { error } = await sb.from('pedidos_internos')
+    .update({ status: 'entregue' })
+    .eq('id', pedidoId);
+  if (error) { toast('Erro ao confirmar.', 'erro'); return; }
+  // Aumenta saldo da unidade receptora ESTOQUE_LOJA
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+  for (const it of itens || []) {
+    const qtd = it.qtd_aprovada ?? it.qtd_pedida;
+    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', +qtd);
+  }
+  toast('Recebimento confirmado! ✅', 'ok');
+  await _carregarTransfSolicitacoes(_invLocal || 'Centro');
 }
 
 function abrirEmergencia() {
