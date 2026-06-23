@@ -2500,6 +2500,7 @@ async function selecionarSetorInv(setor) {
   });
   document.getElementById('inv-btn-enviar')?.classList.toggle('d-none', isEL);
   document.getElementById('inv-btn-padroes')?.classList.toggle('d-none', isEL);
+  document.getElementById('inv-btn-saldo-inicial')?.classList.toggle('d-none', isEL);
   document.getElementById('inv-btn-salvar-saldo')?.classList.toggle('d-none', !isEL);
   document.getElementById('inv-grupo-actions')?.style.setProperty('display', isEL ? 'none' : 'flex', 'important');
 
@@ -3248,6 +3249,44 @@ async function salvarSaldoContagemDesktop() {
 
   toast(`${num_inv} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; }
+  carregarHistoricoInv();
+  _limparCamposEstoque();
+}
+
+async function salvarSaldoInicialSetor() {
+  if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
+  if (!confirm(`Salvar saldo inicial de ${_invSetor} / ${_invGrupo}?\nIsso define o estoque de partida do setor.`)) return;
+  const data = document.getElementById('inv-data').value;
+  const resp = (document.getElementById('inv-resp').value || '').trim();
+  const btn  = document.getElementById('inv-btn-saldo-inicial');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+
+  const agora = new Date().toISOString();
+  const itensCont = _invProds.map((p, i) => ({
+    produto_id: p.produto_id || null, nome: p.nome,
+    estoque: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
+    pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0,
+    total: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
+    unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
+  }));
+
+  // Histórico em est_inventarios
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
+  const num_inv   = 'INV-' + String(ultimoNum+1).padStart(4,'0');
+  const { data: inv } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _invLocal, responsavel: resp,
+    setor: _invSetor, grupo: _invGrupo, total_geral: 0,
+  }]).select().single();
+  if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
+
+  // Salva saldo absoluto do setor
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: agora }));
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
+  toast(`${num_inv} — saldo inicial de ${_invSetor} salvo! ✅`, 'ok');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Saldo Inicial'; }
   carregarHistoricoInv();
   _limparCamposEstoque();
 }

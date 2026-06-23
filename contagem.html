@@ -536,6 +536,7 @@
   <!-- Rodapé Contagem -->
   <div id="rodape-contagem">
     <button class="btn-enviar" id="btn-enviar" disabled onclick="enviarPedido()">📤 Enviar Pedido</button>
+    <button class="btn-enviar" id="btn-saldo-inicial" disabled onclick="salvarSaldoInicialSetorMob()" style="display:none;background:#6c757d">💾 Saldo Inicial</button>
     <button class="btn-enviar" id="btn-salvar-saldo" disabled onclick="salvarSaldoContagem()" style="display:none;background:#198754">💾 Salvar Saldo</button>
     <button class="btn-emerg" onclick="abrirEmergencia()">🚨</button>
   </div>
@@ -1022,19 +1023,22 @@ function voltarSetores() {
   _setor = null; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display       = 'block';
   document.getElementById('grupos-produtos').style.display  = 'none';
-  document.getElementById('btn-enviar').style.display       = '';
-  document.getElementById('btn-enviar').disabled            = true;
-  document.getElementById('btn-salvar-saldo').style.display = 'none';
-  document.getElementById('btn-salvar-saldo').disabled      = true;
+  document.getElementById('btn-enviar').style.display         = '';
+  document.getElementById('btn-enviar').disabled              = true;
+  document.getElementById('btn-saldo-inicial').style.display  = '';
+  document.getElementById('btn-saldo-inicial').disabled       = true;
+  document.getElementById('btn-salvar-saldo').style.display   = 'none';
+  document.getElementById('btn-salvar-saldo').disabled        = true;
 }
 function selecionarEstoqueLoja() {
   _setor = 'ESTOQUE DA LOJA'; _grupo = null; _grupoProds = [];
-  document.getElementById('setor-grid').style.display       = 'none';
-  document.getElementById('grupos-produtos').style.display  = 'block';
-  document.getElementById('breadcrumb-setor').textContent   = '🏪 Estoque da Loja';
-  document.getElementById('btn-enviar').style.display       = 'none';
-  document.getElementById('btn-salvar-saldo').style.display = '';
-  document.getElementById('btn-salvar-saldo').disabled      = true;
+  document.getElementById('setor-grid').style.display         = 'none';
+  document.getElementById('grupos-produtos').style.display    = 'block';
+  document.getElementById('breadcrumb-setor').textContent     = '🏪 Estoque da Loja';
+  document.getElementById('btn-enviar').style.display         = 'none';
+  document.getElementById('btn-saldo-inicial').style.display  = 'none';
+  document.getElementById('btn-salvar-saldo').style.display   = '';
+  document.getElementById('btn-salvar-saldo').disabled        = true;
   renderGrupos();
 }
 
@@ -1141,6 +1145,7 @@ async function selecionarGrupo(grupo) {
     document.getElementById('btn-salvar-saldo').disabled = false;
   } else {
     document.getElementById('btn-enviar').disabled = false;
+    document.getElementById('btn-saldo-inicial').disabled = false;
   }
 }
 
@@ -1191,6 +1196,40 @@ function calcPedido(i) {
   const ped = Math.max(0, padrao - est);
   el.textContent = ped % 1 === 0 ? String(ped) : ped.toFixed(3).replace(/\.?0+$/, '');
   el.className   = 'td-center td-ped' + (ped === 0 ? ' zero' : '');
+}
+
+// ─── SALDO INICIAL DO SETOR ──────────────────────────────────────
+async function salvarSaldoInicialSetorMob() {
+  if (!_setor || !_grupo || !_grupoProds.length) return;
+  if (!confirm(`Salvar saldo inicial de ${_setor} / ${_grupo}?`)) return;
+  const btn = document.getElementById('btn-saldo-inicial');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  const data = document.getElementById('inp-data')?.value || new Date().toISOString().split('T')[0];
+  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+  const agora = new Date().toISOString();
+
+  const itens = _grupoProds.map((p, i) => ({
+    produto_id: p.produto_id || null, nome: p.nome,
+    estoque: parseFloat(document.getElementById(`est-${i}`)?.value) || 0,
+  }));
+
+  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
+  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
+  const num_inv   = 'INV-' + String(ultimoNum+1).padStart(4,'0');
+  const { data: inv } = await sb.from('est_inventarios').insert([{
+    num_inv, data, local: _local, responsavel: resp,
+    setor: _setor, grupo: _grupo, total_geral: 0,
+  }]).select().single();
+  if (inv) await sb.from('est_inventario_itens').insert(
+    itens.map(it => ({ ...it, inventario_id: inv.id, pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0, total: it.estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 }))
+  );
+
+  const saldoRows = itens.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: agora }));
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
+  toast(`${num_inv} — saldo inicial de ${_setor} salvo! ✅`, 'ok');
+  if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
 }
 
 // ─── ENVIAR PEDIDO ───────────────────────────────────────────────
