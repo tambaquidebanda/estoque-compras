@@ -1095,12 +1095,12 @@ function renderGrupos() {
   }
 }
 async function selecionarGrupo(grupo) {
+  const _hoje = new Date().toISOString().split('T')[0];
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _setor).eq('obs', grupo)
-    .in('status', ['pendente', 'liberado']).limit(1);
+    .eq('data', _hoje).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
-    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
-    toast(`${_setor} / ${grupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'err');
+    toast(`${_setor} / ${grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err');
     return;
   }
 
@@ -1201,10 +1201,9 @@ async function enviarPedido() {
 
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _setor).eq('obs', _grupo)
-    .in('status', ['pendente', 'liberado']).limit(1);
+    .eq('data', data).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
-    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
-    toast(`${_setor} / ${_grupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'err'); return;
+    toast(`${_setor} / ${_grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err'); return;
   }
 
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();

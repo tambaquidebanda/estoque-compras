@@ -2522,12 +2522,12 @@ async function selecionarSetorInv(setor) {
 }
 
 async function selecionarGrupoInv(grupo) {
+  const _hoje = new Date().toISOString().split('T')[0];
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo)
-    .in('status', ['pendente', 'liberado']).limit(1);
+    .eq('data', _hoje).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
-    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
-    toast(`${_invSetor} / ${grupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'erro');
+    toast(`${_invSetor} / ${grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro');
     return;
   }
 
@@ -3159,10 +3159,9 @@ async function enviarPedidoInterno() {
 
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _invSetor).eq('obs', _invGrupo)
-    .in('status', ['pendente', 'liberado']).limit(1);
+    .eq('data', data).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
-    const s = pedAberto[0].status === 'liberado' ? 'aguardando recebimento' : 'aguardando liberação';
-    toast(`${_invSetor} / ${_invGrupo} — ${pedAberto[0].num_pedido} ainda ${s}.`, 'erro'); return;
+    toast(`${_invSetor} / ${_invGrupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro'); return;
   }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();
