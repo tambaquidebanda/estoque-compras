@@ -5835,6 +5835,12 @@ async function carregarCompras() {
           📤 Enviar Financeiro
         </button>`;
     }
+    const btnFecharPedido = (!isCompExt && !g.recebido)
+      ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 d-block mt-1"
+          onclick="event.stopPropagation();finalizarPedidoRegular('${esc(g.pedido_num)}')"
+          title="Fechar pedido — dispensar itens não entregues">🏁 Fechar Pedido</button>`
+      : '';
+
     const podeEditar   = !g.recebido && !enviado;
     const podeReabrir  = g.recebido && !aguardando;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
@@ -5854,6 +5860,7 @@ async function carregarCompras() {
         <div class="d-flex flex-column gap-1 align-items-center">
           <span class="badge" style="background:${corEstoque}">${statusEstoque}</span>
           ${badgeFinanc}
+          ${btnFecharPedido}
         </div>
       </td>
       <td class="text-center">
@@ -7049,6 +7056,19 @@ async function finalizarPedidoCompExt(pedido_num) {
 
   await _executarFinalizarCompExt(pedido_num, conta, refItem, unidade_id, null);
   toast(`${pedido_num} finalizado e enviado ao financeiro! ✅`, 'ok');
+  renderPendentes();
+}
+
+async function finalizarPedidoRegular(pedido_num) {
+  if (!confirm(`Fechar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados.`)) return;
+
+  const { error } = await sb.from('cmp_compras')
+    .update({ status_receb: 'dispensado' })
+    .eq('pedido_num', pedido_num)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+
+  if (error) { toast('Erro ao fechar pedido: ' + error.message, 'erro'); return; }
+  toast(`${pedido_num} fechado — itens pendentes dispensados ✅`, 'ok');
   renderPendentes();
 }
 

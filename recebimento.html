@@ -426,6 +426,19 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
   });
 }
 
+async function finalizarPedidoRegularMob(pedido_num) {
+  if (!confirm(`Fechar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados.`)) return;
+
+  const { error } = await sb.from('cmp_compras')
+    .update({ status_receb: 'dispensado' })
+    .eq('pedido_num', pedido_num)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+
+  if (error) { toast('Erro ao fechar pedido: ' + error.message, 'err'); return; }
+  toast(`${pedido_num} fechado ✅`, 'ok');
+  await carregarPedidosPendentes();
+}
+
 async function finalizarPedidoCompExtMob(pedido_num) {
   if (!confirm(`Finalizar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados e o total recebido será enviado ao financeiro.`)) return;
 
@@ -575,7 +588,10 @@ async function carregarPedidosPendentes() {
            style="margin-top:8px;width:100%;padding:8px;background:#6f42c1;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
            🏁 Finalizar Pedido
          </button>`
-      : '';
+      : `<button onclick="event.stopPropagation();finalizarPedidoRegularMob('${esc(g.pedido_num)}')"
+           style="margin-top:8px;width:100%;padding:8px;background:#6c757d;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+           🏁 Fechar Pedido
+         </button>`;
     return `<div class="pedido-card" onclick="abrirPedido('${esc(g.pedido_num)}')">
       <div class="pc-topo">
         <span class="pc-num">#${esc(g.pedido_num)}</span>
