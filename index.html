@@ -106,9 +106,6 @@
         <a href="#" onclick="ir('saldo',this)">
           <i class="bi bi-archive-fill"></i> Saldo Estoque
         </a>
-        <a href="#" onclick="ir('estrutura',this)">
-          <i class="bi bi-diagram-3-fill"></i> Estrutura
-        </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
@@ -1120,6 +1117,9 @@
             <button class="saldo-grupo-btn inv-setor-btn inv-setor-el" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>
           </div>
         </div>
+        <div class="d-flex justify-content-end px-2 py-1 border-top" style="gap:.5rem">
+          <button class="btn btn-sm btn-outline-secondary" onclick="gerenciarSetoresUnidade()" style="font-size:.75rem">⚙️ Gerenciar Setores</button>
+        </div>
       </div>
 
       <!-- Seleção de Grupo (aparece após escolher setor) -->
@@ -1129,6 +1129,10 @@
         </div>
         <div class="saldo-grupos-bar" id="inv-grupo-btns-wrap">
           <div id="inv-grupo-btns"></div>
+        </div>
+        <div class="d-flex justify-content-end px-2 py-1 border-top" id="inv-grupo-actions" style="gap:.5rem;display:none!important">
+          <button class="btn btn-sm btn-outline-danger" id="btn-remover-grupo" onclick="removerGrupoUnidade()" style="font-size:.75rem">🗑️ Remover Grupo</button>
+          <button class="btn btn-sm btn-outline-primary" onclick="adicionarGrupoUnidade()" style="font-size:.75rem">+ Grupo</button>
         </div>
       </div>
 
@@ -1546,18 +1550,6 @@
       </div>
     </section>
 
-    <!-- ══════ ESTRUTURA POR UNIDADE ══════ -->
-    <section id="pg-estrutura" class="pagina">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1 class="mb-0"><i class="bi bi-diagram-3-fill"></i> Estrutura por Unidade</h1>
-      </div>
-      <div class="card-grafico p-0 mb-3">
-        <div class="saldo-grupos-bar">
-          <div id="est-editor-tabs"></div>
-        </div>
-      </div>
-      <div id="est-editor-tree"></div>
-    </section>
 
     <!-- ══════ PLANEJAMENTO ══════ -->
     <section id="pg-planejamento" class="pagina">
@@ -2586,6 +2578,31 @@
     </div>
     <div class="px-4 py-3 border-top d-flex justify-content-end">
       <button class="btn btn-outline-secondary" onclick="fecharAjusteHistoricoCompExterno()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Gerenciar Setores da Unidade -->
+<div class="modal fade" id="modal-gerenciar-setores" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">⚙️ Setores — <span id="ger-setor-unidade"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Selecione os setores ativos nesta unidade:</p>
+        <div id="ger-setor-lista" class="d-flex flex-column gap-2 mb-3"></div>
+        <hr>
+        <div class="d-flex gap-2">
+          <input type="text" class="form-control form-control-sm" id="ger-setor-novo" placeholder="Nome do novo setor" style="text-transform:uppercase" onkeydown="if(event.key==='Enter')adicionarSetorNaUnidade()">
+          <button class="btn btn-sm btn-success" onclick="adicionarSetorNaUnidade()">+ Novo Setor</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+        <button class="btn btn-primary" onclick="salvarSetoresUnidade()">Salvar</button>
+      </div>
     </div>
   </div>
 </div>

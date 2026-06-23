@@ -206,7 +206,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
-  if (['recebimento','inventario','saldo','estrutura'].includes(nome)) {
+  if (['recebimento','inventario','saldo'].includes(nome)) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
@@ -224,7 +224,6 @@ function ir(nome, el) {
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'saldo')         carregarSaldo();
-  if (nome === 'estrutura')     carregarEditorEstrutura();
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
@@ -2501,6 +2500,7 @@ async function selecionarSetorInv(setor) {
   document.getElementById('inv-btn-enviar')?.classList.toggle('d-none', isEL);
   document.getElementById('inv-btn-padroes')?.classList.toggle('d-none', isEL);
   document.getElementById('inv-btn-salvar-saldo')?.classList.toggle('d-none', !isEL);
+  document.getElementById('inv-grupo-actions')?.style.setProperty('display', isEL ? 'none' : 'flex', 'important');
 
   // Monta botões de grupo
   const grupos = Object.keys(INVENTARIO_ESTRUTURA[setor] || {});
@@ -7263,182 +7263,122 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
   renderSaldo();
 }
 
-// ─── EDITOR DE ESTRUTURA ──────────────────────────────────────────
-let _estEditorLocal = 'Centro';
-
-async function carregarEditorEstrutura() {
-  if (!Object.keys(_todasEstruturas).length) await carregarMapeamentosInv();
-  _estEditorLocal = _invLocal || 'Centro';
-  renderEditorEstrutura();
-}
-
-function setEstEditorLocal(local) {
-  _estEditorLocal = local;
-  renderEditorEstrutura();
-}
-
-function _estId(s) { return String(s).replace(/[^a-z0-9]/gi, '_'); }
-
-function renderEditorEstrutura() {
-  const tabsEl = document.getElementById('est-editor-tabs');
-  const treeEl = document.getElementById('est-editor-tree');
-  if (!tabsEl || !treeEl) return;
-
-  tabsEl.innerHTML = _UNIDADES_LOCAIS.map(u =>
-    `<button class="saldo-grupo-btn${u === _estEditorLocal ? ' ativo' : ''}" onclick="setEstEditorLocal('${esc(u)}')">${esc(u.toUpperCase())}</button>`
-  ).join('');
-
-  const estrutura = _todasEstruturas[_estEditorLocal] || {};
-  const setores = Object.keys(estrutura).filter(s => s !== 'ESTOQUE DA LOJA');
-  let html = '';
-
-  setores.forEach(setor => {
-    const sid = _estId(setor);
-    const grupos = Object.keys(estrutura[setor] || {});
-    html += `<div class="card-grafico mb-3">
-      <div class="d-flex align-items-center justify-content-between mb-3">
-        <h6 class="mb-0 fw-bold fs-6">${esc(setor)}</h6>
-        <div class="d-flex gap-2">
-          <button class="btn btn-sm btn-outline-secondary" data-setor="${esc(setor)}" onclick="renomearSetorEst(this.dataset.setor)">✏️ Renomear</button>
-          <button class="btn btn-sm btn-outline-danger" data-setor="${esc(setor)}" onclick="removerSetorEst(this.dataset.setor)">🗑️</button>
-        </div>
-      </div>
-      <div class="ms-3">`;
-
-    grupos.forEach(grupo => {
-      const gid = _estId(grupo);
-      const prods = estrutura[setor][grupo] || [];
-      html += `<div class="mb-3">
-        <div class="d-flex align-items-center gap-2 mb-2">
-          <span class="fw-semibold text-muted small text-uppercase">${esc(grupo)}</span>
-          <button class="btn btn-sm btn-link p-0 text-secondary" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="renomearGrupoEst(this.dataset.setor,this.dataset.grupo)">✏️</button>
-          <button class="btn btn-sm btn-link p-0 text-danger" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="removerGrupoEst(this.dataset.setor,this.dataset.grupo)">🗑️</button>
-        </div>
-        <div class="ms-2 mb-2">
-          ${prods.map(p => `<span class="badge bg-light border text-dark me-1 mb-1" style="font-size:.75rem">
-            ${esc(p)}
-            <button class="btn-close ms-1" style="font-size:.45rem;vertical-align:middle" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" data-prod="${esc(p)}" onclick="removerProdutoEst(this.dataset.setor,this.dataset.grupo,this.dataset.prod)"></button>
-          </span>`).join('')}
-        </div>
-        <div class="d-flex gap-2">
-          <input type="text" class="form-control form-control-sm" id="inp-prod-${sid}-${gid}" placeholder="Nome do produto" style="max-width:280px" onkeydown="if(event.key==='Enter')adicionarProdutoEst('${esc(setor)}','${esc(grupo)}')">
-          <button class="btn btn-sm btn-outline-success" data-setor="${esc(setor)}" data-grupo="${esc(grupo)}" onclick="adicionarProdutoEst(this.dataset.setor,this.dataset.grupo)">+ Produto</button>
-        </div>
-      </div>`;
-    });
-
-    html += `<div class="d-flex gap-2 mt-2 pt-2 border-top">
-        <input type="text" class="form-control form-control-sm" id="inp-grupo-${sid}" placeholder="Nome do grupo" style="max-width:220px" onkeydown="if(event.key==='Enter')adicionarGrupoEst('${esc(setor)}')">
-        <button class="btn btn-sm btn-outline-primary" data-setor="${esc(setor)}" onclick="adicionarGrupoEst(this.dataset.setor)">+ Grupo</button>
-      </div>
-      </div>
-    </div>`;
-  });
-
-  html += `<div class="card-grafico">
-    <div class="fw-semibold small mb-2 text-muted">ADICIONAR SETOR</div>
-    <div class="d-flex gap-2">
-      <input type="text" class="form-control form-control-sm" id="inp-novo-setor" placeholder="Nome do setor" style="max-width:220px" onkeydown="if(event.key==='Enter')adicionarSetorEst()">
-      <button class="btn btn-sm btn-success" onclick="adicionarSetorEst()">+ Setor</button>
-    </div>
-  </div>`;
-
-  treeEl.innerHTML = html;
-}
+// ─── GERENCIAR SETORES / GRUPOS POR UNIDADE ──────────────────────
 
 async function _salvarEstruturaSupabase() {
   await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
-  if (_estEditorLocal === (_invLocal || 'Centro')) {
-    _aplicarEstruturaLocal(_invLocal || 'Centro');
+  _aplicarEstruturaLocal(_invLocal || 'Centro');
+}
+
+function gerenciarSetoresUnidade() {
+  const local = _invLocal || 'Centro';
+  document.getElementById('ger-setor-unidade').textContent = local.toUpperCase();
+
+  // All known sectors = union of all units (excluding ESTOQUE DA LOJA)
+  const todosSetores = new Set();
+  Object.values(_todasEstruturas).forEach(est => {
+    Object.keys(est || {}).forEach(s => { if (s !== 'ESTOQUE DA LOJA') todosSetores.add(s); });
+  });
+
+  const ativos = new Set(Object.keys(_todasEstruturas[local] || {}).filter(s => s !== 'ESTOQUE DA LOJA'));
+
+  document.getElementById('ger-setor-lista').innerHTML = [...todosSetores].map(s => `
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="ger-cb-${s.replace(/\W/g,'_')}" value="${esc(s)}" ${ativos.has(s) ? 'checked' : ''}>
+      <label class="form-check-label" for="ger-cb-${s.replace(/\W/g,'_')}">${esc(s)}</label>
+    </div>`).join('');
+
+  document.getElementById('ger-setor-novo').value = '';
+  new bootstrap.Modal(document.getElementById('modal-gerenciar-setores')).show();
+}
+
+async function adicionarSetorNaUnidade() {
+  const inp = document.getElementById('ger-setor-novo');
+  const nome = (inp?.value || '').trim().toUpperCase();
+  if (!nome) return;
+
+  const li = document.getElementById('ger-setor-lista');
+  const id = `ger-cb-${nome.replace(/\W/g,'_')}`;
+  if (!document.getElementById(id)) {
+    li.insertAdjacentHTML('beforeend', `
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="${id}" value="${esc(nome)}" checked>
+        <label class="form-check-label" for="${id}">${esc(nome)}</label>
+      </div>`);
   }
-}
-
-async function adicionarSetorEst() {
-  const inp = document.getElementById('inp-novo-setor');
-  const nome = (inp?.value || '').trim().toUpperCase();
-  if (!nome) return;
-  if (!_todasEstruturas[_estEditorLocal]) _todasEstruturas[_estEditorLocal] = {};
-  if (_todasEstruturas[_estEditorLocal][nome]) { toast('Setor já existe.', 'erro'); return; }
-  _todasEstruturas[_estEditorLocal][nome] = {};
-  await _salvarEstruturaSupabase();
   inp.value = '';
-  renderEditorEstrutura();
-  toast(`Setor ${nome} adicionado!`, 'ok');
 }
 
-async function removerSetorEst(setor) {
-  if (!confirm(`Remover setor "${setor}" e todos os seus grupos/produtos?`)) return;
-  delete _todasEstruturas[_estEditorLocal][setor];
+async function salvarSetoresUnidade() {
+  const local = _invLocal || 'Centro';
+  if (!_todasEstruturas[local]) _todasEstruturas[local] = {};
+  const est = _todasEstruturas[local];
+
+  // Collect checked sectors
+  const checados = [...document.querySelectorAll('#ger-setor-lista .form-check-input:checked')].map(cb => cb.value);
+  const todos = [...document.querySelectorAll('#ger-setor-lista .form-check-input')].map(cb => cb.value);
+
+  // Add new sectors (checked, not yet in est)
+  checados.forEach(s => { if (!est[s]) est[s] = {}; });
+  // Remove unchecked sectors (with confirmation if they have data)
+  todos.filter(s => !checados.includes(s)).forEach(s => {
+    if (est[s] && Object.keys(est[s]).length > 0) {
+      if (!confirm(`Remover setor "${s}" e todos os seus grupos/produtos desta unidade?`)) return;
+    }
+    delete est[s];
+  });
+
   await _salvarEstruturaSupabase();
-  renderEditorEstrutura();
-  toast(`Setor ${setor} removido.`, 'ok');
+  bootstrap.Modal.getInstance(document.getElementById('modal-gerenciar-setores'))?.hide();
+
+  // Re-render setor buttons
+  _renderizarSetoresBtns();
+  toast('Setores atualizados!', 'ok');
 }
 
-async function renomearSetorEst(setor) {
-  const novo = (prompt(`Renomear setor "${setor}":`, setor) || '').trim().toUpperCase();
-  if (!novo || novo === setor) return;
-  const est = _todasEstruturas[_estEditorLocal];
-  est[novo] = est[setor];
-  delete est[setor];
-  await _salvarEstruturaSupabase();
-  renderEditorEstrutura();
-  toast(`Setor renomeado para ${novo}.`, 'ok');
+function _renderizarSetoresBtns() {
+  const local = _invLocal || 'Centro';
+  const setores = Object.keys(_todasEstruturas[local] || {}).filter(s => s !== 'ESTOQUE DA LOJA');
+  const container = document.getElementById('inv-setor-btns');
+  if (!container) return;
+
+  container.innerHTML = setores.map(s => {
+    const ativo = s === _invSetor ? ' ativo' : '';
+    return `<button class="saldo-grupo-btn inv-setor-btn${ativo}" data-setor="${esc(s)}" onclick="selecionarSetorInv('${esc(s)}')">${esc(s)}</button>`;
+  }).join('') +
+    `<button class="saldo-grupo-btn inv-setor-btn inv-setor-el${_invSetor === 'ESTOQUE DA LOJA' ? ' ativo' : ''}" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>`;
 }
 
-async function adicionarGrupoEst(setor) {
-  const sid = _estId(setor);
-  const inp = document.getElementById(`inp-grupo-${sid}`);
-  const nome = (inp?.value || '').trim().toUpperCase();
+async function adicionarGrupoUnidade() {
+  const local = _invLocal || 'Centro';
+  const setor = _invSetor;
+  if (!setor || setor === 'ESTOQUE DA LOJA') { toast('Selecione um setor primeiro.', 'erro'); return; }
+
+  const nome = (prompt('Nome do novo grupo:') || '').trim().toUpperCase();
   if (!nome) return;
-  if (!_todasEstruturas[_estEditorLocal][setor]) _todasEstruturas[_estEditorLocal][setor] = {};
-  if (_todasEstruturas[_estEditorLocal][setor][nome]) { toast('Grupo já existe.', 'erro'); return; }
-  _todasEstruturas[_estEditorLocal][setor][nome] = [];
+
+  if (!_todasEstruturas[local]) _todasEstruturas[local] = {};
+  if (!_todasEstruturas[local][setor]) _todasEstruturas[local][setor] = {};
+  if (_todasEstruturas[local][setor][nome]) { toast('Grupo já existe.', 'erro'); return; }
+
+  _todasEstruturas[local][setor][nome] = [];
   await _salvarEstruturaSupabase();
-  if (inp) inp.value = '';
-  renderEditorEstrutura();
+  selecionarSetorInv(_invSetor);
   toast(`Grupo ${nome} adicionado!`, 'ok');
 }
 
-async function removerGrupoEst(setor, grupo) {
+async function removerGrupoUnidade() {
+  const local = _invLocal || 'Centro';
+  const setor = _invSetor;
+  const grupo = _invGrupo;
+  if (!setor || !grupo) { toast('Selecione um grupo primeiro.', 'erro'); return; }
   if (!confirm(`Remover grupo "${grupo}" do setor "${setor}"?`)) return;
-  delete _todasEstruturas[_estEditorLocal][setor][grupo];
+
+  delete _todasEstruturas[local]?.[setor]?.[grupo];
   await _salvarEstruturaSupabase();
-  renderEditorEstrutura();
+  _invGrupo = null;
+  _invProds = [];
+  document.getElementById('inv-tabela-section')?.classList.add('d-none');
+  selecionarSetorInv(_invSetor);
   toast(`Grupo ${grupo} removido.`, 'ok');
-}
-
-async function renomearGrupoEst(setor, grupo) {
-  const novo = (prompt(`Renomear grupo "${grupo}":`, grupo) || '').trim().toUpperCase();
-  if (!novo || novo === grupo) return;
-  const s = _todasEstruturas[_estEditorLocal][setor];
-  s[novo] = s[grupo];
-  delete s[grupo];
-  await _salvarEstruturaSupabase();
-  renderEditorEstrutura();
-  toast(`Grupo renomeado para ${novo}.`, 'ok');
-}
-
-async function adicionarProdutoEst(setor, grupo) {
-  const sid = _estId(setor), gid = _estId(grupo);
-  const inp = document.getElementById(`inp-prod-${sid}-${gid}`);
-  const nome = (inp?.value || '').trim().toUpperCase();
-  if (!nome) return;
-  const arr = _todasEstruturas[_estEditorLocal][setor][grupo];
-  if (arr.includes(nome)) { toast('Produto já existe no grupo.', 'erro'); return; }
-  arr.push(nome);
-  await _salvarEstruturaSupabase();
-  if (inp) inp.value = '';
-  renderEditorEstrutura();
-  toast(`${nome} adicionado!`, 'ok');
-}
-
-async function removerProdutoEst(setor, grupo, prod) {
-  const arr = _todasEstruturas[_estEditorLocal]?.[setor]?.[grupo];
-  if (!arr) return;
-  const idx = arr.indexOf(prod);
-  if (idx < 0) return;
-  arr.splice(idx, 1);
-  await _salvarEstruturaSupabase();
-  renderEditorEstrutura();
-  toast(`${prod} removido.`, 'ok');
 }
