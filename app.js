@@ -4969,49 +4969,21 @@ async function confirmarRecebimento() {
   const { data: contaExist } = await sb.from('cmp_contas_pagar')
     .select('id,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
 
-  if (isCompExt) {
-    // ── COMPRADOR EXTERNO: acumula total de todos os recebimentos, não envia ao financeiro ainda
-    const { data: todosReceb } = await sb.from('cmp_recebimentos')
-      .select('total_recebido').eq('pedido_num', pedido_num);
-    const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  // Todos os fornecedores: acumula total de todos os recebimentos, não envia ao financeiro ainda
+  const { data: todosReceb } = await sb.from('cmp_recebimentos')
+    .select('total_recebido').eq('pedido_num', pedido_num);
+  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
 
-    if (contaExist) {
-      await sb.from('cmp_contas_pagar').update({
-        recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
-      }).eq('id', contaExist.id);
-    } else {
-      await sb.from('cmp_contas_pagar').insert([{
-        pedido_num, recebimento_id: receb.id,
-        fornecedor: ref?.fornecedor_nome || '',
-        data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
-      }]);
-    }
-  } else if (contaExist) {
-    // Fornecedor direto com conta já existente — atualiza valor
+  if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
-      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalRecebido,
+      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
     }).eq('id', contaExist.id);
-    if (contaExist.lancamento_id) {
-      await sb.from('lancamentos').update({ valor: totalItens, acrescimo }).eq('id', contaExist.lancamento_id);
-    }
   } else {
-    // Fornecedor direto sem conta — cria e integra ao financeiro
-    const { data: novaConta, error: errConta } = await sb.from('cmp_contas_pagar').insert([{
+    await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
-      data_receb: dataRec, vencimento, valor: totalRecebido, status: 'pendente',
-    }]).select().single();
-    if (errConta) { toast('Aviso: conta a pagar não criada — ' + errConta.message, 'erro'); }
-    if (novaConta) {
-      await gerarContaFinanceiro({
-        pedido_num, vencimento, valor: totalRecebido,
-        fornecedor_id: ref?.fornecedor_id || null,
-        fornecedor_nome: ref?.fornecedor_nome || '',
-        plano_conta: ref?.plano_conta || '',
-        nf_numero: nf, conta_id: novaConta.id, unidade_id,
-        obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
-      });
-    }
+      data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
+    }]);
   }
 
   // Marca cada item: se qtd completa → recebido; se parcial → atualiza quantidade restante
@@ -5029,18 +5001,20 @@ async function confirmarRecebimento() {
     await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
   }
 
-  // Comprador Externo: verifica se todos os itens foram recebidos → auto-finalizar
-  if (isCompExt) {
-    const { data: restantes } = await sb.from('cmp_compras')
-      .select('id').eq('pedido_num', pedido_num)
-      .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
-    if (!restantes?.length) {
-      const { data: contaFinal } = await sb.from('cmp_contas_pagar')
-        .select('id,adiantamento_lancamento_id,lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
-      if (contaFinal && !contaFinal.lancamento_id) {
+  // Todos os fornecedores: auto-finaliza quando todos os itens foram recebidos
+  const { data: restantes } = await sb.from('cmp_compras')
+    .select('id').eq('pedido_num', pedido_num)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+  if (!restantes?.length) {
+    const { data: contaFinal } = await sb.from('cmp_contas_pagar')
+      .select('id,adiantamento_lancamento_id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+    if (contaFinal && !contaFinal.lancamento_id) {
+      if (isCompExt) {
         await _executarFinalizarCompExt(pedido_num, contaFinal, ref, unidade_id, nf);
-        toast(`✅ Pedido ${pedido_num} finalizado e enviado ao financeiro!`, 'ok');
+      } else {
+        await _executarFinalizarRegular(pedido_num, contaFinal, ref, unidade_id, nf);
       }
+      toast(`✅ Pedido ${pedido_num} finalizado e enviado ao financeiro!`, 'ok');
     }
   }
 
@@ -7059,16 +7033,45 @@ async function finalizarPedidoCompExt(pedido_num) {
   renderPendentes();
 }
 
-async function finalizarPedidoRegular(pedido_num) {
-  if (!confirm(`Fechar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados.`)) return;
+async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf) {
+  const { data: todosReceb } = await sb.from('cmp_recebimentos')
+    .select('total_recebido').eq('pedido_num', pedido_num);
+  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  if (!totalAcumulado) return;
 
-  const { error } = await sb.from('cmp_compras')
+  const dataRec = new Date().toISOString().split('T')[0];
+  const venc = conta.vencimento || dataRec;
+
+  await gerarContaFinanceiro({
+    pedido_num, vencimento: venc, valor: totalAcumulado, acrescimo: 0,
+    fornecedor_id: ref?.fornecedor_id || null,
+    fornecedor_nome: ref?.fornecedor_nome || '',
+    plano_conta: ref?.plano_conta || '',
+    nf_numero: nf, conta_id: conta.id, unidade_id,
+    obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
+  });
+}
+
+async function finalizarPedidoRegular(pedido_num) {
+  if (!confirm(`Fechar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados e o total recebido será enviado ao financeiro.`)) return;
+
+  await sb.from('cmp_compras')
     .update({ status_receb: 'dispensado' })
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
-  if (error) { toast('Erro ao fechar pedido: ' + error.message, 'erro'); return; }
-  toast(`${pedido_num} fechado — itens pendentes dispensados ✅`, 'ok');
+  const { data: conta } = await sb.from('cmp_contas_pagar')
+    .select('id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+
+  if (conta && !conta.lancamento_id) {
+    const { data: refItem } = await sb.from('cmp_compras')
+      .select('fornecedor_nome,fornecedor_id,plano_conta,unidade_uso').eq('pedido_num', pedido_num).limit(1).maybeSingle();
+    if (!cUnidades.length) await carregarCaches();
+    const unidade_id = cUnidades.find(u => u.nome.toLowerCase() === (refItem?.unidade_uso||'').toLowerCase())?.id || null;
+    await _executarFinalizarRegular(pedido_num, conta, refItem, unidade_id, null);
+  }
+
+  toast(`${pedido_num} fechado e enviado ao financeiro ✅`, 'ok');
   renderPendentes();
 }
 
