@@ -3601,35 +3601,37 @@ async function _carregarTransfSolicitacoes(local) {
   const el = document.getElementById('transf-lista-solicitacoes');
   if (!el) return;
   const { data, error } = await sb.from('pedidos_internos')
-    .select('*, pedidos_internos_itens(*, est_produtos(nome, unidade_uso))')
-    .eq('tipo', 'transferencia')
-    .eq('local', local)
-    .order('criado_em', { ascending: false })
-    .limit(30);
+    .select('*').eq('tipo', 'transferencia').eq('local', local)
+    .order('criado_em', { ascending: false }).limit(30);
   if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
   if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação ainda.</p>'; return; }
-  el.innerHTML = data.map(p => _renderTransfCard(p, false)).join('');
+  const ids = data.map(p => p.id);
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', ids);
+  const byPedido = {};
+  (itens || []).forEach(it => { if (!byPedido[it.pedido_id]) byPedido[it.pedido_id] = []; byPedido[it.pedido_id].push(it); });
+  el.innerHTML = data.map(p => _renderTransfCard({ ...p, _itens: byPedido[p.id] || [] }, false)).join('');
 }
 
 async function _carregarTransfAtender() {
   const el = document.getElementById('transf-lista-atender');
   if (!el) return;
   const { data, error } = await sb.from('pedidos_internos')
-    .select('*, pedidos_internos_itens(*, est_produtos(nome, unidade_uso))')
-    .eq('tipo', 'transferencia')
-    .eq('unidade_origem', 'Estoque Central')
-    .order('criado_em', { ascending: false })
-    .limit(30);
+    .select('*').eq('tipo', 'transferencia').eq('unidade_origem', 'Estoque Central')
+    .order('criado_em', { ascending: false }).limit(30);
   if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
   if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação recebida.</p>'; return; }
-  el.innerHTML = data.map(p => _renderTransfCard(p, true)).join('');
+  const ids = data.map(p => p.id);
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', ids);
+  const byPedido = {};
+  (itens || []).forEach(it => { if (!byPedido[it.pedido_id]) byPedido[it.pedido_id] = []; byPedido[it.pedido_id].push(it); });
+  el.innerHTML = data.map(p => _renderTransfCard({ ...p, _itens: byPedido[p.id] || [] }, true)).join('');
 }
 
 function _renderTransfCard(p, isSupplier) {
   const statusMap = { pendente: '🟡 Pendente', aprovado: '🟢 Enviado', entregue: '✅ Entregue', cancelado: '🔴 Cancelado' };
-  const itens = (p.pedidos_internos_itens || []).map(it => {
-    const nome     = it.est_produtos?.nome || it.produto_id;
-    const un       = it.est_produtos?.unidade_uso || '';
+  const itens = (p._itens || []).map(it => {
+    const nome     = it.nome || it.produto_id;
+    const un       = '';
     const aprovada = it.qtd_aprovada != null ? it.qtd_aprovada : it.qtd_pedida;
     return `<tr><td>${esc(nome)}</td><td class="text-center">${it.qtd_pedida}</td><td class="text-center">${aprovada}</td><td class="text-muted small">${esc(un)}</td></tr>`;
   }).join('');
