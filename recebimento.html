@@ -402,6 +402,51 @@ async function enviarDespesaCompExternoMobile({ pedido_num, conta_id, itensReceb
   }
 }
 
+async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
+  const { data: todosReceb } = await sb.from('cmp_recebimentos')
+    .select('total_recebido').eq('pedido_num', pedido_num);
+  const totalAcum = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+
+  const { data: recebIds } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  const { data: itensTodos } = await sb.from('cmp_recebimento_itens')
+    .select('*').in('recebimento_id', (recebIds||[]).map(r => r.id));
+  const { data: itensOrig } = await sb.from('cmp_compras')
+    .select('id,plano_conta').eq('pedido_num', pedido_num);
+
+  const dataRec = new Date().toISOString().split('T')[0];
+  const venc = conta.vencimento || dataRec;
+
+  await enviarDespesaCompExternoMobile({
+    pedido_num, conta_id: conta.id,
+    itensReceb: itensTodos || [],
+    itensOriginais: itensOrig || [],
+    totalRecebido: totalAcum, acrescimo: 0,
+    dataRec, vencimento: venc,
+    fornecedor_id: ref?.fornecedor_id || null, nf: null,
+  });
+}
+
+async function finalizarPedidoCompExtMob(pedido_num) {
+  if (!confirm(`Finalizar pedido ${pedido_num}?\nItens não entregues serão marcados como dispensados e o total recebido será enviado ao financeiro.`)) return;
+
+  await sb.from('cmp_compras')
+    .update({ status_receb: 'dispensado' })
+    .eq('pedido_num', pedido_num)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+
+  const { data: conta } = await sb.from('cmp_contas_pagar')
+    .select('id,adiantamento_lancamento_id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+  if (!conta) { toast('Conta a pagar não encontrada.', 'err'); return; }
+  if (conta.lancamento_id) { toast('Pedido já foi enviado ao financeiro.', 'err'); return; }
+
+  const { data: refItem } = await sb.from('cmp_compras')
+    .select('fornecedor_nome,fornecedor_id').eq('pedido_num', pedido_num).limit(1).maybeSingle();
+
+  await _executarFinalizarCompExtMob(pedido_num, conta, refItem);
+  toast(`${pedido_num} finalizado e enviado ao financeiro! ✅`, 'ok');
+  await carregarPedidosPendentes();
+}
+
 async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome, categoria, nf_numero, conta_id, unidade_uso }) {
   const producao = localStorage.getItem('gc_integracao_fin') === 'producao';
 
@@ -500,7 +545,7 @@ async function carregarPedidosPendentes() {
   const { data, error } = await sb
     .from('cmp_compras')
     .select('id,pedido_num,data,data_entrega,fornecedor_nome,produto,categoria,unidade_med,quantidade,custo_unit,status_receb')
-    .or('status_receb.neq.recebido,status_receb.is.null')
+    .or('status_receb.is.null,status_receb.eq.pendente')
     .order('pedido_num', { ascending: false });
 
   const cont = document.getElementById('lista-pedidos');
@@ -525,6 +570,12 @@ async function carregarPedidosPendentes() {
   cont.innerHTML = Object.values(grupos).map(g => {
     const dataBR   = (g.data || '').split('-').reverse().join('/');
     const entregaBR = g.data_entrega ? g.data_entrega.split('-').reverse().join('/') : null;
+    const btnFinalizar = isCompExterna(g.forn)
+      ? `<button onclick="event.stopPropagation();finalizarPedidoCompExtMob('${esc(g.pedido_num)}')"
+           style="margin-top:8px;width:100%;padding:8px;background:#6f42c1;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+           🏁 Finalizar Pedido
+         </button>`
+      : '';
     return `<div class="pedido-card" onclick="abrirPedido('${esc(g.pedido_num)}')">
       <div class="pc-topo">
         <span class="pc-num">#${esc(g.pedido_num)}</span>
@@ -536,6 +587,7 @@ async function carregarPedidosPendentes() {
         ${entregaBR ? `<span>🚚 ${entregaBR}</span>` : ''}
         <span>📦 ${g.itens.length} item(ns)</span>
       </div>
+      ${btnFinalizar}
     </div>`;
   }).join('');
 }
@@ -550,7 +602,7 @@ async function abrirPedido(pedido_num) {
     .from('cmp_compras')
     .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo')
     .eq('pedido_num', pedido_num)
-    .or('status_receb.neq.recebido,status_receb.is.null')
+    .or('status_receb.is.null,status_receb.eq.pendente')
     .order('id');
 
   if (error || !itens?.length) { toast('Pedido não encontrado.', 'err'); return; }
@@ -791,55 +843,59 @@ async function confirmarRecebimento() {
   // 5. Cria ou atualiza conta a pagar + integra ao financeiro
   const isCompExt = isCompExterna(ref?.fornecedor_nome);
   const { data: conta } = await sb.from('cmp_contas_pagar')
-    .select('id,lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
-  if (conta) {
+    .select('id,lancamento_id,adiantamento_lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+
+  if (isCompExt) {
+    // Comprador Externo: acumula total de todos os recebimentos, não envia ao financeiro ainda
+    const { data: todosReceb } = await sb.from('cmp_recebimentos')
+      .select('total_recebido').eq('pedido_num', pedido_num);
+    const totalAcum = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+    if (conta) {
+      await sb.from('cmp_contas_pagar').update({
+        recebimento_id: receb.id, data_receb: dataRec, vencimento: venc, valor: totalAcum,
+      }).eq('id', conta.id);
+    } else {
+      await sb.from('cmp_contas_pagar').insert([{
+        pedido_num, recebimento_id: receb.id,
+        fornecedor: ref?.fornecedor_nome || '',
+        data_receb: dataRec, vencimento: venc, valor: totalAcum, status: 'pendente',
+      }]);
+    }
+    // Verifica se todos os itens foram recebidos → auto-finalizar
+    const { data: restantes } = await sb.from('cmp_compras')
+      .select('id').eq('pedido_num', pedido_num)
+      .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+    if (!restantes?.length) {
+      const { data: contaFinal } = await sb.from('cmp_contas_pagar')
+        .select('id,adiantamento_lancamento_id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+      if (contaFinal && !contaFinal.lancamento_id) {
+        await _executarFinalizarCompExtMob(pedido_num, contaFinal, ref);
+      }
+    }
+  } else if (conta) {
     await sb.from('cmp_contas_pagar').update({
       recebimento_id: receb.id, data_receb: dataRec,
       vencimento: venc, valor: totalRecebido, nf_numero: nf,
     }).eq('id', conta.id);
-    if (!isCompExt && conta.lancamento_id) {
-      // Fornecedor direto: sincroniza valor recebido com o lançamento no financeiro
-      await sb.from('lancamentos').update({
-        valor:     totalItens,
-        acrescimo: acrescimo,
-      }).eq('id', conta.lancamento_id);
-    }
-    if (isCompExt && !conta.lancamento_id) {
-      await enviarDespesaCompExternoMobile({
-        pedido_num, conta_id: conta.id, itensReceb,
-        itensOriginais: _pedidoAtual.itens,
-        totalRecebido, acrescimo, dataRec, vencimento: venc,
-        fornecedor_id: ref?.fornecedor_id || null, nf,
-      });
+    if (conta.lancamento_id) {
+      await sb.from('lancamentos').update({ valor: totalItens, acrescimo }).eq('id', conta.lancamento_id);
     }
   } else {
     const { data: novaConta } = await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
       data_receb: dataRec, vencimento: venc,
-      valor: totalRecebido, nf_numero: nf,
-      status: 'pendente',
+      valor: totalRecebido, nf_numero: nf, status: 'pendente',
     }]).select().single();
-
     if (novaConta) {
-      if (isCompExt) {
-        await enviarDespesaCompExternoMobile({
-          pedido_num, conta_id: novaConta.id, itensReceb,
-          itensOriginais: _pedidoAtual.itens,
-          totalRecebido, acrescimo, dataRec, vencimento: venc,
-          fornecedor_id: ref?.fornecedor_id || null, nf,
-        });
-      } else {
-        await gerarContaFinanceiroMobile({
-          pedido_num, vencimento: venc, valor: totalRecebido,
-          fornecedor_id:   ref?.fornecedor_id   || null,
-          fornecedor_nome: ref?.fornecedor_nome || '',
-          categoria:       ref?.categoria       || '',
-          nf_numero:       nf,
-          conta_id:        novaConta.id,
-          unidade_uso:     ref?.unidade_uso     || '',
-        });
-      }
+      await gerarContaFinanceiroMobile({
+        pedido_num, vencimento: venc, valor: totalRecebido,
+        fornecedor_id: ref?.fornecedor_id || null,
+        fornecedor_nome: ref?.fornecedor_nome || '',
+        categoria: ref?.categoria || '',
+        nf_numero: nf, conta_id: novaConta.id,
+        unidade_uso: ref?.unidade_uso || '',
+      });
     }
   }
 
