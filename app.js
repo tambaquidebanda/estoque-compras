@@ -2600,10 +2600,10 @@ function renderInventario() {
     const semProd = !p.produto_id ? ' title="Produto não encontrado no cadastro" style="color:#dc3545"' : '';
     const btnRemover = p.adicionado
       ? ` <button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="Remover produto adicionado"
-            onclick="removerProdInv('${esc(p.nome)}')" style="font-size:.75rem;vertical-align:middle">
+            onclick="removerProdInv(${esc(JSON.stringify(p.nome))})" style="font-size:.75rem;vertical-align:middle">
             <i class="bi bi-trash3"></i></button>`
       : ` <button class="btn btn-link btn-sm p-0 ms-1 text-secondary" title="Excluir da contagem"
-            onclick="excluirProdInv('${esc(p.nome)}')" style="font-size:.75rem;vertical-align:middle;opacity:.4" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.4">
+            onclick="excluirProdInv(${esc(JSON.stringify(p.nome))})" style="font-size:.75rem;vertical-align:middle;opacity:.4" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.4">
             <i class="bi bi-trash3"></i></button>`;
     return `<tr>
       <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
@@ -2643,7 +2643,7 @@ function filtrarProdAdd(query) {
   const matches  = cProdutosFT.filter(p => norm(p.nome).includes(q) && !jaExiste.has(norm(p.nome))).slice(0, 12);
   el.innerHTML = matches.length
     ? matches.map(p => `<button class="list-group-item list-group-item-action py-1 small"
-        onclick="confirmarAdicionarProdInv('${esc(p.nome)}')">${esc(p.nome)}</button>`).join('')
+        onclick="confirmarAdicionarProdInv(${esc(JSON.stringify(p.nome))})">${esc(p.nome)}</button>`).join('')
     : '<div class="list-group-item text-muted small">Nenhum produto encontrado.</div>';
 }
 async function confirmarAdicionarProdInv(nome) {
