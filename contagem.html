@@ -817,6 +817,9 @@ async function entrar() {
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
   await Promise.all([carregarProdutos(), carregarMapeamentos()]);
+  // Restaura última unidade selecionada — garante estrutura atualizada do Supabase
+  const savedLocal = localStorage.getItem('mob_local');
+  if (savedLocal) selecionarLocal(savedLocal);
 }
 
 async function carregarMapeamentos() {
@@ -839,6 +842,7 @@ async function sair() { await sb.auth.signOut(); location.reload(); }
 // ─── LOCAL ───────────────────────────────────────────────────────
 function selecionarLocal(l) {
   _local = l;
+  localStorage.setItem('mob_local', l);
   if (Object.keys(_todasEstruturasMob).length) _aplicarEstruturaLocalMob(l);
   document.querySelectorAll('.local-pills .pill').forEach(el => {
     el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
