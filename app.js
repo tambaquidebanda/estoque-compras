@@ -4946,6 +4946,14 @@ async function confirmarRecebimento() {
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
+  // Guard: impede receber pedido já finalizado no financeiro
+  const { data: _guardConta } = await sb.from('cmp_contas_pagar')
+    .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
+  if (_guardConta?.lancamento_id) {
+    toast('Este pedido já foi enviado ao financeiro e não pode ser recebido novamente.', 'erro');
+    return;
+  }
+
   // Salva recebimento cabeçalho
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel,
@@ -5697,11 +5705,13 @@ async function carregarCompras() {
   const rascunhoSet = new Set();
   const adiantSet   = new Set(); // pedidos com adiantamento_lancamento_id (advance separado)
   const valorRecebMap = {}; // pedido_num → valor efetivamente recebido (cmp_contas_pagar.valor)
+  const somaRecebMap  = {}; // pedido_num → soma de todos os cmp_recebimentos.total_recebido
   if (numeros.length) {
-    const [resLanc, resRasc, resContas] = await Promise.all([
+    const [resLanc, resRasc, resContas, resReceb] = await Promise.all([
       sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
       sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
       sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,adiantamento_lancamento_id,valor').in('pedido_num', numeros),
+      sb.from('cmp_recebimentos').select('pedido_num,total_recebido').in('pedido_num', numeros),
     ]);
     (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
@@ -5709,6 +5719,9 @@ async function carregarCompras() {
       if (c.lancamento_id)              lancSet.add(c.pedido_num);
       if (c.adiantamento_lancamento_id) adiantSet.add(c.pedido_num);
       if (c.valor > 0) valorRecebMap[c.pedido_num] = c.valor;
+    });
+    (resReceb.data  || []).forEach(r => {
+      somaRecebMap[r.pedido_num] = (somaRecebMap[r.pedido_num] || 0) + (r.total_recebido || 0);
     });
   }
 
@@ -5819,6 +5832,12 @@ async function carregarCompras() {
     const podeReabrir  = g.recebido && !aguardando;
     const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
     const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
+    const somaReceb    = somaRecebMap[g.pedido_num] || 0;
+    const cpValor      = valorRecebMap[g.pedido_num] || 0;
+    const divergeReceb = g.recebido && cpValor > 0 && Math.abs(somaReceb - cpValor) > 0.01;
+    const avisoReceb   = divergeReceb
+      ? ` <span data-bs-toggle="tooltip" data-bs-title="Múltiplos recebimentos: soma ${brl(somaReceb)} vs financeiro ${brl(cpValor)} — verifique antes de aprovar" style="color:#fd7e14;cursor:help">⚠️</span>`
+      : '';
     return `<tr style="cursor:pointer" onclick="toggleDetalheCompra('${g.pedido_num}', this)">
       <td>${dataBR}</td>
       <td><span class="badge" style="background:#FF6B35">${esc(g.pedido_num)}</span></td>
@@ -5829,7 +5848,7 @@ async function carregarCompras() {
       <td>${esc(g.comp||'—')}</td>
       <td class="text-center"><span class="badge bg-secondary">${g.itens.length}</span></td>
       <td class="text-center">${entregaBR}</td>
-      <td class="text-center fw-bold">${brl(g.total)}</td>
+      <td class="text-center fw-bold">${brl(g.total)}${avisoReceb}</td>
       <td class="text-center">
         <div class="d-flex flex-column gap-1 align-items-center">
           <span class="badge" style="background:${corEstoque}">${statusEstoque}</span>
@@ -6196,10 +6215,10 @@ async function salvarDadosProduto() {
     ativo:           document.getElementById('prod-ativo').checked,
   };
 
+  const nomeAntigo = _prodAtual.nome;
+
   const { error } = await sb.from('est_produtos').update(dados).eq('id', id);
   if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
-
-  toast('✅ Produto atualizado com sucesso!', 'ok');
 
   // Atualiza cache local
   const idx = cProdutosFT.findIndex(p => p.id === id);
@@ -6207,8 +6226,60 @@ async function salvarDadosProduto() {
   _prodAtual = { ..._prodAtual, ...dados };
   document.getElementById('prod-titulo').textContent = dados.nome;
 
+  // Se o nome mudou, propaga para estrutura de contagem e mapeamentos
+  if (nomeAntigo && dados.nome && nomeAntigo !== dados.nome) {
+    await _renomearProdutoNaEstrutura(nomeAntigo, dados.nome);
+    toast('✅ Produto atualizado e estrutura de contagem sincronizada!', 'ok');
+  } else {
+    toast('✅ Produto atualizado com sucesso!', 'ok');
+  }
+
   // Recalcula todas as fichas que usam este produto como ingrediente
   await recalcularFichasDoIngrediente(id);
+}
+
+async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
+  let mudouEstrutura = false;
+  let mudouMapea     = false;
+
+  // Atualiza _todasEstruturas: varre todas as unidades → setores → grupos
+  Object.values(_todasEstruturas).forEach(unidade => {
+    Object.values(unidade).forEach(grupos => {
+      Object.keys(grupos).forEach(grupo => {
+        const prods = grupos[grupo];
+        if (!Array.isArray(prods)) return;
+        const i = prods.indexOf(nomeAntigo);
+        if (i >= 0) { prods[i] = nomeNovo; mudouEstrutura = true; }
+      });
+    });
+  });
+
+  // Atualiza _invAdicoes se o nome antigo aparecer nos arrays de adições
+  Object.values(_invAdicoes).forEach(arr => {
+    if (!Array.isArray(arr)) return;
+    const i = arr.indexOf(nomeAntigo);
+    if (i >= 0) { arr[i] = nomeNovo; mudouEstrutura = true; }
+  });
+
+  // Atualiza _invMapeamentos: se o nome antigo for chave, move para nova chave
+  if (_invMapeamentos[nomeAntigo] !== undefined) {
+    _invMapeamentos[nomeNovo] = _invMapeamentos[nomeAntigo];
+    delete _invMapeamentos[nomeAntigo];
+    mudouMapea = true;
+  }
+
+  const upserts = [];
+  if (mudouEstrutura) upserts.push(
+    sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas }),
+    sb.from('inv_configuracoes').upsert({ chave: 'adicoes',   valor: _invAdicoes }),
+  );
+  if (mudouMapea) upserts.push(
+    sb.from('inv_configuracoes').upsert({ chave: 'mapeamentos', valor: _invMapeamentos }),
+  );
+  if (upserts.length) await Promise.all(upserts);
+
+  // Re-aplica estrutura na tela atual
+  if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
 }
 
 async function recalcularFichasDoIngrediente(ingredienteId) {

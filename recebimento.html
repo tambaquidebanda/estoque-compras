@@ -842,6 +842,15 @@ async function confirmarRecebimento() {
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
+  // Guard: impede receber pedido já finalizado no financeiro
+  const { data: _guardConta } = await sb.from('cmp_contas_pagar')
+    .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
+  if (_guardConta?.lancamento_id) {
+    toast('Este pedido já foi enviado ao financeiro e não pode ser recebido novamente.', 'err');
+    btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
+    return;
+  }
+
   // 1. Cabeçalho do recebimento
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel: resp,
