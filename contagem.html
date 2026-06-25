@@ -1523,6 +1523,17 @@ async function confirmarRecebimento() {
 
 // ─── EMERGÊNCIA ──────────────────────────────────────────────────
 let _emergIdxMob = 0;
+let _produtosEmerg = [];
+
+function _buildProdutosEmerg() {
+  const estruturaSetor = INVENTARIO_ESTRUTURA[_setor] || {};
+  const nomes = new Set();
+  Object.values(estruturaSetor).flat().forEach(n => nomes.add(n.trim().toUpperCase()));
+  Object.entries(_invAdicoes).forEach(([chave, lista]) => {
+    if (chave.startsWith(_setor + '|')) lista.forEach(n => nomes.add(n.trim().toUpperCase()));
+  });
+  _produtosEmerg = (_todosProdutos || []).filter(p => nomes.has(p.nome.trim().toUpperCase()));
+}
 
 function _rowEmergMob(idx) {
   const primeiroRow = idx === 0;
@@ -1555,6 +1566,7 @@ function removerItemEmergMob(idx) {
 function abrirEmergencia() {
   if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
   _emergIdxMob = 0;
+  _buildProdutosEmerg();
   document.getElementById('emerg-setor-nome').textContent = _setor;
   document.getElementById('emerg-itens').innerHTML = _rowEmergMob(0);
   document.getElementById('emerg-obs').value = '';
@@ -1566,7 +1578,7 @@ function buscarEmergMob(idx) {
   const el = document.getElementById(`emerg-sugest-${idx}`);
   if (q.length < 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
 
-  const hits = (_todosProdutos || []).filter(p => norm(p.nome).includes(q)).slice(0, 10);
+  const hits = _produtosEmerg.filter(p => norm(p.nome).includes(q)).slice(0, 10);
   if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
   el.innerHTML = hits.map(p =>
     `<div class="sug-item" data-id="${esc(p.id)}" data-nome="${esc(p.nome)}">${esc(p.nome)}</div>`
