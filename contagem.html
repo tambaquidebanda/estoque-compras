@@ -1568,10 +1568,14 @@ function buscarEmergMob(idx) {
 
   const hits = (_todosProdutos || []).filter(p => norm(p.nome).includes(q)).slice(0, 10);
   if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
-  el.innerHTML = hits.map(p => `<div class="sug-item">${esc(p.nome)}</div>`).join('');
-  el.querySelectorAll('.sug-item').forEach((item, i) => {
-    item.addEventListener('click', () => _selProdEmergMob(idx, hits[i].id, hits[i].nome));
-  });
+  el.innerHTML = hits.map(p =>
+    `<div class="sug-item" data-id="${esc(p.id)}" data-nome="${esc(p.nome)}">${esc(p.nome)}</div>`
+  ).join('');
+  el.onclick = (e) => {
+    const item = e.target.closest('.sug-item[data-id]');
+    if (!item) return;
+    _selProdEmergMob(idx, item.dataset.id, item.dataset.nome);
+  };
   el.style.display = 'block';
 }
 
