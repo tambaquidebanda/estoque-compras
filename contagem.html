@@ -648,24 +648,13 @@
       <div style="font-size:.78rem;color:var(--txt2);margin-bottom:1rem">
         Setor: <strong id="emerg-setor-nome" style="color:var(--txt)"></strong>
       </div>
-      <label>Grupo</label>
-      <div class="grupos-scroll" id="emerg-grupos" style="margin-bottom:.9rem"></div>
-      <label>Produto</label>
-      <input type="text" id="emerg-busca" placeholder="Digite para buscar..." oninput="buscarEmerg()"
-        autocomplete="off" autocorrect="off" spellcheck="false">
-      <div id="emerg-sugestoes" class="sug-wrap" style="display:none"></div>
-      <input type="hidden" id="emerg-prod-id">
-      <div id="emerg-prod-sel" class="prod-sel" style="display:none"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
-        <div>
-          <label>Quantidade</label>
-          <input type="number" id="emerg-qtd" min="0" step="1" placeholder="0" inputmode="decimal">
-        </div>
-        <div>
-          <label>Obs. <span style="font-weight:400;font-size:.75rem">(opcional)</span></label>
-          <input type="text" id="emerg-obs" placeholder="Motivo">
-        </div>
-      </div>
+      <div id="emerg-itens"></div>
+      <button type="button" onclick="adicionarItemEmergMob()"
+        style="width:100%;margin:.5rem 0 1rem;padding:.6rem;border:1.5px dashed var(--accent);border-radius:10px;background:transparent;color:var(--accent);font-size:.9rem;font-weight:600">
+        + Adicionar Produto
+      </button>
+      <label>Obs. <span style="font-weight:400;font-size:.75rem">(opcional)</span></label>
+      <input type="text" id="emerg-obs" placeholder="Motivo">
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="fecharModal('modal-emerg')">Cancelar</button>
@@ -1533,57 +1522,53 @@ async function confirmarRecebimento() {
 }
 
 // ─── EMERGÊNCIA ──────────────────────────────────────────────────
-let _emergGrupo   = null;
-let _emergProdId  = null;
-let _emergProdNome = null;
+let _emergIdxMob = 0;
+
+function _rowEmergMob(idx) {
+  const primeiroRow = idx === 0;
+  return `<div id="emerg-row-${idx}" style="border:1px solid var(--brd);border-radius:10px;padding:.75rem;margin-bottom:.6rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+      <span style="font-size:.78rem;color:var(--txt2);font-weight:600">Produto ${primeiroRow ? '' : idx + 1}</span>
+      ${primeiroRow ? '' : `<button type="button" onclick="removerItemEmergMob(${idx})"
+        style="background:none;border:none;color:#dc3545;font-size:1.1rem;padding:0;line-height:1">✕</button>`}
+    </div>
+    <input type="text" id="emerg-busca-${idx}" placeholder="Digite para buscar..."
+      oninput="buscarEmergMob(${idx})" autocomplete="off" autocorrect="off" spellcheck="false"
+      style="margin-bottom:.35rem">
+    <div id="emerg-sugest-${idx}" class="sug-wrap" style="display:none"></div>
+    <input type="hidden" id="emerg-id-${idx}">
+    <div id="emerg-sel-${idx}" class="prod-sel" style="display:none"></div>
+    <label style="margin-top:.4rem">Quantidade</label>
+    <input type="number" id="emerg-qtd-${idx}" min="0" step="1" placeholder="0" inputmode="decimal">
+  </div>`;
+}
+
+function adicionarItemEmergMob() {
+  _emergIdxMob++;
+  document.getElementById('emerg-itens').insertAdjacentHTML('beforeend', _rowEmergMob(_emergIdxMob));
+}
+
+function removerItemEmergMob(idx) {
+  document.getElementById(`emerg-row-${idx}`)?.remove();
+}
 
 function abrirEmergencia() {
   if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
-  _emergGrupo    = null;
-  _emergProdId   = null;
-  _emergProdNome = null;
+  _emergIdxMob = 0;
   document.getElementById('emerg-setor-nome').textContent = _setor;
-  document.getElementById('emerg-busca').value = '';
-  document.getElementById('emerg-prod-id').value = '';
-  document.getElementById('emerg-sugestoes').innerHTML = '';
-  document.getElementById('emerg-sugestoes').style.display = 'none';
-  document.getElementById('emerg-prod-sel').style.display  = 'none';
-  document.getElementById('emerg-qtd').value = '';
+  document.getElementById('emerg-itens').innerHTML = _rowEmergMob(0);
   document.getElementById('emerg-obs').value = '';
-  _renderEmergGrupos();
   mostrarModal('modal-emerg');
 }
 
-function _renderEmergGrupos() {
-  const grupos = Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
-  document.getElementById('emerg-grupos').innerHTML = grupos.map(g =>
-    `<button class="grupo-chip${g === _emergGrupo ? ' ativo' : ''}"
-      onclick="_selecionarEmergGrupo('${g.replace(/'/g,"\\'")}')">${esc(g)}</button>`
-  ).join('');
-}
-
-function _selecionarEmergGrupo(grupo) {
-  _emergGrupo    = grupo;
-  _emergProdId   = null;
-  _emergProdNome = null;
-  document.getElementById('emerg-busca').value = '';
-  document.getElementById('emerg-prod-sel').style.display = 'none';
-  document.getElementById('emerg-sugestoes').style.display = 'none';
-  _renderEmergGrupos();
-}
-
-function buscarEmerg() {
-  const q  = norm(document.getElementById('emerg-busca')?.value || '');
-  const el = document.getElementById('emerg-sugestoes');
+function buscarEmergMob(idx) {
+  const q  = norm(document.getElementById(`emerg-busca-${idx}`)?.value || '');
+  const el = document.getElementById(`emerg-sugest-${idx}`);
   if (q.length < 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
 
-  // Produtos candidatos: grupo selecionado → produtos do grupo; sem grupo → todos do setor
-  let candidatos = [];
-  const grupos = _emergGrupo
-    ? [_emergGrupo]
-    : Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
-  grupos.forEach(grp => {
-    (INVENTARIO_ESTRUTURA[_setor]?.[grp] || []).forEach(nome => {
+  const candidatos = [];
+  Object.values(INVENTARIO_ESTRUTURA[_setor] || {}).forEach(prods => {
+    prods.forEach(nome => {
       if (!candidatos.some(c => c.nome === nome)) {
         const nomeReal = _mapeamentos[nome] || nome;
         const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
@@ -1595,43 +1580,52 @@ function buscarEmerg() {
   const hits = candidatos.filter(c => norm(c.nome).includes(q)).slice(0, 8);
   if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
   el.innerHTML = hits.map(c =>
-    `<div class="sug-item" onclick="_selProdEmerg('${esc(c.produto_id||'')}','${esc(c.nome)}')">${esc(c.nome)}</div>`
+    `<div class="sug-item" onclick="_selProdEmergMob(${idx},${JSON.stringify(c.produto_id||'')},${JSON.stringify(c.nome)})">${esc(c.nome)}</div>`
   ).join('');
   el.style.display = 'block';
 }
 
-function _selProdEmerg(id, nome) {
-  _emergProdId   = id;
-  _emergProdNome = nome;
-  document.getElementById('emerg-prod-id').value = id;
-  document.getElementById('emerg-busca').value   = nome;
-  document.getElementById('emerg-sugestoes').style.display = 'none';
-  const el = document.getElementById('emerg-prod-sel');
+function _selProdEmergMob(idx, id, nome) {
+  document.getElementById(`emerg-id-${idx}`).value    = id;
+  document.getElementById(`emerg-busca-${idx}`).value = nome;
+  document.getElementById(`emerg-sugest-${idx}`).style.display = 'none';
+  const el = document.getElementById(`emerg-sel-${idx}`);
   el.textContent   = '✅ ' + nome;
   el.style.display = 'block';
 }
 
 async function enviarEmergencia() {
-  const prodNome = _emergProdNome || document.getElementById('emerg-busca')?.value?.trim();
-  const prodId   = _emergProdId  || document.getElementById('emerg-prod-id')?.value?.trim();
-  const qtd      = parseQtd(document.getElementById('emerg-qtd')?.value);
-  const obs      = (document.getElementById('emerg-obs')?.value || '').trim();
-  const resp     = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  if (!prodNome) { toast('Selecione um produto.', 'err'); return; }
-  if (qtd <= 0)  { toast('Informe a quantidade.', 'err'); return; }
+  const obs  = (document.getElementById('emerg-obs')?.value || '').trim();
+  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+
+  const itens = [];
+  for (const row of document.querySelectorAll('[id^="emerg-row-"]')) {
+    const idx      = row.id.replace('emerg-row-', '');
+    const prodNome = (document.getElementById(`emerg-busca-${idx}`)?.value || '').trim();
+    const prodId   = (document.getElementById(`emerg-id-${idx}`)?.value   || '').trim();
+    const qtd      = parseQtd(document.getElementById(`emerg-qtd-${idx}`)?.value);
+    if (!prodNome) continue;
+    if (qtd <= 0) { toast(`Informe a quantidade para "${prodNome}".`, 'err'); return; }
+    itens.push({ produto_id: prodId || null, nome: prodNome, qtd_pedida: qtd });
+  }
+
+  if (!itens.length) { toast('Adicione ao menos um produto.', 'err'); return; }
+
   const data = new Date().toISOString().slice(0, 10);
   const { data: ultPeds } = await sb.from('pedidos_internos').select('num_pedido').order('criado_em',{ascending:false}).limit(1);
   const ultN = ultPeds?.[0]?.num_pedido ? parseInt(ultPeds[0].num_pedido.replace(/\D/g,''))||0 : 0;
   const num_pedido = 'PED-' + String(ultN+1).padStart(4,'0');
+
   const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
     num_pedido, data, dia_semana: _feriado ? 'feriado' : _dia,
     setor: _setor, local: _local, tipo: 'emergencia', status: 'pendente', responsavel: resp,
-    obs: obs || (_emergGrupo ? `${_emergGrupo} — emergência` : 'emergência'),
+    obs: obs || 'emergência',
   }).select().single();
   if (e1) { toast('Erro: ' + e1.message, 'err'); return; }
-  await sb.from('pedidos_internos_itens').insert({ pedido_id: ped.id, produto_id: prodId || null, nome: prodNome, qtd_pedida: qtd });
+
+  await sb.from('pedidos_internos_itens').insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
   fecharModal('modal-emerg');
-  toast(`${num_pedido} (emergência) enviado! ✅`, 'ok');
+  toast(`${num_pedido} (emergência) enviado com ${itens.length} item(s)! ✅`, 'ok');
 }
 </script>
 </body>
