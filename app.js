@@ -3858,51 +3858,83 @@ async function confirmarRecebimentoTransf(pedidoId) {
   await _carregarTransfSolicitacoes(_invLocal || 'Centro');
 }
 
+let _emergIdx = 0;
+
+function _rowEmerg(idx) {
+  const podeDeletar = idx > 0;
+  return `<div class="d-flex gap-2 align-items-start mb-2" id="emerg-row-${idx}">
+    <div class="flex-grow-1">
+      <input type="text" class="form-control form-control-sm" id="emerg-busca-${idx}"
+        placeholder="Buscar produto..." oninput="buscarProdutoEmerg(${idx})" autocomplete="off">
+      <div id="emerg-sugest-${idx}" class="list-group mt-1" style="max-height:160px;overflow-y:auto;position:relative;z-index:10"></div>
+      <input type="hidden" id="emerg-id-${idx}">
+    </div>
+    <div style="width:85px">
+      <input type="number" class="form-control form-control-sm text-center" id="emerg-qtd-${idx}"
+        min="1" step="1" placeholder="Qtd">
+    </div>
+    ${podeDeletar
+      ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="removerItemEmerg(${idx})"><i class="bi bi-x"></i></button>`
+      : `<div style="width:31px"></div>`}
+  </div>`;
+}
+
+function adicionarItemEmerg() {
+  _emergIdx++;
+  document.getElementById('emerg-itens').insertAdjacentHTML('beforeend', _rowEmerg(_emergIdx));
+}
+
+function removerItemEmerg(idx) {
+  document.getElementById(`emerg-row-${idx}`)?.remove();
+}
+
 function abrirEmergencia() {
+  _emergIdx = 0;
   const sel = document.getElementById('emerg-setor');
   if (sel && _invSetor) sel.value = _invSetor;
-  document.getElementById('emerg-produto-busca').value = '';
-  document.getElementById('emerg-produto-id').value   = '';
-  document.getElementById('emerg-sugestoes').innerHTML = '';
-  document.getElementById('emerg-produto-sel').classList.add('d-none');
-  document.getElementById('emerg-qtd').value = '';
-  document.getElementById('emerg-obs').value = '';
+  document.getElementById('emerg-itens').innerHTML = _rowEmerg(0);
+  document.getElementById('emerg-obs').value  = '';
   const resp = document.getElementById('inv-resp')?.value || '';
   document.getElementById('emerg-resp').value = resp;
   new bootstrap.Modal(document.getElementById('modal-emergencia')).show();
 }
 
-function buscarProdutoEmerg() {
-  const q  = (document.getElementById('emerg-produto-busca')?.value || '').trim().toLowerCase();
-  const el = document.getElementById('emerg-sugestoes');
+function buscarProdutoEmerg(idx) {
+  const q  = (document.getElementById(`emerg-busca-${idx}`)?.value || '').trim().toLowerCase();
+  const el = document.getElementById(`emerg-sugest-${idx}`);
   if (q.length < 2) { el.innerHTML = ''; return; }
   const hits = cProdutosFT.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 10);
   el.innerHTML = hits.length
     ? hits.map(p => `<button type="button" class="list-group-item list-group-item-action py-1 small"
-        onclick="selecionarProdEmerg('${p.id}','${esc(p.nome)}')">${esc(p.nome)}</button>`).join('')
+        onclick="selecionarProdEmerg(${idx},${JSON.stringify(p.id)},${JSON.stringify(p.nome)})">${esc(p.nome)}</button>`).join('')
     : '<div class="list-group-item text-muted small py-1">Nenhum produto encontrado.</div>';
 }
 
-function selecionarProdEmerg(id, nome) {
-  document.getElementById('emerg-produto-id').value   = id;
-  document.getElementById('emerg-produto-busca').value = nome;
-  document.getElementById('emerg-sugestoes').innerHTML = '';
-  const sel = document.getElementById('emerg-produto-sel');
-  sel.textContent = '✅ ' + nome;
-  sel.classList.remove('d-none');
+function selecionarProdEmerg(idx, id, nome) {
+  document.getElementById(`emerg-id-${idx}`).value    = id;
+  document.getElementById(`emerg-busca-${idx}`).value = nome;
+  document.getElementById(`emerg-sugest-${idx}`).innerHTML = '';
 }
 
 async function enviarEmergencia() {
-  const setor    = document.getElementById('emerg-setor')?.value?.trim();
-  const prodId   = document.getElementById('emerg-produto-id')?.value?.trim();
-  const prodNome = document.getElementById('emerg-produto-busca')?.value?.trim();
-  const qtd      = parseQtd(document.getElementById('emerg-qtd')?.value);
-  const resp     = (document.getElementById('emerg-resp')?.value || '').trim();
-  const obs      = (document.getElementById('emerg-obs')?.value  || '').trim();
+  const setor = document.getElementById('emerg-setor')?.value?.trim();
+  const resp  = (document.getElementById('emerg-resp')?.value || '').trim();
+  const obs   = (document.getElementById('emerg-obs')?.value  || '').trim();
 
-  if (!setor)    { toast('Selecione o setor.', 'warn');    return; }
-  if (!prodNome) { toast('Selecione um produto.', 'warn'); return; }
-  if (qtd <= 0)  { toast('Informe a quantidade.', 'warn'); return; }
+  if (!setor) { toast('Selecione o setor.', 'warn'); return; }
+
+  const itens = [];
+  for (const row of document.querySelectorAll('[id^="emerg-row-"]')) {
+    const idx      = row.id.replace('emerg-row-', '');
+    const prodNome = (document.getElementById(`emerg-busca-${idx}`)?.value || '').trim();
+    const prodId   = (document.getElementById(`emerg-id-${idx}`)?.value   || '').trim();
+    const qtd      = parseQtd(document.getElementById(`emerg-qtd-${idx}`)?.value);
+    if (!prodNome) continue;
+    if (qtd <= 0) { toast(`Informe a quantidade para "${prodNome}".`, 'warn'); return; }
+    itens.push({ produto_id: prodId || null, nome: prodNome, qtd_pedida: qtd });
+  }
+
+  if (!itens.length) { toast('Adicione ao menos um produto.', 'warn'); return; }
 
   const numPed = await _proximoNumPedido();
   const data   = new Date().toISOString().slice(0, 10);
@@ -3917,15 +3949,10 @@ async function enviarEmergencia() {
 
   if (e1) { toast('Erro: ' + e1.message, 'erro'); return; }
 
-  await sb.from('pedidos_internos_itens').insert({
-    pedido_id: ped.id,
-    produto_id: prodId || null,
-    nome: prodNome,
-    qtd_pedida: qtd,
-  });
+  await sb.from('pedidos_internos_itens').insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-emergencia'))?.hide();
-  toast(`${numPed} (emergência) enviado! ✅`, 'ok');
+  toast(`${numPed} (emergência) enviado com ${itens.length} item(s)! ✅`, 'ok');
 }
 
 // ─── PINs Mobile ─────────────────────────────────────────────────
