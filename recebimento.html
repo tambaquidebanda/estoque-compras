@@ -328,12 +328,24 @@ function mascaraMoeda(el) {
   const dec    = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 2) : null;
   el.value     = dec !== null ? `${intFmt},${dec}` : intFmt;
 }
+function mascaraMoeda4(el) {
+  let v = el.value.replace(/[^\d,]/g, '');
+  const partes = v.split(',');
+  const intRaw = partes[0].replace(/\D/g, '');
+  const intFmt = intRaw ? parseInt(intRaw, 10).toLocaleString('pt-BR') : '';
+  const dec    = partes[1] !== undefined ? partes[1].replace(/\D/g, '').slice(0, 4) : null;
+  el.value     = dec !== null ? `${intFmt},${dec}` : intFmt;
+}
 function moedaFocus(el) {
   if (el.value.endsWith(',00')) el.value = el.value.slice(0, -3);
 }
 function moedaBlur(el) {
   const n = parseFloat((el.value || '0').replace(/\./g,'').replace(',','.')) || 0;
   el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
+function moedaBlur4(el) {
+  const n = parseFloat((el.value || '0').replace(/\./g,'').replace(',','.')) || 0;
+  el.value = n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '';
 }
 function parseMoeda(id) {
   const v = document.getElementById(id)?.value || '0';
@@ -668,7 +680,7 @@ async function abrirPedido(pedido_num) {
 
   document.getElementById('rec-itens').innerHTML = itens.map(it => {
     const qtdFmt  = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
-    const precoFmt = (it.custo_unit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const precoFmt = (it.custo_unit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:4});
     const total   = (it.quantidade||0) * (it.custo_unit||0);
     const sid     = String(it.id);
     return `<div class="item-card" id="ic-${sid}">
@@ -705,8 +717,8 @@ async function abrirPedido(pedido_num) {
               <span class="campo-rs">R$</span>
               <input type="text" inputmode="decimal" class="campo-text" id="pu-${sid}"
                 value="${precoFmt}"
-                oninput="mascaraMoeda(this);atualizarTotal('${sid}',${it.quantidade||0})"
-                onblur="moedaBlur(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                oninput="mascaraMoeda4(this);atualizarTotal('${sid}',${it.quantidade||0})"
+                onblur="moedaBlur4(this);atualizarTotal('${sid}',${it.quantidade||0})"
                 onfocus="moedaFocus(this)">
             </div>
           </div>
