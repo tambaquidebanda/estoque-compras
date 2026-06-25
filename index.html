@@ -1258,6 +1258,16 @@
                 <option value="recebido">Recebidos</option>
                 <option value="">Todos</option>
               </select>
+              <select class="form-select form-select-sm" id="fil-ped-tipo" style="width:145px"
+                onchange="carregarPedidosInternos()">
+                <option value="">Todos os tipos</option>
+                <option value="normal">📋 Normal</option>
+                <option value="emergencia">🚨 Emergência</option>
+              </select>
+              <input type="date" id="fil-ped-data-ini" class="form-control form-control-sm" style="width:145px"
+                title="Data inicial" onchange="carregarPedidosInternos()">
+              <input type="date" id="fil-ped-data-fim" class="form-control form-control-sm" style="width:145px"
+                title="Data final" onchange="carregarPedidosInternos()">
               <button class="btn btn-sm btn-outline-secondary" onclick="carregarPedidosInternos()">
                 <i class="bi bi-arrow-clockwise"></i>
               </button>
@@ -1288,6 +1298,16 @@
                 <option value="liberado">Liberados</option>
                 <option value="recebido">Recebidos</option>
               </select>
+              <select class="form-select form-select-sm" id="fil-meus-tipo" style="width:145px"
+                onchange="carregarMeusPedidos()">
+                <option value="">Todos os tipos</option>
+                <option value="normal">📋 Normal</option>
+                <option value="emergencia">🚨 Emergência</option>
+              </select>
+              <input type="date" id="fil-meus-data-ini" class="form-control form-control-sm" style="width:145px"
+                title="Data inicial" onchange="carregarMeusPedidos()">
+              <input type="date" id="fil-meus-data-fim" class="form-control form-control-sm" style="width:145px"
+                title="Data final" onchange="carregarMeusPedidos()">
               <button class="btn btn-sm btn-outline-secondary" onclick="carregarMeusPedidos()">
                 <i class="bi bi-arrow-clockwise"></i>
               </button>

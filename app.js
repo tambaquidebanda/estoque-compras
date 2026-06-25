@@ -3300,14 +3300,20 @@ function _limparCamposEstoque() {
 }
 
 async function carregarPedidosInternos() {
-  const local  = document.getElementById('fil-ped-local')?.value  || '';
-  const setor  = document.getElementById('fil-ped-setor')?.value  || '';
-  const status = document.getElementById('fil-ped-status')?.value || '';
+  const local    = document.getElementById('fil-ped-local')?.value     || '';
+  const setor    = document.getElementById('fil-ped-setor')?.value     || '';
+  const status   = document.getElementById('fil-ped-status')?.value    || '';
+  const tipo     = document.getElementById('fil-ped-tipo')?.value      || '';
+  const dataIni  = document.getElementById('fil-ped-data-ini')?.value  || '';
+  const dataFim  = document.getElementById('fil-ped-data-fim')?.value  || '';
 
-  let q = sb.from('pedidos_internos').select('*').neq('tipo', 'transferencia').order('criado_em', { ascending: false }).limit(100);
-  if (local)  q = q.eq('local', local);
-  if (setor)  q = q.eq('setor', setor);
-  if (status) q = q.eq('status', status);
+  let q = sb.from('pedidos_internos').select('*').neq('tipo', 'transferencia').order('criado_em', { ascending: false }).limit(200);
+  if (local)   q = q.eq('local', local);
+  if (setor)   q = q.eq('setor', setor);
+  if (status)  q = q.eq('status', status);
+  if (tipo)    q = q.eq('tipo', tipo);
+  if (dataIni) q = q.gte('data', dataIni);
+  if (dataFim) q = q.lte('data', dataFim);
 
   const { data: peds, error } = await q;
   if (error) { toast('Erro ao carregar pedidos: ' + error.message, 'erro'); return; }
@@ -3322,14 +3328,20 @@ async function carregarPedidosInternos() {
 }
 
 async function carregarMeusPedidos() {
-  const setor  = document.getElementById('fil-meus-setor')?.value  || '';
-  const status = document.getElementById('fil-meus-status')?.value || '';
+  const setor   = document.getElementById('fil-meus-setor')?.value     || '';
+  const status  = document.getElementById('fil-meus-status')?.value    || '';
+  const tipo    = document.getElementById('fil-meus-tipo')?.value      || '';
+  const dataIni = document.getElementById('fil-meus-data-ini')?.value  || '';
+  const dataFim = document.getElementById('fil-meus-data-fim')?.value  || '';
 
   const el = document.getElementById('lst-meus-pedidos');
   if (!setor) { el.innerHTML = '<p class="text-muted text-center py-4">Selecione um setor.</p>'; return; }
 
-  let q = sb.from('pedidos_internos').select('*').eq('setor', setor).order('criado_em', { ascending: false }).limit(50);
-  if (status) q = q.eq('status', status);
+  let q = sb.from('pedidos_internos').select('*').eq('setor', setor).order('criado_em', { ascending: false }).limit(200);
+  if (status)  q = q.eq('status', status);
+  if (tipo)    q = q.eq('tipo', tipo);
+  if (dataIni) q = q.gte('data', dataIni);
+  if (dataFim) q = q.lte('data', dataFim);
 
   const { data: peds, error } = await q;
   if (error) { toast('Erro: ' + error.message, 'erro'); return; }
