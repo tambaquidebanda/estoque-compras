@@ -3250,7 +3250,7 @@ async function salvarSaldoContagemDesktop() {
   // Atualiza saldo absoluto
   const saldoRows = itensCont.filter(it => it.produto_id)
     .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows);
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
 
   toast(`${num_inv} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; }
