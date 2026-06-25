@@ -3449,17 +3449,47 @@ let _pedLiberarId = null;
 
 async function abrirLiberarPedido(pedidoId) {
   _pedLiberarId = pedidoId;
-  const { data: ped } = await sb.from('pedidos_internos').select('*').eq('id', pedidoId).single();
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
+  const [{ data: ped }, { data: itens }] = await Promise.all([
+    sb.from('pedidos_internos').select('*').eq('id', pedidoId).single(),
+    sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId),
+  ]);
 
-  const rows = (itens || []).map(it => `<tr>
-    <td>${esc(it.nome)}</td>
-    <td class="text-center">${it.qtd_pedida ?? '—'}</td>
-    <td class="text-center" style="width:130px">
-      <input type="number" class="form-control form-control-sm text-center"
-        id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
-    </td>
-  </tr>`).join('');
+  // Busca contagem relacionada (mesmo setor + local + data + grupo)
+  const estoqueMap = {};
+  const { data: invs } = await sb.from('est_inventarios')
+    .select('id').eq('setor', ped?.setor).eq('local', ped?.local)
+    .eq('data', ped?.data).eq('grupo', ped?.obs)
+    .order('criado_em', { ascending: false }).limit(1);
+  if (invs?.[0]) {
+    const { data: invItens } = await sb.from('est_inventario_itens')
+      .select('nome,estoque').eq('inventario_id', invs[0].id);
+    (invItens || []).forEach(i => { estoqueMap[i.nome?.trim().toUpperCase()] = i.estoque; });
+  }
+
+  const getPad = (nome) => {
+    const entry = _invPadroes[`${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
+    if (entry === undefined || entry === null) return '—';
+    if (typeof entry === 'number') return entry;
+    const val = entry[ped?.dia_semana];
+    return val !== undefined ? val : '—';
+  };
+
+  const rows = (itens || []).map(it => {
+    const est = estoqueMap[it.nome?.trim().toUpperCase()];
+    const pad = getPad(it.nome || '');
+    const estFmt = est !== undefined ? est : '—';
+    const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:600' : 'color:#fd7e14;font-weight:600';
+    return `<tr>
+      <td>${esc(it.nome)}</td>
+      <td class="text-center text-muted">${pad}</td>
+      <td class="text-center" style="${estCor}">${estFmt}</td>
+      <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+      <td class="text-center" style="width:110px">
+        <input type="number" class="form-control form-control-sm text-center"
+          id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
+      </td>
+    </tr>`;
+  }).join('');
 
   document.getElementById('modal-liberar-body').innerHTML = `
     <div class="alert alert-success py-2 mb-3">
@@ -3471,6 +3501,8 @@ async function abrirLiberarPedido(pedidoId) {
       <table class="table table-sm align-middle">
         <thead class="table-light"><tr>
           <th>Produto</th>
+          <th class="text-center text-muted" title="Quantidade padrão para o dia">Padrão</th>
+          <th class="text-center" title="Estoque contado na contagem">Estoque</th>
           <th class="text-center">Pedido</th>
           <th class="text-center">Qtd. a Liberar</th>
         </tr></thead>

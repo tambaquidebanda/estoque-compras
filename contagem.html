@@ -1377,16 +1377,56 @@ function _cardMeusPedidos(ped, its) {
 // ─── MODAL LIBERAR ───────────────────────────────────────────────
 async function abrirLiberarPedido(id) {
   _pedLiberarId = id;
-  const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
-  const rows = (itens||[]).map(it=>`<tr>
-    <td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td>
-    <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="1" inputmode="decimal"></td>
-  </tr>`).join('');
+  const [{ data: ped }, { data: itens }] = await Promise.all([
+    sb.from('pedidos_internos').select('*').eq('id',id).single(),
+    sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id),
+  ]);
+
+  // Busca contagem relacionada
+  const estoqueMap = {};
+  const { data: invs } = await sb.from('est_inventarios')
+    .select('id').eq('setor', ped?.setor).eq('local', ped?.local)
+    .eq('data', ped?.data).eq('grupo', ped?.obs)
+    .order('criado_em', { ascending: false }).limit(1);
+  if (invs?.[0]) {
+    const { data: invItens } = await sb.from('est_inventario_itens')
+      .select('nome,estoque').eq('inventario_id', invs[0].id);
+    (invItens||[]).forEach(i => { estoqueMap[i.nome?.trim().toUpperCase()] = i.estoque; });
+  }
+
+  const getPad = (nome) => {
+    const entry = _padroes[`${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
+    if (entry === undefined || entry === null) return '—';
+    if (typeof entry === 'number') return entry;
+    const chave = _feriado ? 'feriado' : _dia;
+    const val = entry[chave];
+    return val !== undefined ? val : '—';
+  };
+
+  const rows = (itens||[]).map(it => {
+    const est = estoqueMap[it.nome?.trim().toUpperCase()];
+    const pad = getPad(it.nome||'');
+    const estFmt = est !== undefined ? est : '—';
+    const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:700' : 'color:#fd7e14;font-weight:700';
+    return `<tr>
+      <td style="font-size:.8rem">${esc(it.nome)}</td>
+      <td style="text-align:center;color:#6c757d;font-size:.8rem">${pad}</td>
+      <td style="text-align:center;font-size:.8rem;${estCor}">${estFmt}</td>
+      <td style="text-align:center;font-size:.8rem">${it.qtd_pedida??'—'}</td>
+      <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="1" inputmode="decimal" style="width:64px"></td>
+    </tr>`;
+  }).join('');
+
   document.getElementById('modal-liberar-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}${ped?.obs?' · '+esc(ped.obs):''}</div>
-    <table class="ped-table" style="margin-bottom:.75rem">
-      <thead><tr><th>Produto</th><th>Pedido</th><th>Liberar</th></tr></thead>
+    <table class="ped-table" style="margin-bottom:.75rem;font-size:.8rem">
+      <thead><tr>
+        <th>Produto</th>
+        <th style="text-align:center;color:#6c757d">Padrão</th>
+        <th style="text-align:center">Estoque</th>
+        <th style="text-align:center">Pedido</th>
+        <th style="text-align:center">Lib.</th>
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <input type="hidden" id="lib-itens" value='${JSON.stringify((itens||[]).map(i=>i.id))}'>`;
