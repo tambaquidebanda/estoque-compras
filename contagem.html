@@ -1566,21 +1566,10 @@ function buscarEmergMob(idx) {
   const el = document.getElementById(`emerg-sugest-${idx}`);
   if (q.length < 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
 
-  const candidatos = [];
-  Object.values(INVENTARIO_ESTRUTURA[_setor] || {}).forEach(prods => {
-    prods.forEach(nome => {
-      if (!candidatos.some(c => c.nome === nome)) {
-        const nomeReal = _mapeamentos[nome] || nome;
-        const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
-        candidatos.push({ nome, produto_id: prod?.id || null });
-      }
-    });
-  });
-
-  const hits = candidatos.filter(c => norm(c.nome).includes(q)).slice(0, 8);
+  const hits = (_todosProdutos || []).filter(p => norm(p.nome).includes(q)).slice(0, 10);
   if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
-  el.innerHTML = hits.map(c =>
-    `<div class="sug-item" onclick="_selProdEmergMob(${idx},${JSON.stringify(c.produto_id||'')},${JSON.stringify(c.nome)})">${esc(c.nome)}</div>`
+  el.innerHTML = hits.map(p =>
+    `<div class="sug-item" onclick="_selProdEmergMob(${idx},${JSON.stringify(p.id)},${JSON.stringify(p.nome)})">${esc(p.nome)}</div>`
   ).join('');
   el.style.display = 'block';
 }
