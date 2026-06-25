@@ -603,7 +603,7 @@ async function carregarPedidosPendentes() {
   const cont = document.getElementById('lista-pedidos');
   if (error) { cont.innerHTML = `<div class="lista-vazia">Erro: ${error.message}</div>`; return; }
   if (!data?.length) {
-    cont.innerHTML = '<div class="lista-vazia"><div class="ico">✅</div>Nenhum pedido pendente.<br><small style="color:#999">v2 · 0 itens encontrados</small></div>';
+    cont.innerHTML = '<div class="lista-vazia"><div class="ico">✅</div>Nenhum pedido pendente.</div>';
     return;
   }
 
