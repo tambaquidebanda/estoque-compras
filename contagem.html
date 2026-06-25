@@ -325,7 +325,9 @@
     }
     .sug-item {
       padding: .65rem 1rem; font-size: .88rem; border-bottom: 1px solid var(--borda);
-      cursor: pointer;
+      cursor: pointer; display: block; width: 100%; text-align: left;
+      background: transparent; border-left: none; border-right: none; border-top: none;
+      color: var(--txt); -webkit-tap-highlight-color: rgba(0,0,0,.1);
     }
     .sug-item:last-child { border-bottom: none; }
     .sug-item:active { background: var(--borda); }
@@ -1532,7 +1534,8 @@ function _buildProdutosEmerg() {
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
     if (chave.startsWith(_setor + '|')) lista.forEach(n => nomes.add(n.trim().toUpperCase()));
   });
-  _produtosEmerg = (_todosProdutos || []).filter(p => nomes.has(p.nome.trim().toUpperCase()));
+  const filtrado = (_todosProdutos || []).filter(p => nomes.has(p.nome.trim().toUpperCase()));
+  _produtosEmerg = filtrado.length ? filtrado : (_todosProdutos || []);
 }
 
 function _rowEmergMob(idx) {
@@ -1581,13 +1584,11 @@ function buscarEmergMob(idx) {
   const hits = _produtosEmerg.filter(p => norm(p.nome).includes(q)).slice(0, 10);
   if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
   el.innerHTML = hits.map(p =>
-    `<div class="sug-item" data-id="${esc(p.id)}" data-nome="${esc(p.nome)}">${esc(p.nome)}</div>`
+    `<button type="button" class="sug-item" data-id="${esc(p.id)}" data-nome="${esc(p.nome)}">${esc(p.nome)}</button>`
   ).join('');
-  el.onclick = (e) => {
-    const item = e.target.closest('.sug-item[data-id]');
-    if (!item) return;
-    _selProdEmergMob(idx, item.dataset.id, item.dataset.nome);
-  };
+  el.querySelectorAll('button.sug-item').forEach(btn => {
+    btn.onclick = () => _selProdEmergMob(idx, btn.dataset.id, btn.dataset.nome);
+  });
   el.style.display = 'block';
 }
 
