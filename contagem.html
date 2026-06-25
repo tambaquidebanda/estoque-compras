@@ -1198,7 +1198,7 @@ function calcPedido(i) {
   if (!el) return;
   if (padrao === null) { el.textContent = '—'; el.className = 'td-center td-ped zero'; return; }
   const ped = Math.max(0, padrao - est);
-  el.textContent = ped % 1 === 0 ? String(ped) : ped.toFixed(3).replace(/\.?0+$/, '');
+  el.textContent = ped % 1 === 0 ? String(ped) : ped.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
   el.className   = 'td-center td-ped' + (ped === 0 ? ' zero' : '');
 }
 

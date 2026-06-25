@@ -2617,7 +2617,7 @@ function renderInventario() {
         <span class="badge bg-secondary" id="inv-pad-${i}">${padraoTxt}</span>
       </td>
       <td class="text-center fw-bold" id="inv-ped-${i}" style="color:#06D6A0;font-size:1.05rem">
-        ${padrao !== null ? Math.max(0, padrao - 0) : '—'}
+        ${padrao !== null ? _fmtPed(Math.max(0, padrao)) : '—'}
       </td>`}
     </tr>`;
   }).join('');
@@ -2678,6 +2678,11 @@ async function excluirProdInv(nome) {
 
 function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
 
+function _fmtPed(v) {
+  if (v % 1 === 0) return String(v);
+  return v.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+}
+
 function calcPedidoInv(i) {
   const est    = parseQtd(document.getElementById(`inv-est-${i}`)?.value);
   const nome   = _invProds[i]?.nome || '';
@@ -2686,7 +2691,7 @@ function calcPedidoInv(i) {
   if (!pedEl) return;
   if (padrao === null) { pedEl.textContent = '—'; return; }
   const ped = Math.max(0, padrao - est);
-  pedEl.textContent = ped % 1 === 0 ? String(ped) : ped.toFixed(3).replace(/\.?0+$/, '');
+  pedEl.textContent = _fmtPed(ped);
 }
 
 function _padKey(nome) {
