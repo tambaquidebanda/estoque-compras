@@ -857,13 +857,18 @@ async function confirmarRecebimento() {
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
-  // Guard: impede receber pedido já finalizado no financeiro
+  // Guard: bloqueia apenas se o lançamento já foi PAGO; se pendente, permite receber e ajusta valor
   const { data: _guardConta } = await sb.from('cmp_contas_pagar')
     .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
   if (_guardConta?.lancamento_id) {
-    toast('Este pedido já foi enviado ao financeiro e não pode ser recebido novamente.', 'err');
-    btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
-    return;
+    const { data: _lancCheck } = await sb.from('lancamentos')
+      .select('status').eq('id', _guardConta.lancamento_id).maybeSingle();
+    if (_lancCheck?.status === 'pago') {
+      toast('Este pedido já foi pago no financeiro.', 'err');
+      btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
+      return;
+    }
+    // Lançamento pendente → recebimento liberado; valor será ajustado automaticamente abaixo
   }
 
   // 1. Cabeçalho do recebimento
@@ -918,14 +923,20 @@ async function confirmarRecebimento() {
 
   if (conta) {
     await sb.from('cmp_contas_pagar').update({
-      recebimento_id: receb.id, data_receb: dataRec, vencimento: venc, valor: totalAcum,
+      recebimento_id: receb.id, data_receb: dataRec, vencimento: venc, valor: totalAcum, acrescimo,
     }).eq('id', conta.id);
   } else {
     await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
-      data_receb: dataRec, vencimento: venc, valor: totalAcum, status: 'pendente',
+      data_receb: dataRec, vencimento: venc, valor: totalAcum, acrescimo, status: 'pendente',
     }]);
+  }
+
+  // Se já existia lançamento pendente no financeiro (enviado antes do recebimento), ajusta valor automaticamente
+  if (conta?.lancamento_id) {
+    const notaLiq = Math.max(0, totalAcum - acrescimo);
+    await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', conta.lancamento_id);
   }
 
   // Auto-finaliza quando todos os itens foram recebidos

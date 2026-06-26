@@ -5306,12 +5306,17 @@ async function confirmarRecebimento() {
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
-  // Guard: impede receber pedido já finalizado no financeiro
+  // Guard: bloqueia apenas se o lançamento já foi PAGO; se pendente, permite receber e ajusta valor
   const { data: _guardConta } = await sb.from('cmp_contas_pagar')
     .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
   if (_guardConta?.lancamento_id) {
-    toast('Este pedido já foi enviado ao financeiro e não pode ser recebido novamente.', 'erro');
-    return;
+    const { data: _lancCheck } = await sb.from('lancamentos')
+      .select('status').eq('id', _guardConta.lancamento_id).maybeSingle();
+    if (_lancCheck?.status === 'pago') {
+      toast('Este pedido já foi pago no financeiro e não pode ser alterado.', 'erro');
+      return;
+    }
+    // Lançamento pendente → recebimento liberado; valor será ajustado automaticamente abaixo
   }
 
   // Salva recebimento cabeçalho
@@ -5344,14 +5349,20 @@ async function confirmarRecebimento() {
 
   if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
-      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
+      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado, acrescimo,
     }).eq('id', contaExist.id);
   } else {
     await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
-      data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
+      data_receb: dataRec, vencimento, valor: totalAcumulado, acrescimo, status: 'pendente',
     }]);
+  }
+
+  // Se já existia lançamento pendente no financeiro (enviado antes do recebimento), ajusta valor automaticamente
+  if (contaExist?.lancamento_id) {
+    const notaLiq = Math.max(0, totalAcumulado - acrescimo);
+    await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', contaExist.lancamento_id);
   }
 
   // Marca cada item: se qtd completa → recebido; se parcial → atualiza quantidade restante
@@ -5396,7 +5407,8 @@ async function confirmarRecebimento() {
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
-  toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
+  const _ajustouFinanc = contaExist?.lancamento_id ? ` 💰 Financeiro ajustado para ${brl(totalAcumulado)}.` : '';
+  toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}${_ajustouFinanc}`, 'ok');
   renderPendentes();
 }
 
