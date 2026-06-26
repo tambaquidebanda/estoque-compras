@@ -216,6 +216,7 @@ function ir(nome, el) {
   }
 
   if (nome === 'dashboard')   carregarDashboard();
+  if (nome === 'bi')          carregarBI();
   if (nome === 'pedido')      prepararFormCompra();
   if (nome === 'compras')     carregarCompras();
   if (nome === 'faturamento') { setHoje('f-data'); carregarFaturamento(); }
@@ -611,6 +612,162 @@ async function carregarDashboard() {
     });
   }
   renderInsights();
+}
+
+// ─── BI COMPRAS ───────────────────────────────────────────────────
+let _biChMensal = null, _biChSemanal = null, _biChFatSem = null;
+
+function _biISOWeek(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T12:00:00');
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function _biChartOpts(extra = {}) {
+  return {
+    responsive: true,
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.y ?? ctx.parsed.x ?? ctx.raw) } } },
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#64748b', font: { size: 9 } } },
+      y: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#64748b', font: { size: 9 }, callback: v => v >= 1000 ? (v / 1000).toFixed(0) + 'K' : v } },
+    },
+    ...extra,
+  };
+}
+
+function limparFiltrosBI() {
+  ['bi-ini', 'bi-fim', 'bi-unidade'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  carregarBI();
+}
+
+async function carregarBI() {
+  // Período padrão: ano corrente
+  const hoje = new Date().toISOString().split('T')[0];
+  const anoIni = hoje.slice(0, 4) + '-01-01';
+  const iniEl = document.getElementById('bi-ini');
+  const fimEl = document.getElementById('bi-fim');
+  if (iniEl && !iniEl.value) iniEl.value = anoIni;
+  if (fimEl && !fimEl.value) fimEl.value = hoje;
+  const ini = iniEl?.value || anoIni;
+  const fim = fimEl?.value || hoje;
+
+  // Carrega dados em paralelo
+  let qC = sb.from('cmp_compras')
+    .select('pedido_num,data,fornecedor_nome,categoria,tipo_produto,quantidade,custo_unit')
+    .gte('data', ini).lte('data', fim).order('data');
+  let qF = sb.from('cmp_faturamento').select('data,valor').gte('data', ini).lte('data', fim).order('data');
+  const [{ data: compras }, { data: fat }] = await Promise.all([qC, qF]);
+
+  const C = compras || [], F = fat || [];
+
+  // ── Totais ──
+  const totalComp = C.reduce((s, c) => s + (c.quantidade || 0) * (c.custo_unit || 0), 0);
+  const totalFat  = F.reduce((s, f) => s + (f.valor || 0), 0);
+  const qtdPed    = new Set(C.map(c => c.pedido_num)).size;
+  const ticket    = qtdPed > 0 ? totalComp / qtdPed : 0;
+  const cmvPct    = totalFat > 0 ? totalComp / totalFat * 100 : null;
+  const meta      = totalFat * 0.27;
+  const diff      = totalComp - meta;
+
+  // ── KPIs ──
+  document.getElementById('bi-kpi-comp').textContent = brl(totalComp);
+  document.getElementById('bi-kpi-fat').textContent  = totalFat > 0 ? brl(totalFat) : '—';
+  document.getElementById('bi-kpi-qtd').textContent  = qtdPed.toLocaleString('pt-BR');
+  document.getElementById('bi-kpi-tick').textContent = 'Ticket médio: ' + brl(ticket);
+
+  const cmvEl = document.getElementById('bi-kpi-cmv');
+  const cmvCard = document.getElementById('bi-k-cmv');
+  if (cmvPct !== null) {
+    cmvEl.textContent = cmvPct.toFixed(2).replace('.', ',') + '%';
+    cmvCard.className = 'bi-kpi ' + (cmvPct <= 27 ? 'green' : 'red');
+  } else { cmvEl.textContent = '—'; cmvCard.className = 'bi-kpi'; }
+
+  const diffEl  = document.getElementById('bi-kpi-diff');
+  const diffSub = document.getElementById('bi-kpi-diff-sub');
+  const metaCard = document.getElementById('bi-k-meta');
+  if (totalFat > 0) {
+    const abaixo = diff < 0;
+    diffEl.textContent    = (abaixo ? '▼ ' : '▲ ') + brl(Math.abs(diff));
+    diffSub.textContent   = abaixo ? 'Abaixo da meta ✓' : 'Acima da meta ✗';
+    metaCard.className    = 'bi-kpi ' + (abaixo ? 'green' : 'red');
+  } else { diffEl.textContent = '—'; diffSub.textContent = ''; metaCard.className = 'bi-kpi'; }
+  document.getElementById('bi-kpi-meta').textContent = totalFat > 0 ? brl(meta) : '—';
+
+  // ── Agrega por mês ──
+  const byMonth = {};
+  C.forEach(c => { const m = (c.data || '').slice(0, 7); if (m) byMonth[m] = (byMonth[m] || 0) + (c.quantidade || 0) * (c.custo_unit || 0); });
+  const months = Object.keys(byMonth).sort();
+  const mLabels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo - 1] + '/' + y.slice(2); });
+
+  // ── Agrega por semana ──
+  const byWeek = {}, byWeekFat = {};
+  C.forEach(c => { const w = _biISOWeek(c.data); if (w) byWeek[w] = (byWeek[w] || 0) + (c.quantidade || 0) * (c.custo_unit || 0); });
+  F.forEach(f => { const w = _biISOWeek(f.data); if (w) byWeekFat[w] = (byWeekFat[w] || 0) + (f.valor || 0); });
+  const allWeeks = [...new Set([...Object.keys(byWeek), ...Object.keys(byWeekFat)])].sort().slice(-16);
+  const wLabels  = allWeeks.map(w => 'S' + w.split('-W')[1]);
+
+  // ── Agrega por categoria / tipo / fornecedor ──
+  const byCat = {}, byTipo = {}, byForn = {};
+  C.forEach(c => {
+    const v = (c.quantidade || 0) * (c.custo_unit || 0);
+    const cat  = c.categoria     || 'Outros'; byCat[cat]  = (byCat[cat]  || 0) + v;
+    const tipo = c.tipo_produto  || 'Outros'; byTipo[tipo] = (byTipo[tipo] || 0) + v;
+    const forn = c.fornecedor_nome || '—';   byForn[forn] = (byForn[forn] || 0) + v;
+  });
+
+  // ── Charts ──
+  const orange = '#f97316', purple = '#a855f7';
+  if (_biChMensal)  _biChMensal.destroy();
+  if (_biChSemanal) _biChSemanal.destroy();
+  if (_biChFatSem)  _biChFatSem.destroy();
+
+  _biChMensal = new Chart(document.getElementById('bi-ch-mensal'), {
+    type: 'bar',
+    data: { labels: mLabels, datasets: [{ data: months.map(m => byMonth[m]), backgroundColor: orange, borderRadius: 4 }] },
+    options: _biChartOpts(),
+  });
+
+  _biChSemanal = new Chart(document.getElementById('bi-ch-semanal'), {
+    type: 'bar',
+    data: { labels: allWeeks.map(w => 'S' + w.split('-W')[1]), datasets: [{ data: allWeeks.map(w => byWeek[w] || 0), backgroundColor: orange, borderRadius: 3 }] },
+    options: _biChartOpts({ indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } } }),
+  });
+
+  _biChFatSem = new Chart(document.getElementById('bi-ch-fat-sem'), {
+    type: 'line',
+    data: {
+      labels: wLabels,
+      datasets: [
+        { label: 'Faturamento', data: allWeeks.map(w => byWeekFat[w] || 0), borderColor: orange, backgroundColor: 'rgba(249,115,22,.12)', fill: true, tension: .4, pointRadius: 2, pointBackgroundColor: orange },
+        { label: 'Compras',    data: allWeeks.map(w => byWeek[w]    || 0), borderColor: purple, backgroundColor: 'rgba(168,85,247,.1)',  fill: true, tension: .4, pointRadius: 2, pointBackgroundColor: purple },
+      ],
+    },
+    options: { ..._biChartOpts(), plugins: { legend: { display: true, labels: { color: '#94a3b8', font: { size: 9 }, boxWidth: 10 } }, tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${brl(ctx.parsed.y)}` } } } },
+  });
+
+  // ── Fornecedores ──
+  const topForn = Object.entries(byForn).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const totForn  = topForn.reduce((s, [, v]) => s + v, 0);
+  document.getElementById('bi-tb-forn').innerHTML =
+    `<thead><tr><th>Fornecedor</th><th style="text-align:right">Valor</th></tr></thead><tbody>` +
+    topForn.map(([n, v]) => `<tr><td>${esc(n)}</td><td style="text-align:right">${brl(v)}</td></tr>`).join('') +
+    `<tr class="bi-tb-total"><td>Total compras</td><td style="text-align:right">${brl(totForn)}</td></tr></tbody>`;
+
+  // ── Listas de categoria e tipo ──
+  function _biBarList(obj) {
+    const sorted = Object.entries(obj).sort((a, b) => b[1] - a[1]);
+    const maxV   = sorted[0]?.[1] || 1;
+    return sorted.map(([lbl, v]) =>
+      `<div class="bi-bar-item">
+        <span class="bi-bar-lbl" title="${esc(lbl)}">${esc(lbl)}</span>
+        <div class="bi-bar-bg"><div class="bi-bar-fill" style="width:${(v/maxV*100).toFixed(1)}%"></div></div>
+        <span class="bi-bar-val">${brl(v)}</span>
+      </div>`).join('');
+  }
+  document.getElementById('bi-cat-list').innerHTML  = _biBarList(byCat);
+  document.getElementById('bi-tipo-list').innerHTML = _biBarList(byTipo);
 }
 
 async function renderInsights() {

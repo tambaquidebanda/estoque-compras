@@ -75,6 +75,9 @@
       <a href="#" onclick="ir('dashboard',this)" class="ativo">
         <i class="bi bi-bar-chart-fill"></i> Dashboard
       </a>
+      <a href="#" onclick="ir('bi',this)">
+        <i class="bi bi-speedometer2"></i> BI Compras
+      </a>
       <!-- Grupo COMPRA -->
       <div class="nav-grupo-btn" id="nav-grupo-compra" onclick="toggleNavGrupo('compra')">
         <i class="bi bi-cart-plus-fill"></i> Compra
@@ -151,6 +154,138 @@
   <div id="main">
 
     <!-- ══════ DASHBOARD ══════ -->
+    <!-- ════════════════ BI COMPRAS ════════════════ -->
+    <section id="pg-bi" class="pagina" style="padding:0;background:#0d0f18;overflow-y:auto">
+    <style>
+    .bi-page{background:#0d0f18;min-height:100%;color:#e2e8f0;padding:1.25rem 1.5rem 2rem;font-family:'Segoe UI',sans-serif}
+    .bi-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;padding-bottom:.8rem;border-bottom:1px solid rgba(255,255,255,.07)}
+    .bi-brand-title{font-size:1.15rem;font-weight:900;letter-spacing:.1em;color:#fff;text-transform:uppercase}
+    .bi-brand-sub{font-size:.65rem;color:#f97316;letter-spacing:.18em;text-transform:uppercase;margin-top:1px}
+    .bi-fil-bar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+    .bi-fil-bar select,.bi-fil-bar input[type=date]{background:#1e2130;border:1px solid rgba(255,255,255,.12);color:#e2e8f0;border-radius:8px;padding:.3rem .65rem;font-size:.78rem}
+    .bi-fil-btn{background:#f97316;border:none;color:#fff;border-radius:8px;padding:.3rem .75rem;font-size:.78rem;font-weight:600;cursor:pointer}
+    .bi-fil-lbl{font-size:.65rem;color:#64748b;white-space:nowrap}
+    /* KPIs */
+    .bi-kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:.65rem;margin-bottom:.75rem}
+    .bi-kpi{background:#1e2130;border-radius:10px;padding:.85rem 1rem;border-left:3px solid #f97316}
+    .bi-kpi-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:.3rem}
+    .bi-kpi-val{font-size:1.15rem;font-weight:800;color:#f97316;line-height:1.2}
+    .bi-kpi-sub{font-size:.65rem;color:#475569;margin-top:.15rem}
+    .bi-kpi.green{border-left-color:#22c55e}.bi-kpi.green .bi-kpi-val{color:#22c55e}
+    .bi-kpi.red{border-left-color:#ef4444}.bi-kpi.red .bi-kpi-val{color:#ef4444}
+    .bi-kpi.purple{border-left-color:#a855f7}.bi-kpi.purple .bi-kpi-val{color:#a855f7}
+    .bi-kpi.blue{border-left-color:#38bdf8}.bi-kpi.blue .bi-kpi-val{color:#38bdf8}
+    /* Layout */
+    .bi-row{display:grid;gap:.65rem;margin-bottom:.65rem}
+    .bi-r3{grid-template-columns:1.5fr .65fr 1fr}
+    .bi-r3b{grid-template-columns:.75fr 1.3fr .6fr}
+    .bi-card{background:#1e2130;border-radius:10px;padding:.9rem 1rem}
+    .bi-card-title{font-size:.62rem;text-transform:uppercase;letter-spacing:.08em;color:#475569;margin-bottom:.7rem;font-weight:700}
+    /* Table */
+    .bi-tb{width:100%;border-collapse:collapse;font-size:.76rem}
+    .bi-tb th{color:#f97316;text-transform:uppercase;font-size:.6rem;letter-spacing:.06em;padding:.25rem .4rem;border-bottom:1px solid rgba(255,255,255,.07);font-weight:700}
+    .bi-tb td{padding:.28rem .4rem;border-bottom:1px solid rgba(255,255,255,.04);color:#e2e8f0}
+    .bi-tb tr:last-child td{border-bottom:none}
+    .bi-tb-total td{color:#f97316;font-weight:700;border-top:1px solid rgba(255,255,255,.1)!important}
+    /* Bar list */
+    .bi-bar-item{display:flex;align-items:center;gap:.45rem;margin-bottom:.35rem;font-size:.72rem}
+    .bi-bar-lbl{width:100px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+    .bi-bar-bg{flex:1;height:7px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+    .bi-bar-fill{height:100%;background:#f97316;border-radius:3px}
+    .bi-bar-val{width:65px;text-align:right;color:#f97316;font-weight:600;font-size:.68rem;flex-shrink:0}
+    </style>
+    <div class="bi-page">
+      <!-- Header -->
+      <div class="bi-header">
+        <div>
+          <div class="bi-brand-title">📊 Dashboard de Compras</div>
+          <div class="bi-brand-sub">Tambaqui de Banda · BI</div>
+        </div>
+        <div class="bi-fil-bar">
+          <span class="bi-fil-lbl">PERÍODO</span>
+          <input type="date" id="bi-ini" onchange="carregarBI()">
+          <span style="color:#475569;font-size:.8rem">→</span>
+          <input type="date" id="bi-fim" onchange="carregarBI()">
+          <span class="bi-fil-lbl">UNIDADE</span>
+          <select id="bi-unidade" onchange="carregarBI()">
+            <option value="">Todos</option>
+            <option value="Centro">Centro</option>
+            <option value="P10">P10</option>
+          </select>
+          <button class="bi-fil-btn" onclick="limparFiltrosBI()">✕ Limpar</button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="bi-kpi-row">
+        <div class="bi-kpi" id="bi-k1">
+          <div class="bi-kpi-lbl">Total Compras R$</div>
+          <div class="bi-kpi-val" id="bi-kpi-comp">—</div>
+          <div class="bi-kpi-sub" id="bi-kpi-comp-sub">&nbsp;</div>
+        </div>
+        <div class="bi-kpi green">
+          <div class="bi-kpi-lbl">Total Faturamento</div>
+          <div class="bi-kpi-val" id="bi-kpi-fat">—</div>
+          <div class="bi-kpi-sub" id="bi-kpi-fat-sub">&nbsp;</div>
+        </div>
+        <div class="bi-kpi purple">
+          <div class="bi-kpi-lbl">Qtd Pedidos</div>
+          <div class="bi-kpi-val" id="bi-kpi-qtd">—</div>
+          <div class="bi-kpi-sub" id="bi-kpi-tick">Ticket médio: —</div>
+        </div>
+        <div class="bi-kpi" id="bi-k-cmv">
+          <div class="bi-kpi-lbl">CMV %</div>
+          <div class="bi-kpi-val" id="bi-kpi-cmv">—</div>
+          <div class="bi-kpi-sub">Meta ≤ 27%</div>
+        </div>
+        <div class="bi-kpi" id="bi-k-meta">
+          <div class="bi-kpi-lbl">Vs. Meta (27%)</div>
+          <div class="bi-kpi-val" id="bi-kpi-diff">—</div>
+          <div class="bi-kpi-sub" id="bi-kpi-diff-sub">&nbsp;</div>
+        </div>
+        <div class="bi-kpi blue">
+          <div class="bi-kpi-lbl">Meta Compras</div>
+          <div class="bi-kpi-val" id="bi-kpi-meta">—</div>
+          <div class="bi-kpi-sub">27% do faturamento</div>
+        </div>
+      </div>
+
+      <!-- Linha 1: mensal | categorias | semanal -->
+      <div class="bi-row bi-r3">
+        <div class="bi-card">
+          <div class="bi-card-title">Compras Mensal — R$</div>
+          <canvas id="bi-ch-mensal" height="170"></canvas>
+        </div>
+        <div class="bi-card">
+          <div class="bi-card-title">Categoria — Valor da Compra</div>
+          <div id="bi-cat-list" style="overflow-y:auto;max-height:175px"></div>
+        </div>
+        <div class="bi-card">
+          <div class="bi-card-title">Compras Semanais — R$</div>
+          <canvas id="bi-ch-semanal" height="170"></canvas>
+        </div>
+      </div>
+
+      <!-- Linha 2: fornecedores | fat semanal | tipos -->
+      <div class="bi-row bi-r3b">
+        <div class="bi-card">
+          <div class="bi-card-title">Fornecedor — Soma da Compra</div>
+          <div style="overflow-y:auto;max-height:200px">
+            <table class="bi-tb" id="bi-tb-forn"></table>
+          </div>
+        </div>
+        <div class="bi-card">
+          <div class="bi-card-title">Faturamento vs Compras Semanal — R$</div>
+          <canvas id="bi-ch-fat-sem" height="180"></canvas>
+        </div>
+        <div class="bi-card">
+          <div class="bi-card-title">Tipo — Valor da Compra</div>
+          <div id="bi-tipo-list" style="overflow-y:auto;max-height:200px"></div>
+        </div>
+      </div>
+    </div>
+    </section>
+
     <section id="pg-dashboard" class="pagina ativa">
       <h1>📊 Dashboard de Compras</h1>
 
