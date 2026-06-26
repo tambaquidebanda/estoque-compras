@@ -8083,24 +8083,24 @@ function gerenciarSetoresUnidade() {
   document.getElementById('modal-gerenciar-setores').dataset.localAtual = local;
   document.getElementById('ger-setor-unidade').textContent = local.toUpperCase();
 
-  // Setores desta unidade (ativos) + setores de outras unidades (para permitir adicionar)
-  const setoresUnidade = new Set(Object.keys(_todasEstruturas[local] || {}).filter(s => s !== 'ESTOQUE DA LOJA'));
+  // INVENTARIO_ESTRUTURA reflete exatamente os setores da unidade atual (pós _aplicarEstruturaLocal)
+  const setoresUnidade = new Set(Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA'));
+  // Setores de outras unidades (para possibilitar adicionar à unidade atual)
   const setoresOutros  = new Set();
-  Object.entries(_todasEstruturas).forEach(([u, est]) => {
+  Object.entries(_todasEstruturas || {}).forEach(([u, est]) => {
     if (u === local) return;
-    Object.keys(est || {}).forEach(s => { if (s !== 'ESTOQUE DA LOJA') setoresOutros.add(s); });
+    Object.keys(est || {}).forEach(s => { if (s !== 'ESTOQUE DA LOJA' && !setoresUnidade.has(s)) setoresOutros.add(s); });
   });
-  const todosSetores = new Set([...setoresUnidade, ...setoresOutros]);
+  const todosSetores = [...setoresUnidade, ...setoresOutros];
 
-  document.getElementById('ger-setor-lista').innerHTML = [...todosSetores].map(s => {
-    const ativo  = setoresUnidade.has(s);
-    const deOutra = !ativo && setoresOutros.has(s);
-    return `
-    <div class="form-check">
+  document.getElementById('ger-setor-lista').innerHTML = todosSetores.map(s => {
+    const ativo   = setoresUnidade.has(s);
+    const deOutra = setoresOutros.has(s);
+    return `<div class="form-check">
       <input class="form-check-input" type="checkbox" id="ger-cb-${s.replace(/\W/g,'_')}" value="${esc(s)}" ${ativo ? 'checked' : ''}>
-      <label class="form-check-label" for="ger-cb-${s.replace(/\W/g,'_')}">${esc(s)}${deOutra ? ' <span class="text-muted small">(outra unidade)</span>' : ''}</label>
+      <label class="form-check-label" for="ger-cb-${s.replace(/\W/g,'_')}">${esc(s)}${deOutra ? ' <small class="text-muted">(outra unidade)</small>' : ''}</label>
     </div>`;
-  }).join('');
+  }).join('\n');
 
   document.getElementById('ger-setor-novo').value = '';
   new bootstrap.Modal(document.getElementById('modal-gerenciar-setores')).show();
