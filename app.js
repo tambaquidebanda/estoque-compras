@@ -2323,10 +2323,20 @@ function renderIngredientes() {
     return `<tr>
       <td class="fw-semibold">${esc(ing.nome)}</td>
       <td><span class="badge-tipo badge-${ing.tipo.toLowerCase()}">${ing.tipo}</span></td>
-      <td>${Number(ing.quantidade).toLocaleString('pt-BR', {maximumFractionDigits:4})}</td>
-      <td>${esc(ing.unidade)}</td>
+      <td style="width:110px">
+        <input type="number" class="form-control form-control-sm text-center" min="0" step="any"
+          value="${ing.quantidade}"
+          oninput="atualizarIngrediente(${idx},'quantidade',this.value)"
+          style="width:90px;display:inline-block">
+      </td>
+      <td style="width:80px">
+        <input type="text" class="form-control form-control-sm text-center"
+          value="${esc(ing.unidade)}"
+          oninput="atualizarIngrediente(${idx},'unidade',this.value)"
+          style="width:65px;display:inline-block">
+      </td>
       <td class="text-muted">${brl(ing.custo_uso)}</td>
-      <td class="fw-semibold">${brl(subtotal)}</td>
+      <td class="fw-semibold" id="ft-sub-${idx}">${brl(subtotal)}</td>
       <td>
         <button class="btn-del" onclick="removerIngrediente(${idx})" title="Remover">
           <i class="bi bi-trash"></i>
@@ -2335,6 +2345,18 @@ function renderIngredientes() {
     </tr>`;
   }).join('');
 
+  recalcularCustoFicha();
+}
+
+function atualizarIngrediente(idx, campo, valor) {
+  if (campo === 'quantidade') {
+    ftIngredientes[idx].quantidade = parseFloat(valor) || 0;
+    const sub = ftIngredientes[idx].quantidade * ftIngredientes[idx].custo_uso;
+    const el = document.getElementById(`ft-sub-${idx}`);
+    if (el) el.textContent = brl(sub);
+  } else if (campo === 'unidade') {
+    ftIngredientes[idx].unidade = valor;
+  }
   recalcularCustoFicha();
 }
 
