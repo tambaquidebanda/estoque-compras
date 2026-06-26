@@ -1,0 +1,11 @@
+-- Restaura grupo DESTILADOS no setor BAR da unidade Centro
+-- Execute no Supabase SQL Editor se o grupo sumir novamente
+
+UPDATE inv_configuracoes
+SET valor = jsonb_set(
+  valor,
+  '{Centro,BAR,DESTILADOS}',
+  '["MP CACHAÇA 51 960ML","MP CACHAÇA LEBLON 750ML","MP JACK DANIEL''S 1L","MP SMIRNOFF VODKA RED 1L","MP TEQUILA JOSE CUERVO ESPECIAL 750ML","MP JOHNNIE WALKER RED LABEL 1L","MP JOHNNIE WALKER BLACK LABEL 1L","MP ESPIRITO DE MINAS CACHAÇA 970 ML","MP ESPIRITO DE MINAS TRADICIONAL 970ML","MP BALLANTINES 750ML","MP GRANT''S TRIPLE WOOD 750ML"]'::jsonb,
+  true
+)
+WHERE chave = 'estrutura';
