@@ -6719,7 +6719,32 @@ async function duplicarProduto() {
   if (error) { toast('Erro ao duplicar: ' + error.message, 'erro'); return; }
 
   cProdutosFT.push(data);
-  toast('Produto duplicado! Edite o nome e salve.', 'ok');
+
+  // Copia ficha técnica, se existir
+  const { data: fichaOrig } = await sb.from('est_fichas_tecnicas')
+    .select('*').eq('produto_id', p.id).eq('ativo', true).maybeSingle();
+  if (fichaOrig) {
+    const { data: novaFicha } = await sb.from('est_fichas_tecnicas').insert([{
+      produto_id:         data.id,
+      rendimento:         fichaOrig.rendimento,
+      unidade_rendimento: fichaOrig.unidade_rendimento,
+      custo_total:        fichaOrig.custo_total,
+      custo_por_porcao:   fichaOrig.custo_por_porcao,
+      ativo:              true,
+    }]).select().single();
+
+    if (novaFicha) {
+      const { data: ings } = await sb.from('est_ficha_ingredientes')
+        .select('ingrediente_id,quantidade,unidade').eq('ficha_id', fichaOrig.id);
+      if (ings?.length) {
+        await sb.from('est_ficha_ingredientes').insert(
+          ings.map(i => ({ ...i, ficha_id: novaFicha.id }))
+        );
+      }
+    }
+  }
+
+  toast('Produto duplicado' + (fichaOrig ? ' com ficha técnica' : '') + '! Edite o nome e salve.', 'ok');
   abrirProduto(data.id);
 }
 
