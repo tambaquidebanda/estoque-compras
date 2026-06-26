@@ -1201,13 +1201,19 @@
 
       <!-- Histórico -->
       <div class="card-grafico">
-        <div class="d-flex align-items-center justify-content-between mb-3">
-          <h5 class="mb-0">📂 Histórico de Contagens</h5>
-          <select class="form-select form-select-sm" id="hist-inv-fil" onchange="carregarHistoricoInv()" style="width:160px">
+        <h5 class="mb-3">📂 Histórico de Contagens</h5>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <select class="form-select form-select-sm" id="hist-inv-fil" onchange="carregarHistoricoInv()" style="width:130px">
             <option value="">Todos os locais</option>
             <option value="Centro">Centro</option>
             <option value="P10">P10</option>
           </select>
+          <select class="form-select form-select-sm" id="hist-inv-setor" onchange="carregarHistoricoInv()" style="width:160px">
+            <option value="">Todos os setores</option>
+          </select>
+          <input type="date" class="form-control form-control-sm" id="hist-inv-ini" onchange="carregarHistoricoInv()" style="width:140px">
+          <input type="date" class="form-control form-control-sm" id="hist-inv-fim" onchange="carregarHistoricoInv()" style="width:140px">
+          <button class="btn btn-sm btn-outline-secondary" onclick="limparFiltrosHist()">✕ Limpar</button>
         </div>
         <div id="lst-historico-inv"><p class="text-muted">Nenhuma contagem salva ainda.</p></div>
       </div>
@@ -1495,6 +1501,24 @@
       </div>
 
       <!-- Modal: Editar Contagem -->
+      <!-- Modal Ver Detalhe Contagem -->
+      <div class="modal fade" id="modal-ver-contagem" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header" style="background:#0d6efd;color:#fff">
+              <h5 class="modal-title" id="modal-ver-contagem-titulo"><i class="bi bi-eye-fill"></i> Detalhe da Contagem</h5>
+              <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-ver-contagem-body">
+              <p class="text-muted text-center py-3">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="modal fade" id="modal-editar-contagem" tabindex="-1">
         <div class="modal-dialog modal-lg">
           <div class="modal-content">

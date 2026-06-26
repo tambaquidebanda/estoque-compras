@@ -2986,14 +2986,33 @@ async function salvarCorrecoesDivergencias() {
 }
 
 async function carregarHistoricoInv() {
-  const fil  = document.getElementById('hist-inv-fil')?.value || '';
-  let query  = sb.from('est_inventarios').select('id,num_inv,data,local,setor,grupo,responsavel,total_geral').order('criado_em', { ascending: false });
-  if (fil) query = query.eq('local', fil);
+  const fil    = document.getElementById('hist-inv-fil')?.value   || '';
+  const setor  = document.getElementById('hist-inv-setor')?.value || '';
+  const ini    = document.getElementById('hist-inv-ini')?.value   || '';
+  const fim    = document.getElementById('hist-inv-fim')?.value   || '';
+
+  let query = sb.from('est_inventarios')
+    .select('id,num_inv,data,local,setor,grupo,responsavel,total_geral')
+    .order('criado_em', { ascending: false })
+    .limit(200);
+  if (fil)   query = query.eq('local', fil);
+  if (setor) query = query.eq('setor', setor);
+  if (ini)   query = query.gte('data', ini);
+  if (fim)   query = query.lte('data', fim);
   const { data: lista } = await query;
 
   const cont = document.getElementById('lst-historico-inv');
   if (!cont) return;
-  if (!lista?.length) { cont.innerHTML = '<p class="text-muted">Nenhuma contagem salva ainda.</p>'; return; }
+  if (!lista?.length) { cont.innerHTML = '<p class="text-muted">Nenhuma contagem encontrada.</p>'; return; }
+
+  // Popula filtro de setor dinamicamente
+  const setorEl = document.getElementById('hist-inv-setor');
+  if (setorEl) {
+    const setores = [...new Set(lista.map(i => i.setor).filter(Boolean))].sort();
+    const cur = setorEl.value;
+    setorEl.innerHTML = '<option value="">Todos os setores</option>' +
+      setores.map(s => `<option value="${esc(s)}"${s === cur ? ' selected' : ''}>${esc(s)}</option>`).join('');
+  }
 
   cont.innerHTML = lista.map(inv => {
     const localCor = inv.local === 'Centro' ? '#0d6efd' : '#198754';
@@ -3008,8 +3027,9 @@ async function carregarHistoricoInv() {
         ${inv.responsavel ? `<span class="text-muted ms-2">— ${inv.responsavel}</span>` : ''}
       </div>
       <div class="d-flex align-items-center gap-2">
-        <span class="text-muted small me-1">Pedido:</span>
-        <strong class="text-primary">${inv.total_geral ?? 0}</strong>
+        <button class="btn btn-sm btn-outline-primary" title="Ver detalhes" onclick="verDetalheContagem('${inv.id}')">
+          <i class="bi bi-eye"></i>
+        </button>
         <button class="btn btn-sm btn-outline-secondary" title="Editar contagem" onclick="abrirEditarContagem('${inv.id}')">
           <i class="bi bi-pencil"></i>
         </button>
@@ -3019,6 +3039,80 @@ async function carregarHistoricoInv() {
       </div>
     </div>`;
   }).join('');
+}
+
+function limparFiltrosHist() {
+  ['hist-inv-fil','hist-inv-setor','hist-inv-ini','hist-inv-fim'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  carregarHistoricoInv();
+}
+
+async function verDetalheContagem(invId) {
+  const modalEl = document.getElementById('modal-ver-contagem');
+  const body    = document.getElementById('modal-ver-contagem-body');
+  const titulo  = document.getElementById('modal-ver-contagem-titulo');
+  body.innerHTML = '<p class="text-center text-muted py-3">Carregando...</p>';
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+
+  const [{ data: inv }, { data: itens }] = await Promise.all([
+    sb.from('est_inventarios').select('*').eq('id', invId).single(),
+    sb.from('est_inventario_itens').select('*').eq('inventario_id', invId).order('nome'),
+  ]);
+
+  titulo.innerHTML = `<i class="bi bi-eye-fill"></i> ${inv?.num_inv || ''} · ${esc(inv?.setor || '')} · ${esc(inv?.grupo || '')}`;
+
+  // Tenta buscar o pedido interno correspondente (mesmo setor/grupo/local/data)
+  let atendidoMap = {};
+  if (inv?.setor && inv?.grupo) {
+    const { data: pedidos } = await sb.from('pedidos_internos')
+      .select('id').eq('setor', inv.setor).eq('obs', inv.grupo)
+      .eq('local', inv.local).eq('data', inv.data).limit(1);
+    if (pedidos?.length) {
+      const { data: pedItens } = await sb.from('pedidos_internos_itens')
+        .select('produto_id,produto_nome,qtd_pedida,qtd_liberada').eq('pedido_id', pedidos[0].id);
+      (pedItens || []).forEach(pi => {
+        atendidoMap[pi.produto_id || pi.produto_nome] = {
+          solicitado: pi.qtd_pedida ?? 0,
+          atendido:   pi.qtd_liberada ?? '—',
+        };
+      });
+    }
+  }
+
+  const dataBR = (inv?.data || '').split('-').reverse().join('/');
+  const rows = (itens || []).map(it => {
+    const key   = it.produto_id || it.nome;
+    const ped   = atendidoMap[key] || {};
+    const solicitado = ped.solicitado ?? Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
+    const atendido   = ped.atendido ?? '—';
+    const atCor = typeof ped.atendido === 'number' && ped.atendido < solicitado ? 'text-danger' : '';
+    return `<tr>
+      <td>${esc(it.nome)}</td>
+      <td class="text-center">${+(it.estoque ?? 0)}</td>
+      <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
+      <td class="text-center fw-bold text-primary">${+solicitado}</td>
+      <td class="text-center fw-bold ${atCor}">${typeof atendido === 'number' ? +atendido : atendido}</td>
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="alert alert-secondary py-2 mb-3 small">
+      <strong>${esc(inv?.num_inv || '')}</strong> · ${esc(inv?.setor || '')} · ${esc(inv?.grupo || '')} · ${dataBR} · ${esc(inv?.responsavel || '')}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light"><tr>
+          <th>Produto</th>
+          <th class="text-center">Contado</th>
+          <th class="text-center">Padrão</th>
+          <th class="text-center">Solicitado</th>
+          <th class="text-center">Atendido</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 async function excluirInventario(id) {
