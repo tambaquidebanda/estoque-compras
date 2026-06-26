@@ -2566,6 +2566,7 @@ function atualizarBtnsDia() {
 function mudarLocalInv(local) {
   _invLocal = local;
   _aplicarEstruturaLocal(local);
+  _renderizarSetoresBtns();
   _invSetor = null; _invGrupo = null; _invProds = [];
   document.getElementById('inv-grupo-section')?.classList.add('d-none');
   document.getElementById('inv-tabela-section')?.classList.add('d-none');
@@ -2665,6 +2666,7 @@ async function carregarMapeamentosInv() {
   });
   if (_estruturaMudou) await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
   if (_invLocal && _invLocal !== 'Centro') _aplicarEstruturaLocal(_invLocal);
+  _renderizarSetoresBtns();
 
   _invMapeamentos = mapeamentos;
   _invExcluidos   = excluidos;
@@ -8073,7 +8075,8 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
 // ─── GERENCIAR SETORES / GRUPOS POR UNIDADE ──────────────────────
 
 async function _salvarEstruturaSupabase() {
-  await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
+  const { error } = await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
+  if (error) { toast('Erro ao salvar estrutura: ' + error.message, 'erro'); console.error('_salvarEstruturaSupabase:', error); return; }
   _aplicarEstruturaLocal(_invLocal || 'Centro');
 }
 
