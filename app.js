@@ -8079,21 +8079,28 @@ async function _salvarEstruturaSupabase() {
 
 function gerenciarSetoresUnidade() {
   const local = _invLocal || 'Centro';
+  // Captura o local no momento da abertura — evita usar _invLocal no save caso o usuário navegue
+  document.getElementById('modal-gerenciar-setores').dataset.localAtual = local;
   document.getElementById('ger-setor-unidade').textContent = local.toUpperCase();
 
-  // All known sectors = union of all units (excluding ESTOQUE DA LOJA)
-  const todosSetores = new Set();
-  Object.values(_todasEstruturas).forEach(est => {
-    Object.keys(est || {}).forEach(s => { if (s !== 'ESTOQUE DA LOJA') todosSetores.add(s); });
+  // Setores desta unidade (ativos) + setores de outras unidades (para permitir adicionar)
+  const setoresUnidade = new Set(Object.keys(_todasEstruturas[local] || {}).filter(s => s !== 'ESTOQUE DA LOJA'));
+  const setoresOutros  = new Set();
+  Object.entries(_todasEstruturas).forEach(([u, est]) => {
+    if (u === local) return;
+    Object.keys(est || {}).forEach(s => { if (s !== 'ESTOQUE DA LOJA') setoresOutros.add(s); });
   });
+  const todosSetores = new Set([...setoresUnidade, ...setoresOutros]);
 
-  const ativos = new Set(Object.keys(_todasEstruturas[local] || {}).filter(s => s !== 'ESTOQUE DA LOJA'));
-
-  document.getElementById('ger-setor-lista').innerHTML = [...todosSetores].map(s => `
+  document.getElementById('ger-setor-lista').innerHTML = [...todosSetores].map(s => {
+    const ativo  = setoresUnidade.has(s);
+    const deOutra = !ativo && setoresOutros.has(s);
+    return `
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="ger-cb-${s.replace(/\W/g,'_')}" value="${esc(s)}" ${ativos.has(s) ? 'checked' : ''}>
-      <label class="form-check-label" for="ger-cb-${s.replace(/\W/g,'_')}">${esc(s)}</label>
-    </div>`).join('');
+      <input class="form-check-input" type="checkbox" id="ger-cb-${s.replace(/\W/g,'_')}" value="${esc(s)}" ${ativo ? 'checked' : ''}>
+      <label class="form-check-label" for="ger-cb-${s.replace(/\W/g,'_')}">${esc(s)}${deOutra ? ' <span class="text-muted small">(outra unidade)</span>' : ''}</label>
+    </div>`;
+  }).join('');
 
   document.getElementById('ger-setor-novo').value = '';
   new bootstrap.Modal(document.getElementById('modal-gerenciar-setores')).show();
@@ -8117,19 +8124,18 @@ async function adicionarSetorNaUnidade() {
 }
 
 async function salvarSetoresUnidade() {
-  const local = _invLocal || 'Centro';
+  // Usa o local capturado na abertura do modal — não _invLocal (pode ter mudado por navegação)
+  const local = document.getElementById('modal-gerenciar-setores').dataset.localAtual || _invLocal || 'Centro';
   if (!_todasEstruturas[local]) _todasEstruturas[local] = {};
   const est = _todasEstruturas[local];
 
-  // Collect checked sectors
   const checados = [...document.querySelectorAll('#ger-setor-lista .form-check-input:checked')].map(cb => cb.value);
-  const todos = [...document.querySelectorAll('#ger-setor-lista .form-check-input')].map(cb => cb.value);
 
-  // Add new sectors (checked, not yet in est)
+  // Adiciona setores marcados que ainda não existem nesta unidade
   checados.forEach(s => { if (!est[s]) est[s] = {}; });
-  // Remove unchecked sectors (with confirmation if they have data)
-  todos.filter(s => !checados.includes(s)).forEach(s => {
-    if (est[s] && Object.keys(est[s]).length > 0) {
+  // Remove APENAS setores que existem nesta unidade e foram desmarcados (nunca afeta outras unidades)
+  Object.keys(est).filter(s => s !== 'ESTOQUE DA LOJA' && !checados.includes(s)).forEach(s => {
+    if (Object.keys(est[s] || {}).length > 0) {
       if (!confirm(`Remover setor "${s}" e todos os seus grupos/produtos desta unidade?`)) return;
     }
     delete est[s];
