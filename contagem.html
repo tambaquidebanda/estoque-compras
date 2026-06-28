@@ -1575,13 +1575,17 @@ function removerItemEmergMob(idx) {
 }
 
 function abrirEmergencia() {
-  if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
-  _emergIdxMob = 0;
-  _buildProdutosEmerg();
-  document.getElementById('emerg-setor-nome').textContent = _setor;
-  document.getElementById('emerg-itens').innerHTML = _rowEmergMob(0);
-  document.getElementById('emerg-obs').value = '';
-  mostrarModal('modal-emerg');
+  try {
+    if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
+    _emergIdxMob = 0;
+    _buildProdutosEmerg();
+    document.getElementById('emerg-setor-nome').textContent = _setor;
+    document.getElementById('emerg-itens').innerHTML = _rowEmergMob(0);
+    document.getElementById('emerg-obs').value = '';
+    mostrarModal('modal-emerg');
+  } catch(e) {
+    toast('Erro emergência: ' + e.message, 'err');
+  }
 }
 
 function buscarEmergMob(idx) {
