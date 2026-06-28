@@ -2665,7 +2665,7 @@ async function carregarMapeamentosInv() {
     });
   });
   if (_estruturaMudou) await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
-  if (_invLocal && _invLocal !== 'Centro') _aplicarEstruturaLocal(_invLocal);
+  _aplicarEstruturaLocal(_invLocal || 'Centro');
   _renderizarSetoresBtns();
 
   _invMapeamentos = mapeamentos;
