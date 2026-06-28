@@ -2527,6 +2527,7 @@ let _invMapeamentos  = {};   // carregado do Supabase (compartilhado entre dispo
 let _invExcluidos    = new Set();
 let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _invPadroes      = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
+let _invOrdemGrupos  = {};   // { unidade: { setor: ['grupo1','grupo2',...] } }
 let _transfItens     = [];   // { produto_id, nome, unidade, qtd }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
@@ -2579,14 +2580,15 @@ function mudarLocalInv(local) {
 
 async function carregarMapeamentosInv() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes','padroes','estrutura']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','adicoes','padroes','estrutura','ordem_grupos']);
   let mapeamentos = {}, excluidos = new Set();
   if (data) {
     data.forEach(row => {
       if (row.chave === 'mapeamentos') mapeamentos  = row.valor || {};
       if (row.chave === 'excluidos')   excluidos    = new Set(row.valor || []);
       if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
-      if (row.chave === 'padroes')     _invPadroes  = row.valor || {};
+      if (row.chave === 'padroes')     _invPadroes      = row.valor || {};
+      if (row.chave === 'ordem_grupos') _invOrdemGrupos = row.valor || {};
       if (row.chave === 'estrutura')   _todasEstruturas = row.valor || {};
     });
   }
@@ -2696,8 +2698,13 @@ async function selecionarSetorInv(setor) {
   document.getElementById('inv-btn-salvar-saldo')?.classList.toggle('d-none', !isEL);
   document.getElementById('inv-grupo-actions')?.style.setProperty('display', isEL ? 'none' : 'flex', 'important');
 
-  // Monta botões de grupo
-  const grupos = Object.keys(INVENTARIO_ESTRUTURA[setor] || {});
+  // Monta botões de grupo (respeita ordem salva)
+  const _todosGrupos = Object.keys(INVENTARIO_ESTRUTURA[setor] || {});
+  const _ordemSalva  = _invOrdemGrupos[_invLocal]?.[setor] || [];
+  const grupos = [
+    ..._ordemSalva.filter(g => _todosGrupos.includes(g)),
+    ..._todosGrupos.filter(g => !_ordemSalva.includes(g))
+  ];
   const grupoSection = document.getElementById('inv-grupo-section');
   const grupoTitulo  = document.getElementById('inv-grupo-titulo');
   const grupoBtns    = document.getElementById('inv-grupo-btns');
@@ -8165,6 +8172,31 @@ function _renderizarSetoresBtns() {
     `<button class="saldo-grupo-btn inv-setor-btn inv-setor-el${_invSetor === 'ESTOQUE DA LOJA' ? ' ativo' : ''}" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>`;
 }
 
+async function moverGrupoInv(dir) {
+  if (!_invGrupo || !_invSetor) { toast('Selecione um grupo primeiro.', 'erro'); return; }
+  const local = _invLocal || 'Centro';
+  const todosGrupos = Object.keys(INVENTARIO_ESTRUTURA[_invSetor] || {});
+  const ordemSalva  = _invOrdemGrupos[local]?.[_invSetor] || [];
+  let grupos = [
+    ...ordemSalva.filter(g => todosGrupos.includes(g)),
+    ...todosGrupos.filter(g => !ordemSalva.includes(g))
+  ];
+  const idx = grupos.indexOf(_invGrupo);
+  if (idx < 0) return;
+  const novoIdx = idx + dir;
+  if (novoIdx < 0 || novoIdx >= grupos.length) return;
+  [grupos[idx], grupos[novoIdx]] = [grupos[novoIdx], grupos[idx]];
+  if (!_invOrdemGrupos[local]) _invOrdemGrupos[local] = {};
+  _invOrdemGrupos[local][_invSetor] = grupos;
+  await sb.from('inv_configuracoes').upsert({ chave: 'ordem_grupos', valor: _invOrdemGrupos });
+  const grupoBtns = document.getElementById('inv-grupo-btns');
+  grupoBtns.innerHTML = grupos.map(g =>
+    `<button class="saldo-grupo-btn inv-grupo-btn${g === _invGrupo ? ' ativo' : ''}" data-grupo="${esc(g)}"
+      onclick="selecionarGrupoInv('${esc(g)}')">${esc(g)}</button>`
+  ).join('');
+  toast('Ordem salva ✅', 'ok');
+}
+
 async function adicionarGrupoUnidade() {
   const local = _invLocal || 'Centro';
   const setor = _invSetor;
@@ -8178,7 +8210,9 @@ async function adicionarGrupoUnidade() {
   if (_todasEstruturas[local][setor][nome]) { toast('Grupo já existe.', 'erro'); return; }
 
   _todasEstruturas[local][setor][nome] = [];
+  if (_invOrdemGrupos[local]?.[setor]) _invOrdemGrupos[local][setor].push(nome);
   await _salvarEstruturaSupabase();
+  await sb.from('inv_configuracoes').upsert({ chave: 'ordem_grupos', valor: _invOrdemGrupos });
   selecionarSetorInv(_invSetor);
   toast(`Grupo ${nome} adicionado!`, 'ok');
 }
@@ -8191,6 +8225,10 @@ async function removerGrupoUnidade() {
   if (!confirm(`Remover grupo "${grupo}" do setor "${setor}"?`)) return;
 
   delete _todasEstruturas[local]?.[setor]?.[grupo];
+  if (_invOrdemGrupos[local]?.[setor]) {
+    _invOrdemGrupos[local][setor] = _invOrdemGrupos[local][setor].filter(g => g !== grupo);
+    await sb.from('inv_configuracoes').upsert({ chave: 'ordem_grupos', valor: _invOrdemGrupos });
+  }
   await _salvarEstruturaSupabase();
   _invGrupo = null;
   _invProds = [];
