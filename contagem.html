@@ -1540,7 +1540,7 @@ function _buildProdutosEmerg() {
   const nomes = new Set();
   Object.values(estruturaSetor).flat().forEach(n => { if (n) nomes.add(n.trim().toUpperCase()); });
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
-    if (chave.startsWith(_setor + '|')) lista.forEach(n => { if (n) nomes.add(n.trim().toUpperCase()); });
+    if (chave.startsWith(_setor + '|') && lista) lista.forEach(n => { if (n) nomes.add(n.trim().toUpperCase()); });
   });
   const filtrado = (_todosProdutos || []).filter(p => nomes.has(p.nome.trim().toUpperCase()));
   _produtosEmerg = filtrado.length ? filtrado : (_todosProdutos || []);
