@@ -742,6 +742,7 @@ let _mapeamentos   = {};   // carregado do Supabase (compartilhado com o desktop
 let _excluidos     = new Set();
 let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _padroes       = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
+let _ordemGruposMob = {}; // { unidade: { setor: ['grupo1','grupo2',...] } }
 let _pedLiberarId  = null, _pedReceberId = null, _pedReceberSetor = null;
 let _pins              = {};
 let _pinBuffer         = '';
@@ -816,7 +817,7 @@ async function entrar() {
 
 async function carregarMapeamentos() {
   const { data } = await sb.from('inv_configuracoes')
-    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes','padroes','estrutura']);
+    .select('chave,valor').in('chave', ['mapeamentos','excluidos','pins','adicoes','padroes','estrutura','ordem_grupos']);
   if (data) {
     data.forEach(row => {
       if (row.chave === 'mapeamentos') _mapeamentos     = row.valor || {};
@@ -824,7 +825,8 @@ async function carregarMapeamentos() {
       if (row.chave === 'pins')        _pins            = row.valor || {};
       if (row.chave === 'adicoes')     _invAdicoes      = row.valor || {};
       if (row.chave === 'padroes')     _padroes         = row.valor || {};
-      if (row.chave === 'estrutura')   _todasEstruturasMob = row.valor || {};
+      if (row.chave === 'estrutura')    _todasEstruturasMob = row.valor || {};
+      if (row.chave === 'ordem_grupos') _ordemGruposMob     = row.valor || {};
     });
   }
 }
@@ -1083,7 +1085,12 @@ async function salvarSaldoContagem() {
 }
 
 function renderGrupos() {
-  const grupos = Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
+  const todosGrupos = Object.keys(INVENTARIO_ESTRUTURA[_setor] || {});
+  const ordemSalva  = _ordemGruposMob[_local]?.[_setor] || [];
+  const grupos = [
+    ...ordemSalva.filter(g => todosGrupos.includes(g)),
+    ...todosGrupos.filter(g => !ordemSalva.includes(g))
+  ];
   document.getElementById('grupos-scroll').innerHTML = grupos.map(g =>
     `<button class="grupo-chip${g === _grupo ? ' ativo' : ''}"
       onclick="selecionarGrupo('${g.replace(/'/g, "\\'")}')">${esc(g)}</button>`
