@@ -5369,9 +5369,24 @@ async function confirmarRecebimento() {
   }
 
   // Se já existia lançamento pendente no financeiro (enviado antes do recebimento), ajusta valor automaticamente
+  let _financAjustado = false;
   if (contaExist?.lancamento_id) {
     const notaLiq = Math.max(0, totalAcumulado - acrescimo);
     await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', contaExist.lancamento_id);
+    _financAjustado = true;
+  } else {
+    // Fallback: busca lançamento pendente diretamente — vínculo pode ter sido perdido
+    const { data: _lancFb } = await sb.from('lancamentos')
+      .select('id').eq('numero_pedido', pedido_num).eq('status', 'pendente').maybeSingle();
+    if (_lancFb?.id) {
+      const notaLiq = Math.max(0, totalAcumulado - acrescimo);
+      await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', _lancFb.id);
+      _financAjustado = true;
+      // Restaura o vínculo para próximos recebimentos
+      const { data: _contaFb } = await sb.from('cmp_contas_pagar')
+        .select('id').eq('pedido_num', pedido_num).maybeSingle();
+      if (_contaFb?.id) await sb.from('cmp_contas_pagar').update({ lancamento_id: _lancFb.id }).eq('id', _contaFb.id);
+    }
   }
 
   // Marca cada item: se qtd completa → recebido; se parcial → atualiza quantidade restante
@@ -5416,7 +5431,7 @@ async function confirmarRecebimento() {
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
-  const _ajustouFinanc = contaExist?.lancamento_id ? ` 💰 Financeiro ajustado para ${brl(totalAcumulado)}.` : '';
+  const _ajustouFinanc = _financAjustado ? ` 💰 Financeiro ajustado para ${brl(totalAcumulado)}.` : '';
   toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}${_ajustouFinanc}`, 'ok');
   renderPendentes();
 }
