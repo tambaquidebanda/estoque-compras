@@ -6085,15 +6085,21 @@ async function carregarCompras() {
       pedido_num: key, data: c.data, data_entrega: c.data_entrega,
       forn: c.fornecedor_nome, comp: c.comprador, fornecedor_id: c.fornecedor_id || '',
       setor: c.setor || '', itens: [], total: 0, acrescimo: parseFloat(c.acrescimo) || 0,
-      recebido: c.status_receb === 'recebido'
+      _temPendente: false, _temRecebido: false
     };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
-    if (c.status_receb !== 'recebido') grupos[key].recebido = false;
+    const st = c.status_receb;
+    if (st === 'recebido') grupos[key]._temRecebido = true;
+    else if (st !== 'dispensado' && st !== 'cancelado') grupos[key]._temPendente = true;
   });
 
-  // Inclui acréscimo no total de cada grupo
-  Object.values(grupos).forEach(g => { g.total += g.acrescimo; });
+  // Pedido concluído = nenhum item pendente e ao menos um recebido
+  // (itens dispensados/cancelados não impedem a conclusão — alinhado com o celular)
+  Object.values(grupos).forEach(g => {
+    g.recebido = !g._temPendente && g._temRecebido;
+    g.total += g.acrescimo;
+  });
 
   // Verifica status financeiro de cada pedido
   const numeros = Object.keys(grupos);
