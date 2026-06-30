@@ -5358,13 +5358,13 @@ async function confirmarRecebimento() {
 
   if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
-      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado, acrescimo,
+      recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
     }).eq('id', contaExist.id);
   } else {
     await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
-      data_receb: dataRec, vencimento, valor: totalAcumulado, acrescimo, status: 'pendente',
+      data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
     }]);
   }
 
