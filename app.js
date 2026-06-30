@@ -5055,7 +5055,7 @@ async function renderPendentes() {
   let query = sb.from('cmp_compras')
     .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,tipo_produto,unidade_med,quantidade,custo_unit,status_receb,unidade_uso,acrescimo,setor,forma_pagamento')
     .not('pedido_num', 'is', null)
-    .neq('status_receb', 'recebido')
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('data', { ascending: false });
 
   if (ini) query = query.gte('data', ini);

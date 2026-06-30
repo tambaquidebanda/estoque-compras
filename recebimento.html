@@ -659,7 +659,7 @@ async function abrirPedido(pedido_num) {
     .from('cmp_compras')
     .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo')
     .eq('pedido_num', pedido_num)
-    .neq('status_receb', 'recebido')
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('id');
 
   if (error || !itens?.length) { toast('Pedido não encontrado.', 'err'); return; }
