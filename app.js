@@ -7534,6 +7534,8 @@ async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf)
   const dataRec = new Date().toISOString().split('T')[0];
   const venc = conta.vencimento || dataRec;
 
+  await sb.from('cmp_contas_pagar').update({ valor: totalAcumulado }).eq('id', conta.id);
+
   await gerarContaFinanceiro({
     pedido_num, vencimento: venc, valor: totalAcumulado, acrescimo: 0,
     fornecedor_id: ref?.fornecedor_id || null,
