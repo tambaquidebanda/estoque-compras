@@ -447,6 +447,8 @@ async function _executarFinalizarRegularMob(pedido_num, conta, ref) {
   const dataRec = new Date().toISOString().split('T')[0];
   const venc = conta.vencimento || dataRec;
 
+  await sb.from('cmp_contas_pagar').update({ valor: totalAcum }).eq('id', conta.id);
+
   await gerarContaFinanceiroMobile({
     pedido_num, vencimento: venc, valor: totalAcum,
     fornecedor_id: ref?.fornecedor_id || null,
@@ -597,7 +599,7 @@ async function carregarPedidosPendentes() {
   const { data, error } = await sb
     .from('cmp_compras')
     .select('id,pedido_num,data,data_entrega,fornecedor_nome,produto,categoria,unidade_med,quantidade,custo_unit,status_receb')
-    .neq('status_receb', 'recebido')
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('pedido_num', { ascending: false });
 
   const cont = document.getElementById('lista-pedidos');
