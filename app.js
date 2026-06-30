@@ -5177,7 +5177,7 @@ async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
     .select('id,produto,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso')
     .eq('pedido_num', pedido_num)
-    .or('status_receb.neq.recebido,status_receb.is.null');
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
   if (!itens?.length) { toast('Itens não encontrados.', 'erro'); return; }
   _recebItensAbertos = itens;
