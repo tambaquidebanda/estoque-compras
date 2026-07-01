@@ -7231,7 +7231,14 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
 
     // total = cmp_contas_pagar.valor (gravado no recebimento = subtotal_recebido + acrescimo)
     // nota  = total - acrescimo  (o valor da NF sem o frete/taxa)
-    const totalFinal = contaRow?.valor || subtotalDB + acrescimoDB;
+    // Sem conta ainda: usa a soma real dos recebimentos, não o estimado (que inclui itens dispensados)
+    let totalFinal = contaRow?.valor;
+    if (!totalFinal) {
+      const { data: recRows } = await sb.from('cmp_recebimentos')
+        .select('total_recebido').eq('pedido_num', pedido_num);
+      const somaReceb = (recRows || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+      totalFinal = somaReceb || subtotalDB + acrescimoDB;
+    }
     const notaFinal  = Math.max(0, totalFinal - acrescimoDB);
     setMoeda('gc-valor',    notaFinal);
     setMoeda('gc-acrescimo', acrescimoDB);
