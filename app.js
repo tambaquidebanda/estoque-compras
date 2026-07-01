@@ -229,7 +229,6 @@ function ir(nome, el) {
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
-  if (nome === 'backup')        inicializarToggleIntegracao();
 }
 
 function irCad(tab, el) {
@@ -7163,29 +7162,10 @@ function redefinirConexao() {
 // ═══════════════════════════════════════════════════════════════
 
 function modoIntegracaoProducao() {
-  return localStorage.getItem('gc_integracao_fin') === 'producao';
-}
-
-function alternarModoIntegracao(ativo) {
-  const modo   = ativo ? 'producao' : 'teste';
-  localStorage.setItem('gc_integracao_fin', modo);
-  document.getElementById('label-integracao-fin').textContent = ativo ? 'Modo Produção' : 'Modo Teste';
-  document.getElementById('badge-integracao-fin').textContent = ativo
-    ? 'PRODUÇÃO — grava direto, sem aprovação' : 'TESTE — vai para aprovação (Integrações Pendentes)';
-  document.getElementById('badge-integracao-fin').style.background = ativo ? '#198754' : '#0d6efd';
-  document.getElementById('desc-integracao-fin').innerHTML = ativo
-    ? 'Em Modo Produção: a conta a pagar é gravada <strong>direto</strong> no financeiro, sem etapa de aprovação.'
-    : 'Em Modo Teste: o recebimento gera um <strong>rascunho</strong> que aparece em <strong>Integrações Pendentes</strong> no financeiro, para ser aprovado antes de virar conta a pagar.';
-}
-
-// Inicializa o toggle conforme o valor salvo
-function inicializarToggleIntegracao() {
-  const prod = modoIntegracaoProducao();
-  const el   = document.getElementById('toggle-integracao-fin');
-  if (el) {
-    el.checked = prod;
-    alternarModoIntegracao(prod);
-  }
+  // Fluxo de aprovação (rascunho → Integrações Pendentes) é o padrão permanente.
+  // O antigo toggle "Modo Teste/Produção" foi removido. Recebimento sempre gera
+  // rascunho para o financeiro aprovar; nunca grava direto em lancamentos.
+  return false;
 }
 
 function abrirAdiantamento(pedido_num, forn, fornId, total) {
