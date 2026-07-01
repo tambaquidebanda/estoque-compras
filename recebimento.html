@@ -977,11 +977,101 @@ async function confirmarRecebimento() {
     }
   }
 
+  // Último preço: atualiza o custo dos ingredientes recebidos e recalcula as fichas.
+  // Em segundo plano (fire-and-forget) para não atrasar a confirmação; nunca quebra o recebimento.
+  _recebimentoAtualizaCustos(itensReceb);
+
   toast(`✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
   setTimeout(() => {
     btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
     voltarLista();
   }, 1500);
+}
+
+// ── ÚLTIMO PREÇO: custo do ingrediente atualiza no recebimento + fichas recalculam ──
+function _normNome(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+async function _recebimentoAtualizaCustos(itensReceb) {
+  try {
+    // Preço pago por nome de produto (normalizado)
+    const precoPorNome = {};
+    for (const it of itensReceb) {
+      if (!it.qtd_recebida || !(it.valor_unitario > 0) || !it.produto) continue;
+      precoPorNome[_normNome(it.produto)] = +it.valor_unitario;
+    }
+    if (!Object.keys(precoPorNome).length) return;
+
+    // Carrega catálogo + fichas + ingredientes de uma vez
+    const [{ data: prods }, { data: fichas }, { data: ings }] = await Promise.all([
+      sb.from('est_produtos').select('id,nome,fator_conversao,perda,custo_comp'),
+      sb.from('est_fichas_tecnicas').select('id,produto_id,rendimento').eq('ativo', true),
+      sb.from('est_ficha_ingredientes').select('ficha_id,quantidade,ingrediente_id'),
+    ]);
+    if (!prods?.length) return;
+
+    const prodMap   = new Map(prods.map(p => [p.id, { ...p }]));
+    const comFicha  = new Set((fichas || []).map(f => f.produto_id));
+    const origCusto = new Map(prods.map(p => [p.id, p.custo_comp || 0]));
+
+    // 1) Aplica o último preço nos ingredientes SEM ficha própria (custo de ficha vem da receita)
+    for (const p of prods) {
+      const preco = precoPorNome[_normNome(p.nome)];
+      if (preco === undefined || comFicha.has(p.id)) continue;
+      prodMap.get(p.id).custo_comp = preco;
+    }
+
+    // 2) Recalcula as fichas por passadas até estabilizar (resolve aninhamento MP → PPC → VENDA)
+    const ingsPorFicha = {};
+    (ings || []).forEach(i => (ingsPorFicha[i.ficha_id] ||= []).push(i));
+    const calcTotal = (fichaId) => {
+      let tot = 0;
+      for (const ing of (ingsPorFicha[fichaId] || [])) {
+        const p = prodMap.get(ing.ingrediente_id);
+        if (!p) continue;
+        const fator = p.fator_conversao || 1;
+        const perda = p.perda || 0;
+        const rend  = 1 - (perda / 100);
+        tot += ing.quantidade * (rend > 0 ? ((p.custo_comp || 0) / fator) / rend : 0);
+      }
+      return tot;
+    };
+    const resultado = {};
+    let mudou = true, passes = 0;
+    while (mudou && passes < 12) {
+      mudou = false; passes++;
+      for (const f of (fichas || [])) {
+        const custoTotal  = calcTotal(f.id);
+        const custoPorcao = f.rendimento > 0 ? custoTotal / f.rendimento : custoTotal;
+        const pm = prodMap.get(f.produto_id);
+        if (pm && Math.abs((pm.custo_comp || 0) - custoPorcao) > 0.005) {
+          mudou = true;
+          pm.custo_comp = custoPorcao;
+        }
+        resultado[f.id] = { custoTotal, custoPorcao, produto_id: f.produto_id };
+      }
+    }
+
+    // 3) Persiste só o que mudou — custo dos ingredientes sem ficha
+    for (const p of prods) {
+      if (comFicha.has(p.id)) continue;
+      const novo = prodMap.get(p.id).custo_comp || 0;
+      if (Math.abs((origCusto.get(p.id) || 0) - novo) <= 0.0001) continue;
+      await sb.from('est_produtos').update({ custo_comp: novo }).eq('id', p.id);
+    }
+    // 4) Persiste só o que mudou — fichas e seus produtos
+    for (const f of (fichas || [])) {
+      const r = resultado[f.id];
+      if (!r) continue;
+      if (Math.abs((origCusto.get(r.produto_id) || 0) - r.custoPorcao) <= 0.005) continue;
+      await sb.from('est_fichas_tecnicas').update({ custo_total: r.custoTotal, custo_por_porcao: r.custoPorcao }).eq('id', f.id);
+      await sb.from('est_produtos').update({ custo_comp: r.custoPorcao }).eq('id', r.produto_id);
+    }
+  } catch (e) {
+    console.error('Atualização de custo no recebimento (mobile) falhou:', e);
+    // Nunca interrompe o recebimento por causa do recálculo de custo
+  }
 }
 </script>
 </body>
