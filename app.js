@@ -6687,7 +6687,12 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
   if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
 }
 
-async function recalcularFichasDoIngrediente(ingredienteId) {
+async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null) {
+  const topLevel = _visitados === null;
+  _visitados = _visitados || new Set();
+  if (_visitados.has(ingredienteId)) return;   // proteção contra ciclo
+  _visitados.add(ingredienteId);
+
   // Busca fichas que contêm este ingrediente
   const { data: usos } = await sb.from('est_ficha_ingredientes')
     .select('ficha_id').eq('ingrediente_id', ingredienteId);
@@ -6730,10 +6735,79 @@ async function recalcularFichasDoIngrediente(ingredienteId) {
       setMoeda('prod-custo-comp', custoPorcao);
       atualizarCustoEfetivo();
     }
+
+    // Propaga para cima: o produto desta ficha mudou de custo →
+    // recalcula as fichas que usam ESTE produto como ingrediente (ex: PPC → VENDA)
+    await recalcularFichasDoIngrediente(ficha.produto_id, _visitados);
   }
 
-  if (fichas.length > 0)
-    toast(`${fichas.length} ficha(s) recalculada(s) automaticamente.`, 'ok');
+  if (topLevel)
+    toast(`Custos das fichas recalculados automaticamente.`, 'ok');
+}
+
+// Resync único/opt-in: recalcula TODAS as fichas com base no custo atual dos ingredientes.
+// Usa passadas até estabilizar (resolve aninhamento MP → PPC → VENDA). Mesma fórmula das demais funções.
+async function resyncTodasFichas() {
+  if (!confirm('Recalcular o custo de TODAS as fichas técnicas com base no custo atual dos ingredientes?\n\nIsso atualiza o custo dos produtos que têm ficha técnica.')) return;
+  await carregarProdutosFT(true); // recarrega custos atuais do banco antes de recalcular
+
+  const { data: fichas } = await sb.from('est_fichas_tecnicas')
+    .select('id,produto_id,rendimento').eq('ativo', true);
+  if (!fichas?.length) { toast('Nenhuma ficha ativa encontrada.', 'erro'); return; }
+
+  const { data: todosIngs } = await sb.from('est_ficha_ingredientes')
+    .select('ficha_id,quantidade,ingrediente_id');
+  const ingsPorFicha = {};
+  (todosIngs || []).forEach(i => { (ingsPorFicha[i.ficha_id] ||= []).push(i); });
+
+  // Snapshot dos custos originais para persistir só o que mudar
+  const origCusto = new Map(cProdutosFT.map(p => [p.id, p.custo_comp || 0]));
+
+  const calcTotal = (fichaId) => {
+    let custoTotal = 0;
+    for (const ing of (ingsPorFicha[fichaId] || [])) {
+      const prod = cProdutosFT.find(p => p.id === ing.ingrediente_id);
+      if (!prod) continue;
+      const fator = prod.fator_conversao || 1;
+      const perda = prod.perda || 0;
+      const rend  = 1 - (perda / 100);
+      const base  = prod.custo_comp || 0;
+      custoTotal += ing.quantidade * (rend > 0 ? (base / fator) / rend : 0);
+    }
+    return custoTotal;
+  };
+
+  // Passadas até estabilizar (atualiza o cache a cada passada para os níveis aninhados)
+  const novos = {}; // ficha.id → { custoTotal, custoPorcao }
+  let mudou = true, passes = 0;
+  while (mudou && passes < 12) {
+    mudou = false; passes++;
+    for (const ficha of fichas) {
+      const custoTotal  = calcTotal(ficha.id);
+      const custoPorcao = ficha.rendimento > 0 ? custoTotal / ficha.rendimento : custoTotal;
+      const iProd = cProdutosFT.findIndex(p => p.id === ficha.produto_id);
+      const atual = iProd >= 0 ? (cProdutosFT[iProd].custo_comp || 0) : 0;
+      if (Math.abs(atual - custoPorcao) > 0.005) {
+        mudou = true;
+        if (iProd >= 0) cProdutosFT[iProd].custo_comp = custoPorcao; // reflete p/ próxima passada
+      }
+      novos[ficha.id] = { custoTotal, custoPorcao, produto_id: ficha.produto_id };
+    }
+  }
+
+  // Persiste no banco — apenas as fichas cujo custo realmente mudou
+  let n = 0;
+  for (const ficha of fichas) {
+    const r = novos[ficha.id];
+    if (!r) continue;
+    if (Math.abs((origCusto.get(r.produto_id) ?? 0) - r.custoPorcao) <= 0.005) continue;
+    await sb.from('est_fichas_tecnicas').update({ custo_total: r.custoTotal, custo_por_porcao: r.custoPorcao }).eq('id', ficha.id);
+    await sb.from('est_produtos').update({ custo_comp: r.custoPorcao }).eq('id', r.produto_id);
+    n++;
+  }
+
+  toast(`✅ ${n} ficha(s) atualizada(s) em ${passes} passada(s).`, 'ok');
+  carregarFichas();
 }
 
 function abrirModalNovoProduto() {

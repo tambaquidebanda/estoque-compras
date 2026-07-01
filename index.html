@@ -1099,9 +1099,15 @@
       <div id="cad-produtos" class="tab-cad">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <span class="text-muted small">Clique em um produto para editar os dados ou acessar a ficha técnica.</span>
-          <button class="btn btn-primary btn-sm" onclick="abrirModalNovoProduto()">
-            <i class="bi bi-plus-circle"></i> Novo Produto
-          </button>
+          <div>
+            <button class="btn btn-outline-secondary btn-sm me-2" onclick="resyncTodasFichas()"
+              title="Recalcula o custo de todas as fichas com base no custo atual dos ingredientes">
+              <i class="bi bi-arrow-repeat"></i> Recalcular Custos
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalNovoProduto()">
+              <i class="bi bi-plus-circle"></i> Novo Produto
+            </button>
+          </div>
         </div>
 
         <div class="card-grafico mb-3">
