@@ -5429,6 +5429,32 @@ async function confirmarRecebimento() {
     await _movSaldo(prod.id, 'ESTOQUE_LOJA', +it.qtd_recebida);
   }));
 
+  // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
+  // Não sobrescreve produtos que têm ficha própria (custo vem da receita, não da compra).
+  const _precoPorProd = new Map();
+  itensReceb.forEach(it => {
+    if (!it.qtd_recebida || !(it.valor_unitario > 0)) return;
+    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()));
+    if (prod) _precoPorProd.set(prod.id, +it.valor_unitario);
+  });
+  if (_precoPorProd.size) {
+    const ids = [..._precoPorProd.keys()];
+    const { data: comFicha } = await sb.from('est_fichas_tecnicas')
+      .select('produto_id').in('produto_id', ids).eq('ativo', true);
+    const setFicha = new Set((comFicha || []).map(f => f.produto_id));
+    const alterados = [];
+    for (const [id, preco] of _precoPorProd) {
+      if (setFicha.has(id)) continue; // tem ficha própria → custo vem da receita
+      const idx = cProdutosFT.findIndex(p => p.id === id);
+      if (idx >= 0 && Math.abs((cProdutosFT[idx].custo_comp || 0) - preco) <= 0.0001) continue;
+      await sb.from('est_produtos').update({ custo_comp: preco }).eq('id', id);
+      if (idx >= 0) cProdutosFT[idx].custo_comp = preco;
+      alterados.push(id);
+    }
+    // Cascata silenciosa (depois de todos os custos base atualizados) → propaga p/ PPC/VENDA
+    for (const id of alterados) await recalcularFichasDoIngrediente(id, null, true);
+  }
+
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
   const _ajustouFinanc = _financAjustado ? ` 💰 Financeiro ajustado para ${brl(totalAcumulado)}.` : '';
   toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}${_ajustouFinanc}`, 'ok');
@@ -6687,7 +6713,7 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
   if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
 }
 
-async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null) {
+async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _silent = false) {
   const topLevel = _visitados === null;
   _visitados = _visitados || new Set();
   if (_visitados.has(ingredienteId)) return;   // proteção contra ciclo
@@ -6741,7 +6767,7 @@ async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null) {
     await recalcularFichasDoIngrediente(ficha.produto_id, _visitados);
   }
 
-  if (topLevel)
+  if (topLevel && !_silent)
     toast(`Custos das fichas recalculados automaticamente.`, 'ok');
 }
 
