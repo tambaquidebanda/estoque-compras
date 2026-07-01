@@ -445,16 +445,20 @@ async function _executarFinalizarRegularMob(pedido_num, conta, ref) {
   if (!totalAcum) return;
 
   const dataRec = new Date().toISOString().split('T')[0];
-  const venc = conta.vencimento || dataRec;
+  const venc = conta?.vencimento || dataRec;
 
-  await sb.from('cmp_contas_pagar').update({ valor: totalAcum }).eq('id', conta.id);
+  // Grava o valor real recebido — cria a conta se ela não existir (ex: recebimento antigo que não a criou)
+  const { data: contaUp } = await sb.from('cmp_contas_pagar')
+    .upsert([{ pedido_num, fornecedor: ref?.fornecedor_nome || '', valor: totalAcum, vencimento: venc, status: 'pendente' }],
+            { onConflict: 'pedido_num' })
+    .select('id').single();
 
   await gerarContaFinanceiroMobile({
     pedido_num, vencimento: venc, valor: totalAcum,
     fornecedor_id: ref?.fornecedor_id || null,
     fornecedor_nome: ref?.fornecedor_nome || '',
     categoria: ref?.categoria || '',
-    nf_numero: null, conta_id: conta.id,
+    nf_numero: null, conta_id: contaUp?.id || conta?.id || null,
     unidade_uso: ref?.unidade_uso || '',
   });
 }
@@ -470,7 +474,7 @@ async function finalizarPedidoRegularMob(pedido_num) {
   const { data: conta } = await sb.from('cmp_contas_pagar')
     .select('id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
 
-  if (conta && !conta.lancamento_id) {
+  if (!conta?.lancamento_id) {
     const { data: refItem } = await sb.from('cmp_compras')
       .select('fornecedor_nome,fornecedor_id,categoria,unidade_uso').eq('pedido_num', pedido_num).limit(1).maybeSingle();
     await _executarFinalizarRegularMob(pedido_num, conta, refItem);

@@ -6127,9 +6127,13 @@ async function carregarCompras() {
   }
 
   // Para pedidos recebidos: usa cmp_contas_pagar.valor como total (correto: qtd_recebida × preço_recebido + acréscimo)
+  // Se ainda não há conta (ex: pedido recebido mas sem conta gerada), usa a soma real dos recebimentos —
+  // nunca o total estimado, que inclui itens dispensados.
   Object.values(grupos).forEach(g => {
     if (g.recebido && valorRecebMap[g.pedido_num]) {
       g.total = valorRecebMap[g.pedido_num];
+    } else if (g.recebido && somaRecebMap[g.pedido_num]) {
+      g.total = somaRecebMap[g.pedido_num];
     }
   });
 
@@ -7518,16 +7522,20 @@ async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf)
   if (!totalAcumulado) return;
 
   const dataRec = new Date().toISOString().split('T')[0];
-  const venc = conta.vencimento || dataRec;
+  const venc = conta?.vencimento || dataRec;
 
-  await sb.from('cmp_contas_pagar').update({ valor: totalAcumulado }).eq('id', conta.id);
+  // Grava o valor real recebido — cria a conta se ela não existir (ex: recebimento antigo que não a criou)
+  const { data: contaUp } = await sb.from('cmp_contas_pagar')
+    .upsert([{ pedido_num, fornecedor: ref?.fornecedor_nome || '', valor: totalAcumulado, vencimento: venc, status: 'pendente' }],
+            { onConflict: 'pedido_num' })
+    .select('id').single();
 
   await gerarContaFinanceiro({
     pedido_num, vencimento: venc, valor: totalAcumulado, acrescimo: 0,
     fornecedor_id: ref?.fornecedor_id || null,
     fornecedor_nome: ref?.fornecedor_nome || '',
     plano_conta: ref?.plano_conta || '',
-    nf_numero: nf, conta_id: conta.id, unidade_id,
+    nf_numero: nf, conta_id: contaUp?.id || conta?.id || null, unidade_id,
     obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
   });
 }
@@ -7543,7 +7551,7 @@ async function finalizarPedidoRegular(pedido_num) {
   const { data: conta } = await sb.from('cmp_contas_pagar')
     .select('id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
 
-  if (conta && !conta.lancamento_id) {
+  if (!conta?.lancamento_id) {
     const { data: refItem } = await sb.from('cmp_compras')
       .select('fornecedor_nome,fornecedor_id,plano_conta,unidade_uso').eq('pedido_num', pedido_num).limit(1).maybeSingle();
     if (!cUnidades.length) await carregarCaches();
