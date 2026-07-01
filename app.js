@@ -7171,11 +7171,11 @@ function alternarModoIntegracao(ativo) {
   localStorage.setItem('gc_integracao_fin', modo);
   document.getElementById('label-integracao-fin').textContent = ativo ? 'Modo Produção' : 'Modo Teste';
   document.getElementById('badge-integracao-fin').textContent = ativo
-    ? 'PRODUÇÃO — dados enviados ao financeiro' : 'TESTE — dados não são enviados';
-  document.getElementById('badge-integracao-fin').style.background = ativo ? '#198754' : '#6c757d';
+    ? 'PRODUÇÃO — grava direto, sem aprovação' : 'TESTE — vai para aprovação (Integrações Pendentes)';
+  document.getElementById('badge-integracao-fin').style.background = ativo ? '#198754' : '#0d6efd';
   document.getElementById('desc-integracao-fin').innerHTML = ativo
-    ? 'Em Modo Produção: contas a pagar são <strong>gravadas de verdade</strong> no sistema financeiro.'
-    : 'Em Modo Teste: mostra preview completo mas <strong>não grava</strong> nada no financeiro.';
+    ? 'Em Modo Produção: a conta a pagar é gravada <strong>direto</strong> no financeiro, sem etapa de aprovação.'
+    : 'Em Modo Teste: o recebimento gera um <strong>rascunho</strong> que aparece em <strong>Integrações Pendentes</strong> no financeiro, para ser aprovado antes de virar conta a pagar.';
 }
 
 // Inicializa o toggle conforme o valor salvo
