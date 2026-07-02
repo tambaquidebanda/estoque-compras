@@ -7766,9 +7766,11 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
 
   if (!producao) {
     // Modo Teste — grava em lancamentos_rascunho
-    // Trava anti-duplicata: não cria rascunho se o pedido já tem lançamento no financeiro
-    const { data: jaLanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
-    if (jaLanc?.length) { toast(`Pedido ${pedido_num} já tem lançamento no financeiro — rascunho não criado.`, 'erro'); return; }
+    // Trava anti-duplicata: não cria rascunho se o pedido já tem lançamento no financeiro.
+    // Checa por numero_pedido E por descrição "Pedido #XXXXX" (pega casos em que o numero_pedido virou o NF).
+    const { data: jaLancNum } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+    const { data: jaLancDesc } = await sb.from('lancamentos').select('id').ilike('descricao', `Pedido ${pedido_num}%`).limit(1);
+    if (jaLancNum?.length || jaLancDesc?.length) { toast(`Pedido ${pedido_num} já tem lançamento no financeiro — rascunho não criado.`, 'erro'); return; }
     const { data: existente } = await sb.from('lancamentos_rascunho').select('id').eq('pedido_num', pedido_num).limit(1);
     if (existente?.length) { toast(`Rascunho para ${pedido_num} já existe no financeiro.`, 'erro'); return; }
 

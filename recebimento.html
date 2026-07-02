@@ -539,10 +539,12 @@ async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, forne
   };
 
   if (!producao) {
-    // Trava anti-duplicata: não cria rascunho se o pedido já tem lançamento ou rascunho no financeiro
-    const { data: jaLanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+    // Trava anti-duplicata: não cria rascunho se o pedido já tem lançamento ou rascunho no financeiro.
+    // Checa numero_pedido E descrição "Pedido #XXXXX" (pega casos em que o numero_pedido virou o NF).
+    const { data: jaLancNum } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+    const { data: jaLancDesc } = await sb.from('lancamentos').select('id').ilike('descricao', `Pedido ${pedido_num}%`).limit(1);
     const { data: jaRasc } = await sb.from('lancamentos_rascunho').select('id').eq('pedido_num', pedido_num).limit(1);
-    if (jaLanc?.length || jaRasc?.length) { toast('Pedido já está no financeiro — rascunho não criado.', 'err'); return; }
+    if (jaLancNum?.length || jaLancDesc?.length || jaRasc?.length) { toast('Pedido já está no financeiro — rascunho não criado.', 'err'); return; }
     const { error } = await sb.from('lancamentos_rascunho').insert([{
       ...dadosBase, pedido_num, conta_id: conta_id || null,
     }]);
