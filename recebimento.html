@@ -530,7 +530,7 @@ async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, forne
     status:         'pendente',
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id,
-    numero_pedido:  nf_numero || pedido_num,
+    numero_pedido:  pedido_num,          // sempre o pedido — NF fica nas observações
     observacoes:    nf_numero ? `Pedido ${pedido_num} — NF ${nf_numero}` : `Pedido ${pedido_num}`,
     acrescimo:      0,
     desconto:       0,

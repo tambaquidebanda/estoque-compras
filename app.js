@@ -7754,8 +7754,10 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
     status:         'pendente',
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id: plano_conta_id,
-    numero_pedido:  nf_numero || pedido_num,
-    observacoes:    obs || null,
+    numero_pedido:  pedido_num,          // sempre o pedido — o NF vai nas observações (não sobrescreve o nº do pedido)
+    observacoes:    (nf_numero && !(obs || '').includes(String(nf_numero)))
+                      ? `${obs || ('Pedido ' + pedido_num)} — NF ${nf_numero}`
+                      : (obs || null),
     acrescimo:      acrescimo,          // acréscimo no campo correto do financeiro
     desconto:       0,
     tem_rateio:     temRateio,
