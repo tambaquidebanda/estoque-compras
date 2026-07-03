@@ -7696,7 +7696,7 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
 
   const { data: lanc, error } = await sb.from('lancamentos').insert([{
     descricao:      `Pedido ${pedido_num} — Comprador Externo`,
-    valor:          totalItens,
+    valor:          totalRecebido,   // TOTAL (nota + acréscimo) — o financeiro trata valor como total
     acrescimo:      acrescimo,
     vencimento,
     tipo:           'pagar',
