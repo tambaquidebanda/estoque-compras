@@ -599,10 +599,19 @@
           </div>
           <div class="col-md-2">
             <label class="form-label fw-semibold">🔎 Buscar pedido</label>
-            <input type="text" class="form-control" id="cps-pedido" placeholder="Nº do pedido" oninput="carregarCompras()">
+            <div class="input-group">
+              <span class="input-group-text">#</span>
+              <input type="text" class="form-control" id="cps-pedido" placeholder="Nº do pedido"
+                oninput="carregarCompras()" onkeydown="if(event.key==='Enter')carregarCompras()">
+            </div>
           </div>
-          <div class="col-md-2">
-            <button class="btn btn-outline-secondary w-100" onclick="limparFiltrosCompras()">↺ Limpar</button>
+          <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-primary flex-fill" onclick="carregarCompras()" title="Buscar">
+              <i class="bi bi-search"></i> Buscar
+            </button>
+            <button class="btn btn-outline-secondary" onclick="limparFiltrosCompras()" title="Limpar filtros">
+              <i class="bi bi-arrow-counterclockwise"></i>
+            </button>
           </div>
         </div>
       </div>
