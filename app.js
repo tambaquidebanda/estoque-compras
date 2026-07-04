@@ -5963,18 +5963,48 @@ async function imprimirPedido(pedido_num, modo = 'imprimir') {
   if (!itens?.length) return;
   const ref       = itens[0];
   const dataBR    = (ref.data||'').split('-').reverse().join('/');
-  const subtotal  = itens.reduce((s,c) => s + (c.quantidade||0)*(c.custo_unit||0), 0);
-  const acrescimo = parseFloat(ref.acrescimo) || 0;
-  const total     = subtotal + acrescimo;
 
-  const linhas = itens.map((c,i) => `<tr>
+  // Se o pedido já foi recebido, mostra o que REALMENTE entrou (cmp_recebimento_itens).
+  // Caso contrário, mostra o pedido original (cmp_compras). O original nunca é apagado.
+  const { data: recs } = await sb.from('cmp_recebimentos').select('id,total_recebido').eq('pedido_num', pedido_num);
+  let recItens = null;
+  if (recs?.length) {
+    const r = await sb.from('cmp_recebimento_itens')
+      .select('produto,categoria,unidade,qtd_recebida,total_recebido').in('recebimento_id', recs.map(x => x.id));
+    recItens = r.data;
+  }
+  const recebido = (recItens?.length || 0) > 0;
+
+  let linhasData, subtotal, acrescimo, total, tituloDoc;
+  if (recebido) {
+    const agg = {};
+    recItens.forEach(it => {
+      const k = it.produto || '?';
+      if (!agg[k]) agg[k] = { produto: it.produto, categoria: it.categoria, unidade_med: it.unidade, tipo_produto: '', quantidade: 0, _total: 0 };
+      agg[k].quantidade += (it.qtd_recebida || 0);
+      agg[k]._total     += (it.total_recebido || 0);
+    });
+    linhasData = Object.values(agg).map(a => ({ ...a, custo_unit: a.quantidade > 0 ? a._total / a.quantidade : 0 }));
+    subtotal   = linhasData.reduce((s,a) => s + a._total, 0);
+    total      = recs.reduce((s,r) => s + (r.total_recebido || 0), 0);
+    acrescimo  = Math.max(0, total - subtotal);
+    tituloDoc  = 'Pedido Recebido';
+  } else {
+    linhasData = itens;
+    subtotal   = itens.reduce((s,c) => s + (c.quantidade||0)*(c.custo_unit||0), 0);
+    acrescimo  = parseFloat(ref.acrescimo) || 0;
+    total      = subtotal + acrescimo;
+    tituloDoc  = 'Pedido de Compra';
+  }
+
+  const linhas = linhasData.map((c,i) => `<tr>
     <td>${i+1}</td>
     <td><strong>${esc(c.produto)}</strong></td>
     <td>${esc(c.categoria||'—')}</td>
     <td>${esc(c.tipo_produto||'—')}</td>
     <td style="text-align:center">${c.quantidade} ${esc(c.unidade_med||'')}</td>
     <td style="text-align:center">${brl(c.custo_unit)}</td>
-    <td style="text-align:center;font-weight:bold">${brl((c.quantidade||0)*(c.custo_unit||0))}</td>
+    <td style="text-align:center;font-weight:bold">${brl(c._total != null ? c._total : (c.quantidade||0)*(c.custo_unit||0))}</td>
   </tr>`).join('');
 
   const w = window.open('', '_blank', 'width=900,height=700');
@@ -5994,7 +6024,7 @@ async function imprimirPedido(pedido_num, modo = 'imprimir') {
     <button onclick="window.print()" style="background:#FF6B35;color:#fff;border:none;padding:.5rem 1.1rem;border-radius:6px;font-size:.9rem;font-weight:600;cursor:pointer">🖨️ Imprimir</button>
   </div>` : ''}
   <div class="header">
-    <div><h1>Tambaqui de Banda</h1><p style="color:#666">Pedido de Compra</p></div>
+    <div><h1>Tambaqui de Banda</h1><p style="color:#666">${tituloDoc}</p></div>
     <div class="num">Nº ${esc(pedido_num)}</div>
   </div>
   <div class="meta">
@@ -6015,7 +6045,7 @@ async function imprimirPedido(pedido_num, modo = 'imprimir') {
       <td style="text-align:center">${brl(acrescimo)}</td>
     </tr>` : ''}
     <tr class="tot">
-      <td colspan="6" style="text-align:right;padding-right:8px">TOTAL DO PEDIDO</td>
+      <td colspan="6" style="text-align:right;padding-right:8px">${recebido ? 'TOTAL RECEBIDO' : 'TOTAL DO PEDIDO'}</td>
       <td style="text-align:center">${brl(total)}</td>
     </tr>
   </tfoot></table>
