@@ -5957,7 +5957,7 @@ async function consultarPedidos() {
   }).join('');
 }
 
-async function imprimirPedido(pedido_num) {
+async function imprimirPedido(pedido_num, modo = 'imprimir') {
   const { data: itens } = await sb.from('cmp_compras')
     .select('*').eq('pedido_num', pedido_num);
   if (!itens?.length) return;
@@ -5989,7 +5989,10 @@ async function imprimirPedido(pedido_num) {
   table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
   th,td{padding:5px 8px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#fafafa}
   .tot{background:#f0fdf4;font-weight:700;font-size:1rem}
-  @media print{body{padding:.5cm}}</style></head><body>
+  @media print{body{padding:.5cm}.no-print{display:none!important}}</style></head><body>
+  ${modo === 'visualizar' ? `<div class="no-print" style="text-align:right;margin-bottom:1rem">
+    <button onclick="window.print()" style="background:#FF6B35;color:#fff;border:none;padding:.5rem 1.1rem;border-radius:6px;font-size:.9rem;font-weight:600;cursor:pointer">🖨️ Imprimir</button>
+  </div>` : ''}
   <div class="header">
     <div><h1>Tambaqui de Banda</h1><p style="color:#666">Pedido de Compra</p></div>
     <div class="num">Nº ${esc(pedido_num)}</div>
@@ -6020,7 +6023,7 @@ async function imprimirPedido(pedido_num) {
     <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Comprador</div>
     <div style="border-top:1px solid #333;width:180px;padding-top:.3rem;text-align:center;font-size:.8rem">Fornecedor</div>
   </div>
-  <script>setTimeout(()=>window.print(),400)<\/script>
+  ${modo === 'visualizar' ? '' : `<script>setTimeout(()=>window.print(),400)<\/script>`}
   </body></html>`);
   w.document.close();
 }
@@ -6303,8 +6306,8 @@ async function carregarCompras() {
           <span data-bs-toggle="tooltip" data-bs-title="${podeEditar ? 'Dividir entre unidades' : 'Não é possível dividir'}">
             <button class="btn btn-link p-0" ${podeEditar ? `onclick="dividirPedido('${g.pedido_num}')"` : 'disabled'} style="font-size:1.1rem;${podeEditar ? 'color:#fd7e14' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-scissors"></i></button>
           </span>
-          <span data-bs-toggle="tooltip" data-bs-title="Imprimir">
-            <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}')" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-printer-fill"></i></button>
+          <span data-bs-toggle="tooltip" data-bs-title="Visualizar / Imprimir">
+            <button class="btn btn-link p-0" onclick="imprimirPedido('${g.pedido_num}','visualizar')" style="color:#6c757d;font-size:1.1rem"><i class="bi bi-eye-fill"></i></button>
           </span>
           <span data-bs-toggle="tooltip" data-bs-title="${podeEditar ? 'Excluir' : excluirTitle}">
             <button class="btn btn-link p-0" ${podeEditar ? `onclick="excluirPedidoCompras('${g.pedido_num}')"` : 'disabled'} style="font-size:1.2rem;${podeEditar ? 'color:#dc3545' : 'color:#ced4da;pointer-events:none'}"><i class="bi bi-trash3-fill"></i></button>
