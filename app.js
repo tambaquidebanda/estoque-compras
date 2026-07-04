@@ -6175,6 +6175,10 @@ async function carregarCompras() {
   }
   if (fornSel) lista = lista.filter(g => g.forn === fornSel);
 
+  // Filtro de busca por número do pedido (ignora o '#')
+  const pedidoBusca = (document.getElementById('cps-pedido')?.value || '').trim().replace('#','');
+  if (pedidoBusca) lista = lista.filter(g => (g.pedido_num || '').replace('#','').includes(pedidoBusca));
+
   // KPIs
   const totalGeral  = lista.reduce((s,g) => s+g.total, 0);
   const qtdRecebido = lista.filter(g => g.recebido).length;
@@ -6343,6 +6347,7 @@ function limparFiltrosCompras() {
   document.getElementById('cps-ini').value = '';
   document.getElementById('cps-fim').value = '';
   document.getElementById('cps-forn').value = '';
+  const ped = document.getElementById('cps-pedido'); if (ped) ped.value = '';
   carregarCompras();
 }
 

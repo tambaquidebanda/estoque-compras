@@ -591,23 +591,19 @@
             <label class="form-label fw-semibold">📅 Data final</label>
             <input type="date" class="form-control" id="cps-fim" onchange="carregarCompras()">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label fw-semibold">🏭 Fornecedor</label>
             <select class="form-select" id="cps-forn" onchange="carregarCompras()">
               <option value="">Todos</option>
             </select>
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">🔎 Buscar pedido</label>
+            <input type="text" class="form-control" id="cps-pedido" placeholder="Nº do pedido" oninput="carregarCompras()">
+          </div>
+          <div class="col-md-2">
             <button class="btn btn-outline-secondary w-100" onclick="limparFiltrosCompras()">↺ Limpar</button>
           </div>
-        </div>
-        <div class="mt-2 text-end d-flex gap-2 justify-content-end">
-          <button class="btn btn-sm btn-outline-warning" onclick="sincronizarValoresFinanceiro()" title="Atualiza os valores dos lançamentos no financeiro para refletir os valores reais recebidos no estoque">
-            🔄 Sincronizar valores com financeiro
-          </button>
-          <button class="btn btn-sm btn-outline-danger" onclick="abrirAjusteHistoricoCompExterno()" title="Converte adiantamentos antigos do Comprador Externo em Transferências e registra despesas reais">
-            🔧 Ajuste histórico — Comp. Externo
-          </button>
         </div>
       </div>
 
