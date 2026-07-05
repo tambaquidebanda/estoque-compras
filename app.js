@@ -8095,11 +8095,18 @@ let _saldoList   = [];
 let _saldoGrupo  = null;
 let _saldoMatrix = {};
 let _saldoSetores = [];
+// Valorização / inventário momentizado
+let _saldoCustoBase  = 'ultimo_preco';   // 'ultimo_preco' | 'media_3m'
+let _saldoCustoMedia = {};               // produto_id -> custo médio 90 dias
+let _saldoValorTotal = 0;
+let _saldoValorLocal = {};               // local -> valor R$
+let _saldoTodosItens = [];               // todos os produtos (todos os grupos) com matrix de saldo
 
 async function carregarSaldo() {
   if (!cProdutosFT.length) await carregarProdutosFT();
   if (!Object.keys(_invMapeamentos).length) await carregarMapeamentosInv();
 
+  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA');
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
   const grupos    = Object.keys(estrutura);
 
@@ -8111,8 +8118,121 @@ async function carregarSaldo() {
     ).join('');
   }
 
+  // Valorização total do estoque (todos os grupos) → KPIs
+  if (_saldoCustoBase === 'media_3m' && !Object.keys(_saldoCustoMedia).length) await _carregarMediaCusto();
+  await _carregarValorTotalEstoque();
+
   if (!_saldoGrupo && grupos.length) await selecionarGrupoSaldo(grupos[0]);
   else if (_saldoGrupo)              await selecionarGrupoSaldo(_saldoGrupo);
+}
+
+// Custo unitário de um item conforme base selecionada
+function _custoSaldoDe(it) {
+  if (_saldoCustoBase === 'media_3m') return _saldoCustoMedia[it.produto_id] ?? (it.custo_comp || 0);
+  return it.custo_comp || 0;
+}
+
+// Carrega o custo médio ponderado dos últimos 90 dias (por produto_id)
+async function _carregarMediaCusto() {
+  const desde = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  let recs = [];
+  try {
+    const { data } = await sb.from('cmp_recebimentos').select('id').gte('data_receb', desde);
+    recs = data || [];
+  } catch (_) { recs = []; }
+  if (!recs.length) { _saldoCustoMedia = {}; return; }
+  const { data: itens } = await sb.from('cmp_recebimento_itens')
+    .select('produto,qtd_recebida,total_recebido')
+    .in('recebimento_id', recs.map(r => r.id));
+  const agg = {};   // norm(nome) -> { q, v }
+  (itens || []).forEach(it => {
+    if (!(Number(it.qtd_recebida) > 0)) return;
+    const k = norm((it.produto || '').trim());
+    if (!k) return;
+    if (!agg[k]) agg[k] = { q: 0, v: 0 };
+    agg[k].q += Number(it.qtd_recebida);
+    agg[k].v += Number(it.total_recebido) || 0;
+  });
+  _saldoCustoMedia = {};
+  cProdutosFT.forEach(p => {
+    const a = agg[norm((p.nome || '').trim())];
+    if (a && a.q > 0) _saldoCustoMedia[p.id] = a.v / a.q;
+  });
+}
+
+// Agrega saldo × custo de TODOS os produtos (todos os grupos) para KPIs e snapshot
+async function _carregarValorTotalEstoque() {
+  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+  const vistos = new Set();
+  const itens = [];
+  for (const [grupo, nomes] of Object.entries(estrutura)) {
+    for (const nome of (nomes || [])) {
+      const nomeBusca = _invMapeamentos[nome] || nome;
+      const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm(nomeBusca.trim()));
+      const pid = prod?.id || null;
+      const chave = pid || norm(nome);
+      if (vistos.has(chave)) continue;   // dedup: mesmo produto em vários grupos
+      vistos.add(chave);
+      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, matrix: {} });
+    }
+  }
+  const ids = itens.filter(x => x.produto_id).map(x => x.produto_id);
+  let saldos = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await sb.from('est_saldo_local').select('produto_id,local,saldo').in('produto_id', ids.slice(i, i + 300));
+    saldos = saldos.concat(data || []);
+  }
+  const byId = {};
+  saldos.forEach(s => { (byId[s.produto_id] ||= {})[s.local] = Number(s.saldo); });
+  itens.forEach(it => { if (it.produto_id) it.matrix = byId[it.produto_id] || {}; });
+  _saldoTodosItens = itens;
+  _recalcularValorEstoque();
+}
+
+// Recalcula _saldoValorTotal e _saldoValorLocal a partir de _saldoTodosItens
+function _recalcularValorEstoque() {
+  const locais = ['ESTOQUE_LOJA', ..._saldoSetores];
+  _saldoValorLocal = {};
+  locais.forEach(l => _saldoValorLocal[l] = 0);
+  _saldoValorTotal = 0;
+  for (const it of _saldoTodosItens) {
+    const custo = _custoSaldoDe(it);
+    for (const l of locais) {
+      const q = Number(it.matrix?.[l]) || 0;
+      if (!q) continue;
+      const v = q * custo;
+      _saldoValorLocal[l] += v;
+      _saldoValorTotal   += v;
+    }
+  }
+  renderSaldoKpis();
+}
+
+function renderSaldoKpis() {
+  const el = document.getElementById('saldo-kpis');
+  if (!el) return;
+  const card = (label, valor, cor, bg, big) =>
+    `<div class="col-md col-6">
+       <div style="border:1px solid ${cor}55;border-left:4px solid ${cor};border-radius:.5rem;padding:.6rem .8rem;background:${bg || '#fff'};height:100%">
+         <div class="text-muted" style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px">${label}</div>
+         <div style="color:${cor};font-weight:700;font-size:${big ? '1.4rem' : '1.05rem'};line-height:1.2">${brl(valor)}</div>
+       </div>
+     </div>`;
+  const cards = [];
+  cards.push(card('💰 Valor do Estoque', _saldoValorTotal, '#b45309', '#fffbeb', true));
+  cards.push(card('🏪 Estoque da Loja', _saldoValorLocal['ESTOQUE_LOJA'] || 0, '#16a34a', '#f0fdf4'));
+  _saldoSetores.forEach(s => {
+    const cor = _SETOR_COR[s] || '#6c757d';
+    cards.push(card(`${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}`, _saldoValorLocal[s] || 0, cor));
+  });
+  el.innerHTML = cards.join('');
+}
+
+async function setSaldoCustoBase(base) {
+  _saldoCustoBase = base;
+  if (base === 'media_3m' && !Object.keys(_saldoCustoMedia).length) await _carregarMediaCusto();
+  _recalcularValorEstoque();
+  renderSaldo();
 }
 
 async function selecionarGrupoSaldo(grupo) {
@@ -8128,7 +8248,7 @@ async function selecionarGrupoSaldo(grupo) {
   _saldoList = nomes.map(nome => {
     const nomeBusca = _invMapeamentos[nome] || nome;
     const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
-    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', saldo: 0 };
+    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, saldo: 0 };
   });
 
   // Setores fixos (sempre todos)
@@ -8183,12 +8303,19 @@ function renderSaldo() {
           <small style="font-weight:400;font-size:.68rem;opacity:.75">últ. contagem</small>
         </th>`;
       }).join('')}
-      <th class="text-center" style="min-width:90px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
+      <th class="text-center" style="min-width:70px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
         Total
+      </th>
+      <th class="text-center" style="min-width:90px;background:#3a2f14;color:#ffd75e">
+        Custo Un.
+      </th>
+      <th class="text-center" style="min-width:110px;background:#7c4a03;color:#ffe9b0;border-left:2px solid #ffc107">
+        Valor em Estoque
       </th>
     </tr>`;
   }
 
+  let subtotalValor = 0;
   tbody.innerHTML = filtrado.map((p, idx) => {
     const key      = p.produto_id || norm(p.nome);
     const saldoFmt = p.saldo % 1 === 0 ? String(p.saldo) : parseFloat(p.saldo).toFixed(3).replace(/\.?0+$/, '');
@@ -8211,6 +8338,14 @@ function renderSaldo() {
     const totalFmt = total % 1 === 0 ? String(total) : parseFloat(total).toFixed(3).replace(/\.?0+$/, '');
     const totalCor = total <= 0 ? '#dc3545' : '#b45309';
 
+    const custo    = _custoSaldoDe(p);
+    const valor    = total * custo;
+    subtotalValor += valor;
+    const custoCell = custo > 0 ? brl(custo) : '<span class="text-muted">—</span>';
+    const valorCell = valor !== 0
+      ? `<span class="fw-bold" style="color:#7c4a03">${brl(valor)}</span>`
+      : '<span class="text-muted">—</span>';
+
     const elCell = p.produto_id
       ? `<div class="d-flex align-items-center justify-content-center gap-1">
            <span class="fw-bold" style="color:${elCor};min-width:36px">${saldoFmt}</span>
@@ -8227,8 +8362,21 @@ function renderSaldo() {
       <td class="text-center" style="background:${elBg};border-left:3px solid #16a34a">${elCell}</td>
       ${setorCells}
       <td class="text-center fw-bold" style="border-left:2px solid #ffc10733;color:${totalCor};font-size:1rem">${totalFmt}</td>
+      <td class="text-center text-muted small" style="background:#fffdf6">${custoCell}</td>
+      <td class="text-center" style="background:#fff8e6;border-left:2px solid #ffc10733">${valorCell}</td>
     </tr>`;
   }).join('');
+
+  // Rodapé: subtotal do grupo (label cobre Produto..Total, td vazio p/ Custo Un., valor na última coluna)
+  const colSpan = 4 + _saldoSetores.length;
+  tbody.innerHTML += `<tr style="background:#1a1a2e;color:#fff">
+    <td colspan="${colSpan}" class="text-end fw-semibold" style="padding:.6rem 1rem">
+      Subtotal do grupo <span style="opacity:.7">(${esc(_saldoGrupo || '')})</span> —
+      base: ${_saldoCustoBase === 'media_3m' ? 'média 3 meses' : 'último preço'}
+    </td>
+    <td style="background:#3a2f14"></td>
+    <td class="text-center fw-bold" style="background:#7c4a03;color:#ffe9b0;font-size:1.05rem;border-left:2px solid #ffc107">${brl(subtotalValor)}</td>
+  </tr>`;
 }
 
 async function ajustarSaldoLocal(produto_id, local, nome) {
@@ -8244,7 +8392,173 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
   const item = _saldoList.find(p => p.produto_id === produto_id);
   if (item && local === 'ESTOQUE_LOJA') item.saldo = novoSaldo;
   toast('Saldo ajustado.', 'ok');
+  // Atualiza também a agregação global (KPIs) sem recarregar tudo
+  const glob = _saldoTodosItens.find(it => it.produto_id === produto_id);
+  if (glob) { (glob.matrix ||= {})[local] = novoSaldo; _recalcularValorEstoque(); }
   renderSaldo();
+}
+
+// ─── INVENTÁRIO VALORADO (snapshot / histórico) ──────────────────
+
+function abrirSalvarInventario() {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const dataEl = document.getElementById('inv-val-data');
+  const respEl = document.getElementById('inv-val-resp');
+  if (dataEl) dataEl.value = hoje;
+  if (respEl) respEl.value = '';
+  document.getElementById('inv-val-base').textContent = _saldoCustoBase === 'media_3m' ? 'Média 3 meses' : 'Último preço';
+  const nProd = _saldoTodosItens.filter(it => it.produto_id && ['ESTOQUE_LOJA', ..._saldoSetores].some(l => (Number(it.matrix?.[l]) || 0) > 0)).length;
+  document.getElementById('inv-val-qtd').textContent = nProd + ' com estoque';
+  document.getElementById('inv-val-total').textContent = brl(_saldoValorTotal);
+  const setores = ['ESTOQUE_LOJA', ..._saldoSetores]
+    .map(l => `${l === 'ESTOQUE_LOJA' ? 'Loja' : (_SETOR_LABEL[l] || l)}: ${brl(_saldoValorLocal[l] || 0)}`)
+    .join(' · ');
+  document.getElementById('inv-val-setores').textContent = setores;
+  new bootstrap.Modal(document.getElementById('modal-salvar-inv')).show();
+}
+
+async function confirmarSalvarInventario() {
+  const data = document.getElementById('inv-val-data').value;
+  const resp = (document.getElementById('inv-val-resp').value || '').trim();
+  if (!data) { toast('Informe a data.', 'erro'); return; }
+  const btn = document.getElementById('btn-inv-val-salvar');
+  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-camera-fill"></i> Salvar Inventário'; } };
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...'; }
+
+  const locais = ['ESTOQUE_LOJA', ..._saldoSetores];
+  const { data: inv, error } = await sb.from('est_inventario_valorado').insert([{
+    data,
+    base_custo: _saldoCustoBase,
+    responsavel: resp || null,
+    qtd_produtos: _saldoTodosItens.filter(it => it.produto_id && locais.some(l => (Number(it.matrix?.[l]) || 0) > 0)).length,
+    total_valor: _saldoValorTotal,
+    valor_por_local: _saldoValorLocal,
+  }]).select().single();
+  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); restore(); return; }
+
+  const rows = _saldoTodosItens.map(it => {
+    const custo = _custoSaldoDe(it);
+    const qtd = locais.reduce((s, l) => s + (Number(it.matrix?.[l]) || 0), 0);
+    return { inventario_id: inv.id, produto_id: it.produto_id, nome: it.nome, grupo: it.grupo, quantidade: qtd, custo_unit: custo, valor: qtd * custo };
+  }).filter(r => r.quantidade > 0);
+
+  for (let i = 0; i < rows.length; i += 200) {
+    const { error: e2 } = await sb.from('est_inventario_valorado_itens').insert(rows.slice(i, i + 200));
+    if (e2) { toast('Erro nos itens: ' + e2.message, 'erro'); restore(); return; }
+  }
+
+  toast('📸 Inventário salvo — ' + brl(_saldoValorTotal), 'ok');
+  restore();
+  bootstrap.Modal.getInstance(document.getElementById('modal-salvar-inv'))?.hide();
+}
+
+async function abrirHistoricoInventario() {
+  new bootstrap.Modal(document.getElementById('modal-historico-inv')).show();
+  const body = document.getElementById('historico-inv-body');
+  body.innerHTML = '<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span> Carregando...</div>';
+  const { data: invs, error } = await sb.from('est_inventario_valorado')
+    .select('*').order('data', { ascending: false }).order('criado_em', { ascending: false });
+  if (error) { body.innerHTML = `<div class="alert alert-danger">Erro: ${esc(error.message)}</div>`; return; }
+  if (!invs?.length) { body.innerHTML = '<div class="text-center text-muted py-4">Nenhum inventário salvo ainda.<br><small>Feche um inventário pelo botão “Salvar Inventário”.</small></div>'; return; }
+
+  body.innerHTML = `<div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr class="text-muted small">
+      <th>Data</th><th>Base</th><th class="text-center">Produtos</th>
+      <th class="text-end">Valor Total</th><th class="text-end">Variação</th><th></th>
+    </tr></thead>
+    <tbody>${invs.map((inv, i) => {
+      const ant = invs[i + 1];
+      const diff = ant ? (inv.total_valor - ant.total_valor) : null;
+      const pct  = (ant && ant.total_valor) ? (diff / ant.total_valor * 100) : null;
+      const diffHtml = diff == null ? '<span class="text-muted">—</span>'
+        : `<span style="color:${diff >= 0 ? '#16a34a' : '#dc3545'};font-weight:600">${diff >= 0 ? '▲' : '▼'} ${brl(Math.abs(diff))}${pct != null ? ` <small>(${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)</small>` : ''}</span>`;
+      return `<tr>
+        <td><strong>${(inv.data || '').split('-').reverse().join('/')}</strong>${inv.responsavel ? `<br><small class="text-muted">${esc(inv.responsavel)}</small>` : ''}</td>
+        <td><span class="badge bg-secondary">${inv.base_custo === 'media_3m' ? 'Média 3m' : 'Último preço'}</span></td>
+        <td class="text-center">${inv.qtd_produtos ?? '—'}</td>
+        <td class="text-end fw-bold" style="color:#b45309">${brl(inv.total_valor)}</td>
+        <td class="text-end small">${diffHtml}</td>
+        <td class="text-end text-nowrap">
+          <button class="btn btn-sm btn-outline-primary" title="Ver / Imprimir" onclick="verInventarioValorado('${inv.id}')"><i class="bi bi-eye"></i></button>
+          <button class="btn btn-sm btn-outline-danger" title="Excluir" onclick="excluirInventarioValorado('${inv.id}')"><i class="bi bi-trash3"></i></button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
+async function excluirInventarioValorado(id) {
+  if (!confirm('Excluir este inventário salvo? Esta ação não pode ser desfeita.')) return;
+  await sb.from('est_inventario_valorado_itens').delete().eq('inventario_id', id);
+  const { error } = await sb.from('est_inventario_valorado').delete().eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  toast('Inventário excluído.', 'ok');
+  abrirHistoricoInventario();
+}
+
+async function verInventarioValorado(id) {
+  const { data: inv } = await sb.from('est_inventario_valorado').select('*').eq('id', id).single();
+  const { data: itens } = await sb.from('est_inventario_valorado_itens')
+    .select('*').eq('inventario_id', id).order('grupo').order('nome');
+  if (!inv) { toast('Inventário não encontrado.', 'erro'); return; }
+
+  const grupos = {};
+  (itens || []).forEach(it => { (grupos[it.grupo || 'Sem grupo'] ||= []).push(it); });
+  const dataFmt = (inv.data || '').split('-').reverse().join('/');
+  const vpl = inv.valor_por_local || {};
+  const kpisSet = Object.entries(vpl).map(([l, v]) =>
+    `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;background:#f0f0f0;border-radius:6px">
+       ${l === 'ESTOQUE_LOJA' ? '🏪 Loja' : (_SETOR_LABEL[l] || l)}: <strong>${brl(v)}</strong></span>`).join('');
+
+  let corpo = '';
+  Object.entries(grupos).forEach(([g, arr]) => {
+    const sub = arr.reduce((s, it) => s + Number(it.valor || 0), 0);
+    corpo += `<tr style="background:#eef2ff"><td colspan="3" style="font-weight:700;padding:6px 10px">${esc(g)}</td>
+      <td class="text-end" style="font-weight:700;padding:6px 10px">${brl(sub)}</td></tr>`;
+    arr.forEach(it => {
+      const q = Number(it.quantidade);
+      const qFmt = q % 1 === 0 ? String(q) : q.toFixed(3).replace(/\.?0+$/, '');
+      corpo += `<tr>
+        <td style="padding:4px 10px">${esc(it.nome)}</td>
+        <td class="text-center" style="padding:4px 10px">${qFmt}</td>
+        <td class="text-end" style="padding:4px 10px">${brl(it.custo_unit)}</td>
+        <td class="text-end" style="padding:4px 10px">${brl(it.valor)}</td>
+      </tr>`;
+    });
+  });
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+    <title>Inventário ${dataFmt}</title>
+    <style>
+      *{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+      body{max-width:820px;margin:20px auto;padding:0 16px;color:#222}
+      h1{font-size:1.3rem;margin:0 0 4px}
+      .meta{color:#666;font-size:.9rem;margin-bottom:10px}
+      .total{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin:10px 0}
+      .total b{color:#b45309;font-size:1.3rem}
+      table{width:100%;border-collapse:collapse;margin-top:10px;font-size:.85rem}
+      th{text-align:left;border-bottom:2px solid #333;padding:6px 10px;background:#1a1a2e;color:#fff}
+      th.text-end{text-align:right}th.text-center{text-align:center}
+      td{border-bottom:1px solid #eee}
+      .text-end{text-align:right}.text-center{text-align:center}
+      @media print{.noprint{display:none}}
+    </style></head><body>
+    <button class="noprint" onclick="window.print()" style="float:right;padding:8px 16px;background:#16a34a;color:#fff;border:0;border-radius:6px;cursor:pointer">🖨️ Imprimir</button>
+    <h1>📸 Inventário Valorado — ${dataFmt}</h1>
+    <div class="meta">
+      Base de custo: <strong>${inv.base_custo === 'media_3m' ? 'Média dos últimos 3 meses' : 'Último preço de compra'}</strong>
+      ${inv.responsavel ? ` · Responsável: <strong>${esc(inv.responsavel)}</strong>` : ''}
+      · ${inv.qtd_produtos ?? (itens || []).length} produtos
+    </div>
+    <div class="total">Valor total do estoque: <b>${brl(inv.total_valor)}</b><div style="margin-top:6px">${kpisSet}</div></div>
+    <table>
+      <thead><tr><th>Produto</th><th class="text-center">Qtd</th><th class="text-end">Custo Un.</th><th class="text-end">Valor</th></tr></thead>
+      <tbody>${corpo}</tbody>
+    </table>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permita pop-ups para visualizar.', 'erro'); return; }
+  w.document.write(html);
+  w.document.close();
 }
 
 // ─── GERENCIAR SETORES / GRUPOS POR UNIDADE ──────────────────────

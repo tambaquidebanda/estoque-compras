@@ -1762,13 +1762,33 @@
     <!-- ══════ SALDO ESTOQUE ══════ -->
     <section id="pg-saldo" class="pagina">
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <h1 class="mb-0"><i class="bi bi-archive-fill"></i> Saldo — ESTOQUE DA LOJA</h1>
+        <h1 class="mb-0"><i class="bi bi-archive-fill"></i> Saldo & Inventário</h1>
         <div class="d-flex align-items-center gap-2">
           <span class="text-muted small" id="saldo-contador"></span>
           <input type="search" class="form-control form-control-sm" id="saldo-busca"
             placeholder="Buscar produto..." oninput="renderSaldo()" style="width:220px">
         </div>
       </div>
+
+      <!-- Toolbar valorização -->
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <span class="text-muted small fw-semibold">Base de custo:</span>
+          <div class="btn-group btn-group-sm" role="group">
+            <input type="radio" class="btn-check" name="saldo-custo" id="saldo-custo-ultimo" autocomplete="off" checked onchange="setSaldoCustoBase('ultimo_preco')">
+            <label class="btn btn-outline-secondary" for="saldo-custo-ultimo">Último preço</label>
+            <input type="radio" class="btn-check" name="saldo-custo" id="saldo-custo-media" autocomplete="off" onchange="setSaldoCustoBase('media_3m')">
+            <label class="btn btn-outline-secondary" for="saldo-custo-media">Média 3 meses</label>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-success" onclick="abrirSalvarInventario()"><i class="bi bi-camera-fill"></i> Salvar Inventário</button>
+          <button class="btn btn-sm btn-outline-primary" onclick="abrirHistoricoInventario()"><i class="bi bi-clock-history"></i> Histórico</button>
+        </div>
+      </div>
+
+      <!-- KPIs de valor por local -->
+      <div id="saldo-kpis" class="row g-2 mb-3"></div>
 
       <!-- Grupos — tab strip -->
       <div class="saldo-grupos-bar mb-3">
@@ -1793,6 +1813,55 @@
             <i class="bi bi-lightning-fill text-success me-1"></i>Saldos atualizados automaticamente no recebimento de compras e pedidos internos.
             &nbsp;✏️ = ajuste manual (saldo inicial ou correção).
           </small>
+        </div>
+      </div>
+
+      <!-- Modal: Salvar Inventário Valorado -->
+      <div class="modal fade" id="modal-salvar-inv" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-camera-fill text-success"></i> Fechar Inventário</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="row g-3 mb-3">
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Data</label>
+                  <input type="date" class="form-control" id="inv-val-data">
+                </div>
+                <div class="col-6">
+                  <label class="form-label fw-semibold small">Responsável</label>
+                  <input type="text" class="form-control" id="inv-val-resp" placeholder="Nome">
+                </div>
+              </div>
+              <div class="p-3 rounded" style="background:#f0fdf4;border:1px solid #bbf7d0">
+                <div class="small text-muted mb-1">Base de custo: <strong id="inv-val-base">Último preço</strong></div>
+                <div class="d-flex justify-content-between"><span>📦 Produtos</span><strong id="inv-val-qtd">—</strong></div>
+                <div class="d-flex justify-content-between"><span>💰 Valor total</span><strong class="text-success" id="inv-val-total">—</strong></div>
+                <div class="small text-muted mt-2" id="inv-val-setores"></div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-success" id="btn-inv-val-salvar" onclick="confirmarSalvarInventario()"><i class="bi bi-camera-fill"></i> Salvar Inventário</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Histórico de Inventários -->
+      <div class="modal fade" id="modal-historico-inv" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-clock-history text-primary"></i> Histórico de Inventários</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="historico-inv-body">
+              <div class="text-center text-muted py-3">Carregando...</div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
