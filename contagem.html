@@ -1274,6 +1274,11 @@ async function enviarPedido() {
   if (eInv) { toast('Erro: '+eInv.message,'err'); btn.disabled=false; btn.textContent='📤 Enviar Pedido'; return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({...it, inventario_id:inv.id})));
 
+  // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo passa a refletir a contagem do dia
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: new Date().toISOString() }));
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
   // Criar pedido interno
   const itensPed = itensCont.filter(it => it.pedido > 0)
     .map(it => ({ produto_id:it.produto_id, nome:it.nome, qtd_pedida:it.pedido }));

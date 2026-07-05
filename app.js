@@ -3485,6 +3485,11 @@ async function enviarPedidoInterno() {
   if (eInv) { toast('Erro ao salvar contagem: ' + eInv.message, 'erro'); return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
+  // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo reflete a contagem do dia
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: new Date().toISOString() }));
+  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
   // ─── 2. Criar pedido interno (só itens com pedido > 0) ───
   const itensPed = itensCont.filter(it => it.pedido > 0)
     .map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd_pedida: it.pedido }));
