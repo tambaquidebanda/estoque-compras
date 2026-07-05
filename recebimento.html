@@ -986,6 +986,8 @@ async function confirmarRecebimento() {
   // Último preço: atualiza o custo dos ingredientes recebidos e recalcula as fichas.
   // Em segundo plano (fire-and-forget) para não atrasar a confirmação; nunca quebra o recebimento.
   _recebimentoAtualizaCustos(itensReceb);
+  // Acréscimo de estoque: mercadoria recebida soma no saldo (ESTOQUE_LOJA) — reflete na tela de Saldo.
+  _recebimentoAtualizaSaldo(itensReceb);
 
   toast(`✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
   setTimeout(() => {
@@ -1077,6 +1079,46 @@ async function _recebimentoAtualizaCustos(itensReceb) {
   } catch (e) {
     console.error('Atualização de custo no recebimento (mobile) falhou:', e);
     // Nunca interrompe o recebimento por causa do recálculo de custo
+  }
+}
+
+// ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por nome ──
+async function _recebimentoAtualizaSaldo(itensReceb) {
+  try {
+    const delta = {};
+    for (const it of itensReceb) {
+      if (!it.qtd_recebida || !it.produto) continue;
+      const k = _normNome(it.produto);
+      delta[k] = (delta[k] || 0) + Number(it.qtd_recebida);
+    }
+    if (!Object.keys(delta).length) return;
+
+    const { data: prods } = await sb.from('est_produtos').select('id,nome');
+    if (!prods?.length) return;
+    const idPorNome = {};
+    prods.forEach(p => { idPorNome[_normNome(p.nome)] = p.id; });
+
+    const deltaPorId = {};
+    for (const [nome, q] of Object.entries(delta)) {
+      const pid = idPorNome[nome];
+      if (pid) deltaPorId[pid] = (deltaPorId[pid] || 0) + q;
+    }
+    const ids = Object.keys(deltaPorId);
+    if (!ids.length) return;
+
+    const { data: saldos } = await sb.from('est_saldo_local')
+      .select('produto_id,saldo').eq('local', 'ESTOQUE_LOJA').in('produto_id', ids);
+    const atual = {};
+    (saldos || []).forEach(s => { atual[s.produto_id] = Number(s.saldo) || 0; });
+
+    const rows = ids.map(pid => ({
+      produto_id: pid, local: 'ESTOQUE_LOJA',
+      saldo: (atual[pid] || 0) + deltaPorId[pid], updated_at: new Date().toISOString()
+    }));
+    await sb.from('est_saldo_local').upsert(rows, { onConflict: 'produto_id,local' });
+  } catch (e) {
+    console.error('Atualização de saldo no recebimento (mobile) falhou:', e);
+    // Nunca interrompe o recebimento
   }
 }
 </script>
