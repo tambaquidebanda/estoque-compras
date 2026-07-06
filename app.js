@@ -8178,8 +8178,8 @@ async function _carregarValorTotalEstoque() {
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
   const vistos = new Set();
   const itens = [];
-  for (const [grupo, nomes] of Object.entries(estrutura)) {
-    for (const nome of (nomes || [])) {
+  for (const grupo of Object.keys(estrutura)) {
+    for (const nome of _nomesGrupoSaldo(grupo)) {   // inclui adições manuais via "+"
       const nomeBusca = _invMapeamentos[nome] || nome;
       const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm(nomeBusca.trim()));
       const pid = prod?.id || null;
@@ -8248,14 +8248,34 @@ async function setSaldoCustoBase(base) {
   renderSaldo();
 }
 
+// Nomes de um grupo do Estoque da Loja = estrutura base + produtos adicionados via "+"
+// (dos setores reais que têm o grupo E os adicionados direto no Estoque da Loja).
+function _nomesGrupoSaldo(grupo) {
+  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+  const nomes  = [...(estrutura[grupo] || [])];
+  const vistos = new Set(nomes.map(n => norm(n)));
+  const addChave = (chave) => {
+    (_invAdicoes[chave] || []).forEach(nome => {
+      if (!nome || vistos.has(norm(nome))) return;
+      vistos.add(norm(nome));
+      nomes.push(nome);
+    });
+  };
+  Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
+    if (s === 'ESTOQUE DA LOJA') return;
+    if (INVENTARIO_ESTRUTURA[s]?.[grupo]) addChave(`${s}|${grupo}`);
+  });
+  addChave(`ESTOQUE DA LOJA|${grupo}`);
+  return nomes;
+}
+
 async function selecionarGrupoSaldo(grupo) {
   _saldoGrupo = grupo;
   document.querySelectorAll('.saldo-grupo-btn').forEach(b => {
     b.className = 'saldo-grupo-btn' + (b.dataset.grupo === grupo ? ' ativo' : '');
   });
 
-  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
-  const nomes = estrutura[grupo] || [];
+  const nomes = _nomesGrupoSaldo(grupo);
 
   // Lista de produtos deste grupo
   _saldoList = nomes.map(nome => {
