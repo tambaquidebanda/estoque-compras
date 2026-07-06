@@ -2766,6 +2766,8 @@ async function selecionarGrupoInv(grupo) {
       if (s === 'ESTOQUE DA LOJA') return;
       if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(`${s}|${grupo}`);
     });
+    // Adições feitas direto no Estoque da Loja (produtos que só existem aqui)
+    _addDe(`ESTOQUE DA LOJA|${grupo}`);
   } else {
     _addDe(`${_invSetor}|${grupo}`);
   }
