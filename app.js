@@ -8062,8 +8062,11 @@ async function registrarDespesaRealHistorico(idx) {
     acrescimo:      0,
     vencimento:     dataRec,
     tipo:           'pagar',
-    status:         'pago',
-    data_pagamento: dataRec,
+    // Comprador externo (Nubank) entra PENDENTE e só vira pago ao conciliar
+    // o débito no extrato — a data real do banco quase nunca bate com a do
+    // recebimento, então marcar pago aqui impediria a conciliação.
+    status:         'pendente',
+    data_pagamento: null,
     banco_id:       BANCO_NUBANK_ID,
     fornecedor_id:  COMP_EXT_FORN_ID,
     plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
