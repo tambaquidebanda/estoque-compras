@@ -8252,7 +8252,10 @@ async function setSaldoCustoBase(base) {
 // (dos setores reais que têm o grupo E os adicionados direto no Estoque da Loja).
 function _nomesGrupoSaldo(grupo) {
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
-  const nomes  = [...(estrutura[grupo] || [])];
+  // Base: respeita a lista de excluídos, igual à Contagem (selecionarGrupoInv).
+  // As adições ("+") NÃO são filtradas — assim, se um item excluído for re-adicionado
+  // pelo "+", ele continua aparecendo (mesmo comportamento da Contagem).
+  const nomes  = [...(estrutura[grupo] || [])].filter(n => !_invExcluidos.has(n));
   const vistos = new Set(nomes.map(n => norm(n)));
   const addChave = (chave) => {
     (_invAdicoes[chave] || []).forEach(nome => {
