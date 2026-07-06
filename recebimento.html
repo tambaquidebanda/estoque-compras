@@ -945,6 +945,14 @@ async function confirmarRecebimento() {
     }]);
   }
 
+  // Se o pedido ainda está no financeiro como RASCUNHO (integração não aprovada),
+  // sincroniza o valor do rascunho com o valor recebido. Sem isso, ao aprovar a
+  // integração o financeiro usaria o valor ORIGINAL do pedido, ignorando a
+  // divergência de peso/valor do recebimento. Update em 0 linhas se não há rascunho.
+  await sb.from('lancamentos_rascunho')
+    .update({ valor: Math.max(0, totalAcum - acrescimo), acrescimo })
+    .eq('pedido_num', pedido_num);
+
   // Se já existia lançamento pendente no financeiro (enviado antes do recebimento), ajusta valor automaticamente
   let _financAjustado = false;
   if (conta?.lancamento_id) {
