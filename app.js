@@ -2056,6 +2056,26 @@ async function carregarProdutosFT(forcar = false) {
   cProdutosFT = todos;
 }
 
+// Busca TODAS as linhas de uma tabela, paginando de 1000 em 1000 (o Supabase/PostgREST
+// limita a 1000 por requisição). `filtro` recebe o query builder e pode encadear .eq/.in etc.
+async function _fetchAllPaged(tabela, colunas, filtro = null) {
+  const PAGE = 1000;
+  let todos = [], from = 0, continua = true;
+  while (continua) {
+    let qy = sb.from(tabela).select(colunas).range(from, from + PAGE - 1);
+    if (filtro) qy = filtro(qy);
+    const { data } = await qy;
+    if (data && data.length) {
+      todos = todos.concat(data);
+      continua = data.length === PAGE;
+      from += PAGE;
+    } else {
+      continua = false;
+    }
+  }
+  return todos;
+}
+
 async function carregarFichas() {
   await carregarProdutosFT();
 
@@ -6794,7 +6814,7 @@ async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _
       const fator = prod.fator_conversao || 1;
       const perda = prod.perda || 0;
       const rend  = 1 - (perda / 100);
-      const base  = prod.custo_comp || 0;
+      const base  = prod.custo_comp || prod.custo_uso || 0;
       custoTotal += ing.quantidade * (rend > 0 ? (base / fator) / rend : 0);
     }
 
@@ -6830,12 +6850,10 @@ async function resyncTodasFichas() {
   if (!confirm('Recalcular o custo de TODAS as fichas técnicas com base no custo atual dos ingredientes?\n\nIsso atualiza o custo dos produtos que têm ficha técnica.')) return;
   await carregarProdutosFT(true); // recarrega custos atuais do banco antes de recalcular
 
-  const { data: fichas } = await sb.from('est_fichas_tecnicas')
-    .select('id,produto_id,rendimento').eq('ativo', true);
-  if (!fichas?.length) { toast('Nenhuma ficha ativa encontrada.', 'erro'); return; }
+  const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true));
+  if (!fichas.length) { toast('Nenhuma ficha ativa encontrada.', 'erro'); return; }
 
-  const { data: todosIngs } = await sb.from('est_ficha_ingredientes')
-    .select('ficha_id,quantidade,ingrediente_id');
+  const todosIngs = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id,quantidade,ingrediente_id');
   const ingsPorFicha = {};
   (todosIngs || []).forEach(i => { (ingsPorFicha[i.ficha_id] ||= []).push(i); });
 
@@ -6850,7 +6868,7 @@ async function resyncTodasFichas() {
       const fator = prod.fator_conversao || 1;
       const perda = prod.perda || 0;
       const rend  = 1 - (perda / 100);
-      const base  = prod.custo_comp || 0;
+      const base  = prod.custo_comp || prod.custo_uso || 0;
       custoTotal += ing.quantidade * (rend > 0 ? (base / fator) / rend : 0);
     }
     return custoTotal;
