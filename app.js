@@ -236,7 +236,7 @@ function irCad(tab, el) {
   document.querySelectorAll('#tabs-cad .nav-link').forEach(a => a.classList.remove('active'));
   document.getElementById('cad-' + tab).classList.add('ativa');
   if (el) el.classList.add('active');
-  if (tab === 'produtos') { carregarFichas(); return; }
+  if (tab === 'produtos') { carregarFichas(); _autoSyncFichas(); return; }
   if (tab === 'grupos')   { carregarGrupos(); return; }
   renderListaCad(tab);
 }
@@ -2454,6 +2454,10 @@ async function salvarFicha() {
   await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', prodId);
   const idxProd = cProdutosFT.findIndex(p => p.id === prodId);
   if (idxProd >= 0) cProdutosFT[idxProd].custo_comp = custoPorcao;
+
+  // Propaga o novo custo para as fichas que usam ESTE produto como ingrediente
+  // (aninhamento: ex. PPC PASTA DE ALHO → PPC PASTA VERDE). Silencioso.
+  try { await recalcularFichasDoIngrediente(prodId, null, true); } catch (e) { console.error('Propagação de custo falhou:', e); }
 
   toast('Ficha técnica salva!', 'ok');
   bootstrap.Modal.getInstance(document.getElementById('modal-ficha'))?.hide();
@@ -6865,14 +6869,14 @@ async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _
     toast(`Custos das fichas recalculados automaticamente.`, 'ok');
 }
 
-// Resync único/opt-in: recalcula TODAS as fichas com base no custo atual dos ingredientes.
-// Usa passadas até estabilizar (resolve aninhamento MP → PPC → VENDA). Mesma fórmula das demais funções.
-async function resyncTodasFichas() {
-  if (!confirm('Recalcular o custo de TODAS as fichas técnicas com base no custo atual dos ingredientes?\n\nIsso atualiza o custo dos produtos que têm ficha técnica.')) return;
+// Núcleo do recálculo: recalcula TODAS as fichas a partir do custo atual dos ingredientes.
+// Passadas até estabilizar (resolve aninhamento MP → PPC → VENDA). Persiste só o que mudar.
+// Retorna quantas fichas foram atualizadas. Sem confirm/toast — reutilizado no manual e no automático.
+async function _resyncFichasCore() {
   await carregarProdutosFT(true); // recarrega custos atuais do banco antes de recalcular
 
   const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true));
-  if (!fichas.length) { toast('Nenhuma ficha ativa encontrada.', 'erro'); return; }
+  if (!fichas.length) return 0;
 
   const todosIngs = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id,quantidade,ingrediente_id');
   const ingsPorFicha = {};
@@ -6923,9 +6927,30 @@ async function resyncTodasFichas() {
     await sb.from('est_produtos').update({ custo_comp: r.custoPorcao }).eq('id', r.produto_id);
     n++;
   }
+  return n;
+}
 
-  toast(`✅ ${n} ficha(s) atualizada(s) em ${passes} passada(s).`, 'ok');
+// Botão manual "Recalcular Custos" — com confirmação e aviso.
+async function resyncTodasFichas() {
+  if (!confirm('Recalcular o custo de TODAS as fichas técnicas com base no custo atual dos ingredientes?\n\nIsso atualiza o custo dos produtos que têm ficha técnica.')) return;
+  const n = await _resyncFichasCore();
+  toast(`✅ ${n} ficha(s) atualizada(s).`, 'ok');
   carregarFichas();
+}
+
+// Recálculo AUTOMÁTICO: roda uma vez por sessão ao abrir a tela de Produtos, em segundo plano
+// e silencioso. Mantém o custo das fichas sempre em dia sem depender do botão manual.
+let _autoSyncFichasFeito = false;
+async function _autoSyncFichas() {
+  if (_autoSyncFichasFeito) return;
+  _autoSyncFichasFeito = true;
+  try {
+    const n = await _resyncFichasCore();
+    if (n > 0) carregarFichas();   // re-renderiza a lista só se algum custo mudou
+  } catch (e) {
+    console.error('Auto-sync de fichas falhou:', e);
+    _autoSyncFichasFeito = false;  // libera nova tentativa em caso de erro
+  }
 }
 
 function abrirModalNovoProduto() {
