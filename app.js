@@ -2205,8 +2205,17 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
 
   renderIngredientes();
 
-  const modal = new bootstrap.Modal(document.getElementById('modal-ficha'));
-  modal.show();
+  // Abertura robusta: descarta a instância anterior (que pode ter ficado "presa" quando o
+  // salvarFicha fechou o modal e navegou em seguida, interrompendo a animação) e remove
+  // qualquer backdrop órfão + estado do body. Sem isso, ao salvar uma ficha e ir direto
+  // criar outra, o modal não reabria até dar F5.
+  const modalEl = document.getElementById('modal-ficha');
+  bootstrap.Modal.getInstance(modalEl)?.dispose();
+  document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+  document.body.classList.remove('modal-open');
+  document.body.style.removeProperty('overflow');
+  document.body.style.removeProperty('padding-right');
+  new bootstrap.Modal(modalEl).show();
 }
 
 // Autocomplete produto (para o campo "Produto" da ficha)
@@ -2447,7 +2456,7 @@ async function salvarFicha() {
   if (idxProd >= 0) cProdutosFT[idxProd].custo_comp = custoPorcao;
 
   toast('Ficha técnica salva!', 'ok');
-  bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
+  bootstrap.Modal.getInstance(document.getElementById('modal-ficha'))?.hide();
   ftFichasCache = [];
 
   // Se estava na tela do produto, mostra a ficha direto na aba
@@ -2469,7 +2478,7 @@ async function excluirFicha(fichaId) {
 async function excluirFichaModal() {
   const fichaId = document.getElementById('ft-ficha-id').value;
   if (!fichaId) return;
-  bootstrap.Modal.getInstance(document.getElementById('modal-ficha')).hide();
+  bootstrap.Modal.getInstance(document.getElementById('modal-ficha'))?.hide();
   await excluirFicha(fichaId);
 }
 
