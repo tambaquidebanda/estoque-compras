@@ -2342,11 +2342,12 @@ function removerIngrediente(idx) {
 
 function renderIngredientes() {
   const tbody = document.getElementById('tb-ing-body');
-  const vazio = document.getElementById('tr-ing-vazio');
 
   if (!ftIngredientes.length) {
-    tbody.innerHTML = '';
-    tbody.appendChild(vazio);
+    // Recria a linha vazia via HTML. Antes usava appendChild de um #tr-ing-vazio fixo,
+    // mas esse elemento é apagado quando se renderiza uma ficha COM ingredientes
+    // (tbody.innerHTML = ...). Na ficha seguinte (vazia) dava erro e o modal não abria.
+    tbody.innerHTML = '<tr id="tr-ing-vazio"><td colspan="7" class="text-center text-muted py-3">Nenhum ingrediente adicionado.</td></tr>';
     recalcularCustoFicha();
     return;
   }
