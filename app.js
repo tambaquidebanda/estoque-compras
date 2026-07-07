@@ -6733,6 +6733,13 @@ async function salvarDadosProduto() {
     ativo:           document.getElementById('prod-ativo').checked,
   };
 
+  // Produtos COM ficha técnica têm o custo definido pela ficha (custo_por_porcao).
+  // O campo "Custo de Compra" do formulário não vale para eles — salvar por cima
+  // zeraria o custo calculado. Então, se há ficha, NÃO sobrescreve o custo_comp.
+  const { data: fichaDoProd } = await sb.from('est_fichas_tecnicas')
+    .select('id').eq('produto_id', id).eq('ativo', true).limit(1);
+  if (fichaDoProd?.length) delete dados.custo_comp;
+
   const nomeAntigo = _prodAtual.nome;
 
   const { error } = await sb.from('est_produtos').update(dados).eq('id', id);
