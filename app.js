@@ -7103,6 +7103,7 @@ async function carregarFichaProduto() {
         <td>${esc(prod?.nome || ing.ingrediente_id)}</td>
         <td><span class="badge-tipo badge-${(prod?.tipo||'').toLowerCase()}">${prod?.tipo||'—'}</span></td>
         <td class="text-center">${ing.quantidade} ${ing.unidade}</td>
+        <td class="text-center text-muted">${custoUnit > 0 ? brl(custoUnit) : '—'}</td>
         <td class="text-center">${brl(subtotal)}</td>
       </tr>`;
     }));
@@ -7125,7 +7126,7 @@ async function carregarFichaProduto() {
       <div class="table-responsive">
         <table class="table table-sm">
           <thead style="background:#1a1a2e;color:#fff;font-size:.8rem">
-            <tr><th>Ingrediente</th><th>Tipo</th><th class="text-center">Quantidade</th><th class="text-center">Subtotal</th></tr>
+            <tr><th>Ingrediente</th><th>Tipo</th><th class="text-center">Quantidade</th><th class="text-center">Custo Unit.</th><th class="text-center">Subtotal</th></tr>
           </thead>
           <tbody>${ingHtml.join('')}</tbody>
         </table>
