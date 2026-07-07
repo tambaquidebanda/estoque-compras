@@ -2252,12 +2252,17 @@ function acIngrediente(val) {
 
   if (!hits.length) { lista.classList.remove('aberta'); return; }
 
-  lista.innerHTML = hits.map(p =>
-    `<div class="ac-item" onmousedown="selecionarIngrediente('${p.id}')">
+  lista.innerHTML = hits.map(p => {
+    // Custo efetivo (por unidade de uso) = custo de compra convertido pelo fator e perda.
+    // Mostra o MESMO valor que o cálculo da ficha usa — antes exibia custo_uso (quase sempre 0).
+    const fator   = p.fator_conversao || 1;
+    const rend    = 1 - ((p.perda || 0) / 100);
+    const efetivo = rend > 0 ? (p.custo_comp || p.custo_uso || 0) / fator / rend : 0;
+    return `<div class="ac-item" onmousedown="selecionarIngrediente('${p.id}')">
       ${esc(p.nome)}
-      <small class="text-muted ms-1">${p.tipo} | ${esc(p.unidade_uso||'UN')} | ${brl(p.custo_uso)}</small>
-    </div>`
-  ).join('');
+      <small class="text-muted ms-1">${p.tipo} | ${esc(p.unidade_uso||'UN')} | ${brl(efetivo)}</small>
+    </div>`;
+  }).join('');
   lista.classList.add('aberta');
 }
 
