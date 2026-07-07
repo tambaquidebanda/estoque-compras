@@ -2122,13 +2122,21 @@ async function carregarFichas() {
   }
 
   tbody.innerHTML = prods.map(p => {
+    // Custo EFETIVO (por unidade de uso) = custo de compra ÷ conversão ÷ (1 − perda%).
+    // É o custo real comparável e o que entra nas fichas. Tooltip mostra o custo de compra.
+    const fator = p.fator_conversao || 1;
+    const rend  = 1 - ((p.perda || 0) / 100);
+    const efet  = rend > 0 ? ((p.custo_comp || 0) / fator) / rend : 0;
+    const custoCell = efet > 0
+      ? `<span title="Custo de compra: ${brl(p.custo_comp)} / ${esc(p.unidade_comp || 'UN')}">${brl(efet)}</span>`
+      : '—';
     return `<tr onclick="abrirProduto('${p.id}')" style="cursor:pointer">
       <td class="fw-semibold">${esc(p.nome)}</td>
       <td><span class="badge-tipo badge-${p.tipo.toLowerCase()}">${p.tipo}</span></td>
       <td class="text-muted small">${esc(p.categoria || '')}</td>
       <td class="text-center">${esc(p.unidade_comp || '—')}</td>
       <td class="text-center">${esc(p.unidade_uso  || '—')}</td>
-      <td class="text-end">${p.custo_comp > 0 ? brl(p.custo_comp) : '—'}</td>
+      <td class="text-end">${custoCell}</td>
       <td class="text-end">${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}</td>
     </tr>`;
   }).join('');
