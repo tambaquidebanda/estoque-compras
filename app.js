@@ -2460,14 +2460,34 @@ async function salvarFicha() {
   try { await recalcularFichasDoIngrediente(prodId, null, true); } catch (e) { console.error('Propagação de custo falhou:', e); }
 
   toast('Ficha técnica salva!', 'ok');
-  bootstrap.Modal.getInstance(document.getElementById('modal-ficha'))?.hide();
   ftFichasCache = [];
 
-  // Se estava na tela do produto, mostra a ficha direto na aba
-  if (_prodAtual && _prodAtual.id === prodId) {
-    irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
+  const _depoisDeFechar = () => {
+    // Se estava na tela do produto, mostra a ficha direto na aba
+    if (_prodAtual && _prodAtual.id === prodId) {
+      irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
+    } else {
+      carregarFichas();
+    }
+  };
+
+  // Fecha o modal e só navega DEPOIS que ele terminou de fechar. Navegar durante a
+  // animação de fechamento deixava o backdrop/instância num estado que impedia reabrir
+  // o modal em outro produto (só voltava com F5).
+  const _modalEl = document.getElementById('modal-ficha');
+  const _inst = bootstrap.Modal.getInstance(_modalEl);
+  if (_inst) {
+    _modalEl.addEventListener('hidden.bs.modal', () => {
+      // Garante que nada de backdrop/estado sobrou antes de seguir
+      document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+      _depoisDeFechar();
+    }, { once: true });
+    _inst.hide();
   } else {
-    carregarFichas();
+    _depoisDeFechar();
   }
 }
 
