@@ -6795,8 +6795,10 @@ async function salvarDadosProduto() {
 
   // Se o nome mudou, propaga para estrutura de contagem e mapeamentos
   if (nomeAntigo && dados.nome && nomeAntigo !== dados.nome) {
-    await _renomearProdutoNaEstrutura(nomeAntigo, dados.nome);
-    toast('✅ Produto atualizado e estrutura de contagem sincronizada!', 'ok');
+    const sincronizou = await _renomearProdutoNaEstrutura(nomeAntigo, dados.nome);
+    toast(sincronizou
+      ? '✅ Produto atualizado e estrutura de contagem sincronizada!'
+      : '✅ Produto atualizado! (não estava na estrutura de contagem)', 'ok');
   } else {
     toast('✅ Produto atualizado com sucesso!', 'ok');
   }
@@ -6806,34 +6808,48 @@ async function salvarDadosProduto() {
 }
 
 async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
+  // Garante que estrutura/adições/mapeamentos estejam carregados. Se o produto for salvo
+  // sem ter aberto a Contagem, os globais estariam vazios — a renomeação não acharia nada
+  // e (pior) NUNCA devemos gravar estrutura vazia. Carrega do Supabase quando preciso.
+  if (!_todasEstruturas || !Object.keys(_todasEstruturas).length) {
+    const { data } = await sb.from('inv_configuracoes').select('chave,valor')
+      .in('chave', ['estrutura', 'adicoes', 'mapeamentos']);
+    (data || []).forEach(row => {
+      if (row.chave === 'estrutura')   _todasEstruturas = row.valor || {};
+      if (row.chave === 'adicoes')     _invAdicoes      = row.valor || {};
+      if (row.chave === 'mapeamentos') _invMapeamentos  = row.valor || {};
+    });
+  }
+  // Trava de segurança: sem estrutura carregada, não mexe em nada (evita gravar vazio).
+  if (!_todasEstruturas || !Object.keys(_todasEstruturas).length) return false;
+
   let mudouEstrutura = false;
   let mudouMapea     = false;
+  const casa = (n) => norm(n) === norm(nomeAntigo);   // compara ignorando caixa/acento
 
   // Atualiza _todasEstruturas: varre todas as unidades → setores → grupos
   Object.values(_todasEstruturas).forEach(unidade => {
-    Object.values(unidade).forEach(grupos => {
-      Object.keys(grupos).forEach(grupo => {
+    Object.values(unidade || {}).forEach(grupos => {
+      Object.keys(grupos || {}).forEach(grupo => {
         const prods = grupos[grupo];
         if (!Array.isArray(prods)) return;
-        const i = prods.indexOf(nomeAntigo);
+        const i = prods.findIndex(casa);
         if (i >= 0) { prods[i] = nomeNovo; mudouEstrutura = true; }
       });
     });
   });
 
-  // Atualiza _invAdicoes se o nome antigo aparecer nos arrays de adições
+  // Atualiza _invAdicoes (produtos adicionados via "+")
   Object.values(_invAdicoes).forEach(arr => {
     if (!Array.isArray(arr)) return;
-    const i = arr.indexOf(nomeAntigo);
+    const i = arr.findIndex(casa);
     if (i >= 0) { arr[i] = nomeNovo; mudouEstrutura = true; }
   });
 
-  // Atualiza _invMapeamentos: se o nome antigo for chave, move para nova chave
-  if (_invMapeamentos[nomeAntigo] !== undefined) {
-    _invMapeamentos[nomeNovo] = _invMapeamentos[nomeAntigo];
-    delete _invMapeamentos[nomeAntigo];
-    mudouMapea = true;
-  }
+  // Atualiza mapeamentos cujo VALOR (nome do cadastro) aponta para o nome antigo.
+  Object.keys(_invMapeamentos).forEach(k => {
+    if (norm(_invMapeamentos[k]) === norm(nomeAntigo)) { _invMapeamentos[k] = nomeNovo; mudouMapea = true; }
+  });
 
   const upserts = [];
   if (mudouEstrutura) upserts.push(
@@ -6847,6 +6863,8 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
 
   // Re-aplica estrutura na tela atual
   if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
+
+  return mudouEstrutura || mudouMapea;
 }
 
 async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _silent = false) {
