@@ -2422,7 +2422,18 @@ async function salvarFicha() {
   if (!prodId) { toast('Selecione o produto da ficha.', 'erro'); return; }
   if (!ftIngredientes.length) { toast('Adicione pelo menos 1 ingrediente.', 'erro'); return; }
 
-  const custoTotal  = ftIngredientes.reduce((s, i) => s + (i.quantidade * i.custo_uso), 0);
+  // Recalcula o custo com o preço ATUAL dos ingredientes (fresco do banco), não com o
+  // snapshot de quando foram adicionados. Sem isso, se o cache estava desatualizado, gravava
+  // custo 0 no produto mesmo a ficha aparecendo com valor — só voltava ao certo após F5.
+  await carregarProdutosFT(true);
+  const _custoEfetIng = (pid) => {
+    const p = cProdutosFT.find(x => x.id === pid);
+    if (!p) return 0;
+    const fator = p.fator_conversao || 1;
+    const r = 1 - ((p.perda || 0) / 100);
+    return r > 0 ? (p.custo_comp || p.custo_uso || 0) / fator / r : 0;
+  };
+  const custoTotal  = ftIngredientes.reduce((s, i) => s + (i.quantidade * _custoEfetIng(i.prod_id)), 0);
   const custoPorcao = custoTotal / rend;
 
   let targetFichaId = fichaId;
@@ -2463,6 +2474,12 @@ async function salvarFicha() {
   await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', prodId);
   const idxProd = cProdutosFT.findIndex(p => p.id === prodId);
   if (idxProd >= 0) cProdutosFT[idxProd].custo_comp = custoPorcao;
+  // Reflete na tela do produto na hora (sem depender de refresh)
+  if (_prodAtual && _prodAtual.id === prodId) {
+    _prodAtual.custo_comp = custoPorcao;
+    setMoeda('prod-custo-comp', custoPorcao);
+    if (typeof atualizarCustoEfetivo === 'function') atualizarCustoEfetivo();
+  }
 
   // Propaga o novo custo para as fichas que usam ESTE produto como ingrediente
   // (aninhamento: ex. PPC PASTA DE ALHO → PPC PASTA VERDE). Silencioso.
