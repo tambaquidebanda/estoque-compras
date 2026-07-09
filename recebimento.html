@@ -906,7 +906,19 @@ async function confirmarRecebimento() {
   for (const ir of itensReceb) {
     const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
     if (restante <= 0.001) {
+      // Totalmente recebido: grava a quantidade REALMENTE recebida (soma de todos os
+      // recebimentos deste item), para o pedido refletir o que entrou — inclusive quando
+      // o recebido difere do pedido (ex: pediu 3, recebeu 300). Antes ficava a qtd pedida
+      // e o financeiro mostrava valor divergente.
+      let qtdRecTotal = ir.qtd_recebida;
+      try {
+        const { data: somaRec } = await sb.from('cmp_recebimento_itens')
+          .select('qtd_recebida').eq('compra_id', ir.compra_id);
+        const soma = (somaRec || []).reduce((s, r) => s + Number(r.qtd_recebida || 0), 0);
+        if (soma > 0) qtdRecTotal = soma;
+      } catch (_) {}
       await sb.from('cmp_compras').update({
+        quantidade: qtdRecTotal,
         status_receb: 'recebido',
         custo_unit: ir.valor_unitario,
       }).eq('id', ir.compra_id);

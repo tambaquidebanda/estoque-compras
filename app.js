@@ -5475,7 +5475,16 @@ async function confirmarRecebimento() {
   for (const ir of itensReceb) {
     const restante = (ir.qtd_pedida || 0) - (ir.qtd_recebida || 0);
     if (restante <= 0.001) {
-      await sb.from('cmp_compras').update({ status_receb: 'recebido', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
+      // Totalmente recebido: grava a quantidade REALMENTE recebida (soma de todos os
+      // recebimentos do item), para o pedido refletir o que entrou mesmo quando difere.
+      let qtdRecTotal = ir.qtd_recebida;
+      try {
+        const { data: somaRec } = await sb.from('cmp_recebimento_itens')
+          .select('qtd_recebida').eq('compra_id', ir.compra_id);
+        const soma = (somaRec || []).reduce((s, r) => s + Number(r.qtd_recebida || 0), 0);
+        if (soma > 0) qtdRecTotal = soma;
+      } catch (_) {}
+      await sb.from('cmp_compras').update({ quantidade: qtdRecTotal, status_receb: 'recebido', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
     } else {
       await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
     }
