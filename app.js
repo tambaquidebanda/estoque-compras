@@ -4247,14 +4247,41 @@ async function confirmarRecebimentoTransf(pedidoId) {
 }
 
 let _emergIdx = 0;
+let _produtosEmergDesk = [];
+
+// Lista de produtos do setor (só os da contagem/pedido daquele setor), resolvidos por
+// mapeamento/norm. Sem match, o produto aparece mesmo assim (ordenável pelo nome).
+function _buildProdutosEmergDesk(setor) {
+  const estruturaSetor = INVENTARIO_ESTRUTURA[setor] || {};
+  const nomesEstrut = [];
+  Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n) nomesEstrut.push(n); }); });
+  Object.entries(_invAdicoes).forEach(([chave, lista]) => {
+    if (chave.startsWith(setor + '|') && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
+  });
+  const vistos = new Set();
+  const lista  = [];
+  nomesEstrut.forEach(nome => {
+    const k = norm(nome);
+    if (vistos.has(k)) return;
+    vistos.add(k);
+    const nomeReal = _invMapeamentos[nome] || nome;
+    const prod = cProdutosFT.find(p => norm(p.nome) === norm(nomeReal));
+    lista.push({ id: prod?.id || '', nome: prod?.nome || nome });
+  });
+  lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  _produtosEmergDesk = lista;
+}
 
 function _rowEmerg(idx) {
   const podeDeletar = idx > 0;
   return `<div class="d-flex gap-2 align-items-start mb-2" id="emerg-row-${idx}">
     <div class="flex-grow-1">
       <input type="text" class="form-control form-control-sm" id="emerg-busca-${idx}"
-        placeholder="Buscar produto..." oninput="buscarProdutoEmerg(${idx})" autocomplete="off">
-      <div id="emerg-sugest-${idx}" class="list-group mt-1" style="max-height:160px;overflow-y:auto;position:relative;z-index:10"></div>
+        placeholder="Clique para ver a lista ou digite..." oninput="buscarProdutoEmerg(${idx})"
+        onfocus="buscarProdutoEmerg(${idx})"
+        onblur="setTimeout(()=>{const e=document.getElementById('emerg-sugest-${idx}');if(e)e.innerHTML=''},200)"
+        autocomplete="off">
+      <div id="emerg-sugest-${idx}" class="list-group mt-1" style="max-height:200px;overflow-y:auto;position:relative;z-index:10"></div>
       <input type="hidden" id="emerg-id-${idx}">
     </div>
     <div style="width:85px">
@@ -4280,6 +4307,8 @@ function abrirEmergencia() {
   _emergIdx = 0;
   const sel = document.getElementById('emerg-setor');
   if (sel && _invSetor) sel.value = _invSetor;
+  _buildProdutosEmergDesk((sel && sel.value) || _invSetor || '');
+  if (sel) sel.onchange = () => _buildProdutosEmergDesk(sel.value || '');
   document.getElementById('emerg-itens').innerHTML = _rowEmerg(0);
   document.getElementById('emerg-obs').value  = '';
   const resp = document.getElementById('inv-resp')?.value || '';
@@ -4288,14 +4317,15 @@ function abrirEmergencia() {
 }
 
 function buscarProdutoEmerg(idx) {
-  const q  = (document.getElementById(`emerg-busca-${idx}`)?.value || '').trim().toLowerCase();
+  const qn = norm((document.getElementById(`emerg-busca-${idx}`)?.value || '').trim());
   const el = document.getElementById(`emerg-sugest-${idx}`);
-  if (q.length < 2) { el.innerHTML = ''; return; }
-  const hits = cProdutosFT.filter(p => p.nome.toLowerCase().includes(q)).slice(0, 10);
+  if (!el) return;
+  // Sem texto → lista inteira do setor (dropdown). Com texto → filtra. Só produtos do setor.
+  const hits = (qn.length < 1 ? _produtosEmergDesk : _produtosEmergDesk.filter(p => norm(p.nome).includes(qn))).slice(0, 60);
   el.innerHTML = hits.length
     ? hits.map(p => `<button type="button" class="list-group-item list-group-item-action py-1 small"
-        onclick="selecionarProdEmerg(${idx},${JSON.stringify(p.id)},${JSON.stringify(p.nome)})">${esc(p.nome)}</button>`).join('')
-    : '<div class="list-group-item text-muted small py-1">Nenhum produto encontrado.</div>';
+        onclick="selecionarProdEmerg(${idx},${JSON.stringify(p.id || '')},${JSON.stringify(p.nome)})">${esc(p.nome)}</button>`).join('')
+    : '<div class="list-group-item text-muted small py-1">Nenhum produto neste setor.</div>';
 }
 
 function selecionarProdEmerg(idx, id, nome) {

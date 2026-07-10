@@ -1544,13 +1544,27 @@ let _produtosEmerg = [];
 
 function _buildProdutosEmerg() {
   const estruturaSetor = INVENTARIO_ESTRUTURA[_setor] || {};
-  const nomes = new Set();
-  Object.values(estruturaSetor).flat().forEach(n => { if (n) nomes.add(n.trim().toUpperCase()); });
+  const nomesEstrut = [];
+  Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n) nomesEstrut.push(n); }); });
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
-    if (chave.startsWith(_setor + '|') && lista) lista.forEach(n => { if (n) nomes.add(n.trim().toUpperCase()); });
+    if (chave.startsWith(_setor + '|') && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
   });
-  const filtrado = (_todosProdutos || []).filter(p => nomes.has(p.nome.trim().toUpperCase()));
-  _produtosEmerg = filtrado.length ? filtrado : (_todosProdutos || []);
+  // Monta a lista SÓ com os produtos deste setor (sem cair para "todos os produtos").
+  // Resolve cada nome da estrutura para o produto do cadastro (mapeamento/norm), igual à
+  // contagem — assim nomes com acento/mapeados casam. Produto sem match aparece mesmo assim
+  // (ordenável pelo nome), então nada some da lista.
+  const vistos = new Set();
+  const lista  = [];
+  nomesEstrut.forEach(nome => {
+    const k = norm(nome);
+    if (vistos.has(k)) return;
+    vistos.add(k);
+    const nomeReal = _mapeamentos[nome] || nome;
+    const prod = (_todosProdutos || []).find(p => norm(p.nome) === norm(nomeReal));
+    lista.push({ id: prod?.id || '', nome: prod?.nome || nome });
+  });
+  lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  _produtosEmerg = lista;
 }
 
 function _rowEmergMob(idx) {
@@ -1561,8 +1575,10 @@ function _rowEmergMob(idx) {
       ${primeiroRow ? '' : `<button type="button" onclick="removerItemEmergMob(${idx})"
         style="background:none;border:none;color:#dc3545;font-size:1.1rem;padding:0;line-height:1">✕</button>`}
     </div>
-    <input type="text" id="emerg-busca-${idx}" placeholder="Digite para buscar..."
-      oninput="buscarEmergMob(${idx})" autocomplete="off" autocorrect="off" spellcheck="false"
+    <input type="text" id="emerg-busca-${idx}" placeholder="Toque para ver a lista ou digite..."
+      oninput="buscarEmergMob(${idx})" onfocus="buscarEmergMob(${idx})"
+      onblur="setTimeout(()=>{const e=document.getElementById('emerg-sugest-${idx}');if(e)e.style.display='none'},200)"
+      autocomplete="off" autocorrect="off" spellcheck="false"
       style="margin-bottom:.35rem">
     <div id="emerg-sugest-${idx}" class="sug-wrap" style="display:none"></div>
     <input type="hidden" id="emerg-id-${idx}">
@@ -1594,12 +1610,13 @@ function abrirEmergencia() {
 function buscarEmergMob(idx) {
   const q  = norm(document.getElementById(`emerg-busca-${idx}`)?.value || '');
   const el = document.getElementById(`emerg-sugest-${idx}`);
-  if (q.length < 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
-
-  const hits = _produtosEmerg.filter(p => norm(p.nome).includes(q)).slice(0, 10);
-  if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
+  if (!el) return;
+  // Sem texto → mostra a lista inteira do setor (funciona como um dropdown).
+  // Com texto → filtra. Só busca dentro dos produtos deste setor (_produtosEmerg).
+  const hits = (q.length < 1 ? _produtosEmerg : _produtosEmerg.filter(p => norm(p.nome).includes(q))).slice(0, 60);
+  if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto neste setor.</div>'; el.style.display = 'block'; return; }
   el.innerHTML = hits.map(p =>
-    `<button type="button" class="sug-item" data-id="${esc(p.id)}" data-nome="${esc(p.nome)}">${esc(p.nome)}</button>`
+    `<button type="button" class="sug-item" data-id="${esc(p.id || '')}" data-nome="${esc(p.nome)}">${esc(p.nome)}</button>`
   ).join('');
   el.querySelectorAll('button.sug-item').forEach(btn => {
     btn.onclick = () => _selProdEmergMob(idx, btn.dataset.id, btn.dataset.nome);
