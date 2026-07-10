@@ -1556,6 +1556,7 @@ function _buildProdutosEmerg() {
   const vistos = new Set();
   const lista  = [];
   nomesEstrut.forEach(nome => {
+    if (_excluidos.has(nome)) return;   // respeita exclusões (fantasmas removidos pelo usuário)
     const k = norm(nome);
     if (vistos.has(k)) return;
     vistos.add(k);

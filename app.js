@@ -4261,6 +4261,7 @@ function _buildProdutosEmergDesk(setor) {
   const vistos = new Set();
   const lista  = [];
   nomesEstrut.forEach(nome => {
+    if (_invExcluidos.has(nome)) return;   // respeita exclusões (fantasmas removidos pelo usuário)
     const k = norm(nome);
     if (vistos.has(k)) return;
     vistos.add(k);
