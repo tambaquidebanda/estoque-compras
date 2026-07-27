@@ -883,6 +883,22 @@ async function confirmarRecebimento() {
     // Lançamento pendente → recebimento liberado; valor será ajustado automaticamente abaixo
   }
 
+  // Guard anti-duplicação: re-checa no banco o status ATUAL dos itens sendo recebidos.
+  // Se todos já estão 'recebido', é uma segunda confirmação (a pessoa clicou 2x — o botão
+  // volta a habilitar após ~1,5s). Bloqueia para não gravar um recebimento duplicado.
+  const _idsReceb = itensReceb.map(i => i.compra_id).filter(Boolean);
+  if (_idsReceb.length) {
+    const { data: _statusAtual } = await sb.from('cmp_compras')
+      .select('id,status_receb').in('id', _idsReceb);
+    const _aindaPendente = (_statusAtual || []).some(c => c.status_receb !== 'recebido');
+    if (_statusAtual && _statusAtual.length && !_aindaPendente) {
+      toast('Este pedido já foi recebido agora há pouco. Atualize a lista.', 'err');
+      btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
+      voltarLista();
+      return;
+    }
+  }
+
   // 1. Cabeçalho do recebimento
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel: resp,

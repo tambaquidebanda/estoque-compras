@@ -5449,6 +5449,19 @@ async function confirmarRecebimento() {
     // Lançamento pendente → recebimento liberado; valor será ajustado automaticamente abaixo
   }
 
+  // Guard anti-duplicação: re-checa o status ATUAL dos itens. Se todos já estão 'recebido',
+  // é uma segunda confirmação (duplo clique) — bloqueia para não gravar recebimento duplicado.
+  const _idsReceb = itensReceb.map(i => i.compra_id).filter(Boolean);
+  if (_idsReceb.length) {
+    const { data: _statusAtual } = await sb.from('cmp_compras')
+      .select('id,status_receb').in('id', _idsReceb);
+    const _aindaPendente = (_statusAtual || []).some(c => c.status_receb !== 'recebido');
+    if (_statusAtual && _statusAtual.length && !_aindaPendente) {
+      toast('Este pedido já foi recebido agora há pouco. Atualize a tela.', 'erro');
+      return;
+    }
+  }
+
   // Salva recebimento cabeçalho
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel,
