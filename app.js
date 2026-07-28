@@ -2930,9 +2930,18 @@ function filtrarProdAdd(query) {
         onclick="confirmarAdicionarProdInv(${esc(JSON.stringify(p.nome))})">${esc(p.nome)}</button>`).join('')
     : '<div class="list-group-item text-muted small">Nenhum produto encontrado.</div>';
 }
+// Relê 'adicoes' fresco do banco antes de gravar. Sem isso, uma aba/dispositivo com
+// dados velhos na memória sobrescreve o objeto inteiro e apaga adições feitas em outro
+// lugar (era a causa dos itens sumirem "sem motivo" da contagem).
+async function _recarregarAdicoes() {
+  const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'adicoes').limit(1);
+  _invAdicoes = (data && data[0] && data[0].valor) || {};
+  return _invAdicoes;
+}
 async function confirmarAdicionarProdInv(nome) {
-  const key   = `${_invSetor}|${_invGrupo}`;
-  const atual = _invAdicoes[key] || [];
+  const key = `${_invSetor}|${_invGrupo}`;
+  await _recarregarAdicoes();
+  const atual = Array.isArray(_invAdicoes[key]) ? _invAdicoes[key] : [];
   if (atual.find(n => norm(n) === norm(nome))) { toast('Produto já está no grupo.', 'erro'); return; }
   _invAdicoes[key] = [...atual, nome];
   await sb.from('inv_configuracoes').upsert({ chave: 'adicoes', valor: _invAdicoes });
@@ -2943,7 +2952,8 @@ async function confirmarAdicionarProdInv(nome) {
 async function removerProdInv(nome) {
   if (!confirm(`Remover "${nome}" deste grupo?`)) return;
   const key = `${_invSetor}|${_invGrupo}`;
-  const atual = _invAdicoes[key] || [];
+  await _recarregarAdicoes();
+  const atual = Array.isArray(_invAdicoes[key]) ? _invAdicoes[key] : [];
   _invAdicoes[key] = atual.filter(n => norm(n) !== norm(nome));
   if (!_invAdicoes[key].length) delete _invAdicoes[key];
   await sb.from('inv_configuracoes').upsert({ chave: 'adicoes', valor: _invAdicoes });
@@ -2953,6 +2963,9 @@ async function removerProdInv(nome) {
 
 async function excluirProdInv(nome) {
   if (!confirm(`Excluir "${nome}" da contagem?\n\nO produto não aparecerá mais nas listas. Para desfazer, use o painel de divergências.`)) return;
+  // Relê fresco antes de gravar (evita sobrescrever exclusões feitas em outro dispositivo)
+  const { data: _fe } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'excluidos').limit(1);
+  _invExcluidos = new Set(Array.isArray(_fe && _fe[0] && _fe[0].valor) ? _fe[0].valor : [..._invExcluidos]);
   _invExcluidos.add(nome);
   await sb.from('inv_configuracoes').upsert({ chave: 'excluidos', valor: [..._invExcluidos] });
   _invProds = _invProds.filter(p => p.nome !== nome);
@@ -3229,6 +3242,12 @@ function verDivergenciasInv() {
 }
 
 async function salvarCorrecoesDivergencias() {
+  // Base fresca do banco (não a memória local) para não apagar mudanças de outro dispositivo
+  const { data: _fd } = await sb.from('inv_configuracoes').select('chave,valor').in('chave', ['mapeamentos', 'excluidos']);
+  (_fd || []).forEach(r => {
+    if (r.chave === 'mapeamentos') _invMapeamentos = r.valor || {};
+    if (r.chave === 'excluidos')   _invExcluidos   = new Set(r.valor || []);
+  });
   const mapeamentos = { ..._invMapeamentos };
   const excluidos   = new Set(_invExcluidos);
   let countMap = 0, countExcl = 0;
