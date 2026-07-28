@@ -5471,8 +5471,14 @@ async function confirmarRecebimento() {
   }]).select().single();
   if (errReceb) { toast('Erro ao salvar recebimento: ' + errReceb.message, 'erro'); return; }
 
-  // Salva itens
-  await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+  // Salva itens — se falhar, remove o cabeçalho para não deixar recebimento órfão,
+  // que inflaria o valor da conta (soma de TODOS os cmp_recebimentos do pedido).
+  const { error: errItens } = await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+  if (errItens) {
+    await sb.from('cmp_recebimentos').delete().eq('id', receb.id);
+    toast('Erro ao salvar itens do recebimento: ' + errItens.message + '. Recebimento cancelado — tente novamente.', 'erro');
+    return;
+  }
 
   // Resolve nf, unidade_id e modalidade antes de ambos os flows
   const nf = document.getElementById('receb-nf')?.value?.trim() || null;
@@ -5486,9 +5492,7 @@ async function confirmarRecebimento() {
     .select('id,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
 
   // Todos os fornecedores: acumula total de todos os recebimentos, não envia ao financeiro ainda
-  const { data: todosReceb } = await sb.from('cmp_recebimentos')
-    .select('total_recebido').eq('pedido_num', pedido_num);
-  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  const totalAcumulado = await _totalRecebComItem(pedido_num);
 
   if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
@@ -7797,12 +7801,21 @@ async function sincronizarValoresFinanceiro() {
   toast(`✅ ${atualizados} lançamento(s) sincronizado(s)${erros ? ` — ${erros} erro(s)` : ''}.`, 'ok');
 }
 
+// Soma o total dos recebimentos de um pedido, IGNORANDO cabeçalhos órfãos (sem itens),
+// que inflariam o valor da conta (valor = soma de TODOS os cmp_recebimentos do pedido).
+async function _totalRecebComItem(pedido_num) {
+  const { data: todosReceb } = await sb.from('cmp_recebimentos').select('id,total_recebido').eq('pedido_num', pedido_num);
+  const ids = (todosReceb || []).map(r => r.id);
+  if (!ids.length) return 0;
+  const { data: ie } = await sb.from('cmp_recebimento_itens').select('recebimento_id').in('recebimento_id', ids);
+  const comItem = new Set((ie || []).map(i => i.recebimento_id));
+  return (todosReceb || []).filter(r => comItem.has(r.id)).reduce((s, r) => s + (r.total_recebido || 0), 0);
+}
+
 // Núcleo da finalização do Comprador Externo — chamado auto (último item) ou manual (botão Finalizar)
 async function _executarFinalizarCompExt(pedido_num, conta, ref, unidade_id, nf) {
   // Total acumulado de todos os recebimentos
-  const { data: todosReceb } = await sb.from('cmp_recebimentos')
-    .select('total_recebido').eq('pedido_num', pedido_num);
-  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  const totalAcumulado = await _totalRecebComItem(pedido_num);
   const acrescimo = parseFloat(_recebItensAbertos?.[0]?.acrescimo) || 0;
 
   // Detecta banco do adiantamento
@@ -7858,9 +7871,7 @@ async function finalizarPedidoCompExt(pedido_num) {
 }
 
 async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf) {
-  const { data: todosReceb } = await sb.from('cmp_recebimentos')
-    .select('total_recebido').eq('pedido_num', pedido_num);
-  const totalAcumulado = (todosReceb || []).reduce((s, r) => s + (r.total_recebido || 0), 0);
+  const totalAcumulado = await _totalRecebComItem(pedido_num);
   if (!totalAcumulado) return;
 
   const dataRec = new Date().toISOString().split('T')[0];
