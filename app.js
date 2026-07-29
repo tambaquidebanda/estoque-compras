@@ -8455,12 +8455,16 @@ function _cpDivisor(prod) {
   return fator * (rend > 0 ? rend : 1);   // custo_compra ÷ este divisor = custo por unidade de uso
 }
 
+function _cpFmtQtd(q) {
+  return q % 1 === 0 ? String(q) : parseFloat(q).toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
+}
+
 async function renderCustoProduto() {
   const tbody = document.getElementById('lst-custo-produto');
   const ini = document.getElementById('cp-ini').value;
   const fim = document.getElementById('cp-fim').value;
   if (!ini || !fim) return;
-  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
 
   // 1. recebimentos no período
   const { data: recs } = await sb.from('cmp_recebimentos')
@@ -8469,7 +8473,7 @@ async function renderCustoProduto() {
     _custoProdutoDados = [];
     _preencherCategoriasCP();
     document.getElementById('cp-contador').textContent = '0 produtos';
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma compra recebida no período.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Nenhuma compra recebida no período.</td></tr>';
     return;
   }
   const dataById = {};
@@ -8503,8 +8507,9 @@ async function renderCustoProduto() {
 
   // 4. cruza com o cadastro (conversão / perda / categoria / unidade de uso)
   const linhas = Object.values(agg).map(a => {
-    const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm((a.nome || '').trim()));
-    const div  = _cpDivisor(prod);
+    const prod  = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm((a.nome || '').trim()));
+    const fator = prod?.fator_conversao || 1;
+    const div   = _cpDivisor(prod);
     return {
       nome:        prod?.nome || a.nome,
       categoria:   prod?.categoria || a.catReceb || '—',
@@ -8512,7 +8517,8 @@ async function renderCustoProduto() {
       ultimo:      a.ultUnit / div,
       ultData:     a.ultData,
       media:       (a.q > 0 ? a.v / a.q : 0) / div,
-      count:       a.count,
+      qtd:         a.q * fator,   // quantidade convertida p/ unidade de uso
+      total:       a.v,           // total realmente pago no período (Σ total_recebido)
       cadastrado:  !!prod,
     };
   });
@@ -8529,7 +8535,7 @@ async function renderCustoProduto() {
 
   document.getElementById('cp-contador').textContent = `${filtrado.length} produto(s)`;
   if (!filtrado.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum produto para esse filtro.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Nenhum produto para esse filtro.</td></tr>';
     return;
   }
   tbody.innerHTML = filtrado.map(l => {
@@ -8542,7 +8548,8 @@ async function renderCustoProduto() {
       <td class="text-end fw-semibold">${brl(l.ultimo)}</td>
       <td class="text-center small text-muted">${dataFmt}</td>
       <td class="text-end" style="color:#0d6efd">${brl(l.media)}</td>
-      <td class="text-center">${l.count}</td>
+      <td class="text-end">${_cpFmtQtd(l.qtd)}</td>
+      <td class="text-end fw-bold" style="color:#198754">${brl(l.total)}</td>
     </tr>`;
   }).join('');
 }
@@ -8562,11 +8569,13 @@ function exportarCustoProduto() {
   const busca = norm(document.getElementById('cp-busca').value.trim());
   const linhas = _custoProdutoDados.filter(l =>
     (!cat || l.categoria === cat) && (!busca || norm(l.nome).includes(busca)));
-  const head = ['Produto', 'Categoria', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'N Compras'];
+  const head = ['Produto', 'Categoria', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'Qtd Comprada', 'Total Comprado'];
   const rows = linhas.map(l => [
     l.nome, l.categoria, l.unidade_uso,
     l.ultimo.toFixed(4).replace('.', ','), l.ultData,
-    l.media.toFixed(4).replace('.', ','), l.count,
+    l.media.toFixed(4).replace('.', ','),
+    String(l.qtd).replace('.', ','),
+    l.total.toFixed(2).replace('.', ','),
   ]);
   const csv = [head, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
