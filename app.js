@@ -8554,7 +8554,7 @@ function _preencherCategoriasCP() {
   const atual = sel.value;
   const cats = [...new Set(_custoProdutoDados.map(l => l.categoria).filter(c => c && c !== '—'))]
     .sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  sel.innerHTML = '<option value="">Todas</option>' + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.innerHTML = '<option value="">Todos</option>' + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   if (cats.includes(atual)) sel.value = atual;
 }
 
@@ -8564,7 +8564,7 @@ function exportarCustoProduto() {
   const busca = norm(document.getElementById('cp-busca').value.trim());
   const linhas = _custoProdutoDados.filter(l =>
     (!cat || l.categoria === cat) && (!busca || norm(l.nome).includes(busca)));
-  const head = ['Produto', 'Categoria', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'Qtd Comprada', 'Total Comprado'];
+  const head = ['Produto', 'Grupo', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'Qtd Comprada', 'Total Comprado'];
   const rows = linhas.map(l => [
     l.nome, l.categoria, l.unidade_uso,
     l.ultimo.toFixed(4).replace('.', ','), l.ultData,
