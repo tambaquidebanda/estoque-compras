@@ -3563,6 +3563,20 @@ async function _proximoNumPedido() {
   return 'PED-' + String(n + 1).padStart(4, '0');
 }
 
+// Junta linhas com o mesmo produto_id+local (dois nomes da estrutura -> mesmo produto do
+// cadastro). Sem isso, o upsert com onConflict 'produto_id,local' quebra o batch INTEIRO
+// ("ON CONFLICT cannot affect row a second time") e o saldo do setor NAO e gravado,
+// silenciosamente. Soma o estoque dos nomes que colidem.
+function _dedupSaldoRows(rows) {
+  const m = new Map();
+  rows.forEach(r => {
+    const k = r.produto_id + '|' + r.local;
+    if (m.has(k)) m.get(k).saldo += r.saldo;
+    else m.set(k, { ...r });
+  });
+  return [...m.values()];
+}
+
 async function enviarPedidoInterno() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
   const data = document.getElementById('inv-data').value;
@@ -3600,9 +3614,12 @@ async function enviarPedidoInterno() {
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo reflete a contagem do dia
-  const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: new Date().toISOString() }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: new Date().toISOString() })));
+  if (saldoRows.length) {
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
+  }
 
   // ─── 2. Criar pedido interno (só itens com pedido > 0) ───
   const itensPed = itensCont.filter(it => it.pedido > 0)
@@ -3659,9 +3676,12 @@ async function salvarSaldoContagemDesktop() {
   if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Atualiza saldo absoluto
-  const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora })));
+  if (saldoRows.length) {
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
+  }
 
   toast(`${num_inv} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; }
@@ -3697,9 +3717,12 @@ async function salvarSaldoInicialSetor() {
   if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Salva saldo absoluto do setor
-  const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: agora }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: agora })));
+  if (saldoRows.length) {
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
+  }
 
   toast(`${num_inv} — saldo inicial de ${_invSetor} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Saldo Inicial'; }

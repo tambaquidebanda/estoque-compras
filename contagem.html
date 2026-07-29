@@ -755,6 +755,19 @@ let _nomeSetor           = null;
 function norm(s) { return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
 function esc(s)  { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// Junta linhas com o mesmo produto_id+local (dois nomes -> mesmo produto do cadastro).
+// Sem isso o upsert com onConflict 'produto_id,local' quebra o batch inteiro e o saldo
+// do setor nao e gravado (silenciosamente). Soma o estoque dos nomes que colidem.
+function _dedupSaldoRows(rows) {
+  const m = new Map();
+  rows.forEach(r => {
+    const k = r.produto_id + '|' + r.local;
+    if (m.has(k)) m.get(k).saldo += r.saldo;
+    else m.set(k, { ...r });
+  });
+  return [...m.values()];
+}
+
 function getPadrao(nome) {
   const key   = `${_setor}|${_grupo}|${nome.trim().toUpperCase()}`;
   const entry = _padroes[key];
@@ -1072,11 +1085,12 @@ async function salvarSaldoContagem() {
   }
 
   // Atualiza saldo absoluto em est_saldo_local
-  const saldoRows = itensCont
+  const saldoRows = _dedupSaldoRows(itensCont
     .filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora }));
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora })));
   if (saldoRows.length) {
-    await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
   toast(`${num_inv} salvo por ${resp}! ✅`, 'ok');
@@ -1229,9 +1243,12 @@ async function salvarSaldoInicialSetorMob() {
     itens.map(it => ({ ...it, inventario_id: inv.id, pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0, total: it.estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 }))
   );
 
-  const saldoRows = itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: agora }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+  const saldoRows = _dedupSaldoRows(itens.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: agora })));
+  if (saldoRows.length) {
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
+  }
 
   toast(`${num_inv} — saldo inicial de ${_setor} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
@@ -1277,9 +1294,12 @@ async function enviarPedido() {
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({...it, inventario_id:inv.id})));
 
   // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo passa a refletir a contagem do dia
-  const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: new Date().toISOString() }));
-  if (saldoRows.length) await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: new Date().toISOString() })));
+  if (saldoRows.length) {
+    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
+  }
 
   // Criar pedido interno
   const itensPed = itensCont.filter(it => it.pedido > 0)
