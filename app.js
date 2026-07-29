@@ -3009,8 +3009,11 @@ function _setPadrao(nome, chave, val) {
   _invPadroes[key][chave] = val;
 }
 
-function abrirEditarPadroes() {
+async function abrirEditarPadroes() {
   if (!_invProds.length) { toast('Selecione um grupo primeiro.', 'erro'); return; }
+  // Relê fresco do banco pra o modal sempre mostrar o valor atual (não o cache da aba)
+  const { data: _fp } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'padroes').limit(1);
+  _invPadroes = (_fp && _fp[0] && _fp[0].valor) || {};
   const padroes = _invPadroes;
   const todasDias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
 
@@ -3071,6 +3074,12 @@ function abrirEditarPadroes() {
 
 async function salvarPadroes() {
   const todasDias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
+
+  // Relê 'padroes' fresco do banco antes de mesclar. Sem isso, uma aba/dispositivo com
+  // dados velhos regravava o objeto inteiro por cima e apagava padrões de OUTROS grupos
+  // configurados em outro lugar (padrões "sumindo" e precisando reentrar toda vez).
+  const { data: _fp } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'padroes').limit(1);
+  _invPadroes = (_fp && _fp[0] && _fp[0].valor) || {};
 
   _invProds.forEach((p, pi) => {
     const key = _padKey(p.nome);
