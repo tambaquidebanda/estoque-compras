@@ -8449,12 +8449,6 @@ async function carregarCustoProduto() {
   else await renderCustoProduto();
 }
 
-function _cpDivisor(prod) {
-  const fator = prod?.fator_conversao || 1;
-  const rend  = 1 - ((prod?.perda || 0) / 100);
-  return fator * (rend > 0 ? rend : 1);   // custo_compra ÷ este divisor = custo por unidade de uso
-}
-
 function _cpFmtQtd(q) {
   return q % 1 === 0 ? String(q) : parseFloat(q).toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
 }
@@ -8498,7 +8492,7 @@ async function renderCustoProduto() {
     if (!k) return;
     const dt   = dataById[it.recebimento_id] || '';
     const unit = Number(it.valor_unitario) || ((Number(it.total_recebido) || 0) / q);
-    if (!agg[k]) agg[k] = { nome: it.produto, q: 0, v: 0, ultData: '', ultUnit: 0, count: 0, catReceb: it.categoria || '' };
+    if (!agg[k]) agg[k] = { nome: it.produto, q: 0, v: 0, ultData: '', ultUnit: 0, count: 0, catReceb: it.categoria || '', unidadeReceb: it.unidade || '' };
     agg[k].q += q;
     agg[k].v += Number(it.total_recebido) || (unit * q);
     agg[k].count += 1;
@@ -8506,19 +8500,20 @@ async function renderCustoProduto() {
   });
 
   // 4. cruza com o cadastro (conversão / perda / categoria / unidade de uso)
+  // O recebimento JÁ grava valor_unitario e qtd_recebida na unidade de USO (ex: água 1,30/UN
+  // com qtd em UN; chopp 13,30/litro com qtd em litros). Portanto NÃO se converte nada aqui —
+  // usar os valores direto. (Divisão por conversão/perda estava zerando o custo, ex: 1,30→0,11.)
   const linhas = Object.values(agg).map(a => {
-    const prod  = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm((a.nome || '').trim()));
-    const fator = prod?.fator_conversao || 1;
-    const div   = _cpDivisor(prod);
+    const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm((a.nome || '').trim()));
     return {
       nome:        prod?.nome || a.nome,
       categoria:   prod?.categoria || a.catReceb || '—',
-      unidade_uso: prod?.unidade_uso || 'UN',
-      ultimo:      a.ultUnit / div,
+      unidade_uso: prod?.unidade_uso || a.unidadeReceb || 'UN',
+      ultimo:      a.ultUnit,                    // valor_unitario do recebimento mais recente
       ultData:     a.ultData,
-      media:       (a.q > 0 ? a.v / a.q : 0) / div,
-      qtd:         a.q * fator,   // quantidade convertida p/ unidade de uso
-      total:       a.v,           // total realmente pago no período (Σ total_recebido)
+      media:       a.q > 0 ? a.v / a.q : 0,      // média ponderada (Σtotal ÷ Σqtd)
+      qtd:         a.q,                          // Σ qtd_recebida (já em unidade de uso)
+      total:       a.v,                          // Σ total_recebido (real pago no período)
       cadastrado:  !!prod,
     };
   });
@@ -8539,7 +8534,7 @@ async function renderCustoProduto() {
     return;
   }
   tbody.innerHTML = filtrado.map(l => {
-    const semCad  = !l.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Sem match no cadastro — custo sem conversão"></i>' : '';
+    const semCad  = !l.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Produto não encontrado no cadastro (nome divergente)"></i>' : '';
     const dataFmt = l.ultData ? l.ultData.split('-').reverse().join('/') : '—';
     return `<tr>
       <td><strong>${esc(l.nome)}</strong>${semCad}</td>
