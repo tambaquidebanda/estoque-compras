@@ -8002,8 +8002,12 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
     acrescimo:      acrescimo,
     vencimento,
     tipo:           'pagar',
-    status:         banco_id === BANCO_NUBANK_ID ? 'pendente' : 'pago',
-    data_pagamento: banco_id === BANCO_NUBANK_ID ? null : dataRec,
+    // Despesa de comprador externo entra SEMPRE pendente — o dinheiro só sai
+    // do Caixa após aprovação e retirada da pessoa no financeiro (e o débito no
+    // Nubank/PIX só vira pago ao conciliar o extrato). Marcar pago aqui pulava
+    // a etapa de aprovação e impedia a conciliação. (mesma regra de registrarDespesaRealHistorico)
+    status:         'pendente',
+    data_pagamento: null,
     banco_id:       banco_id || BANCO_NUBANK_ID,
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
