@@ -8383,10 +8383,18 @@ async function carregarSaldo() {
   else if (_saldoGrupo)              await selecionarGrupoSaldo(_saldoGrupo);
 }
 
-// Custo unitário de um item conforme base selecionada
+// Custo unitário de um item conforme base selecionada.
+// O saldo é contado em unidade de USO, mas custo_comp / média são por unidade de COMPRA
+// (ex: fardo). Custo efetivo por unidade de uso = custo ÷ conversão ÷ (1 − perda%) —
+// MESMA fórmula da tela de Produtos (Custo Efetivo). Sem isso, produto comprado por fardo
+// valorizava o estoque pelo preço do fardo (inflava ~conversão×).
 function _custoSaldoDe(it) {
-  if (_saldoCustoBase === 'media_3m') return _saldoCustoMedia[it.produto_id] ?? (it.custo_comp || 0);
-  return it.custo_comp || 0;
+  const fator = it.fator_conversao || 1;
+  const rend  = 1 - ((it.perda || 0) / 100);
+  const bruto = (_saldoCustoBase === 'media_3m')
+    ? (_saldoCustoMedia[it.produto_id] ?? (it.custo_comp || 0))
+    : (it.custo_comp || 0);
+  return rend > 0 ? (bruto / fator) / rend : 0;
 }
 
 // Carrega o custo médio ponderado dos últimos 90 dias (por produto_id)
@@ -8430,7 +8438,7 @@ async function _carregarValorTotalEstoque() {
       const chave = pid || norm(nome);
       if (vistos.has(chave)) continue;   // dedup: mesmo produto em vários grupos
       vistos.add(chave);
-      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, matrix: {} });
+      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {} });
     }
   }
   const ids = itens.filter(x => x.produto_id).map(x => x.produto_id);
@@ -8528,7 +8536,7 @@ async function selecionarGrupoSaldo(grupo) {
   _saldoList = nomes.map(nome => {
     const nomeBusca = _invMapeamentos[nome] || nome;
     const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
-    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, saldo: 0 };
+    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, saldo: 0 };
   });
 
   // Setores fixos (sempre todos)
