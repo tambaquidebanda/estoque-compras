@@ -131,6 +131,16 @@
       <a href="#" onclick="ir('controlecmv',this)">
         <i class="bi bi-file-earmark-spreadsheet-fill"></i> Controle CMV
       </a>
+      <!-- Grupo RELATÓRIOS -->
+      <div class="nav-grupo-btn" id="nav-grupo-relatorios" onclick="toggleNavGrupo('relatorios')">
+        <i class="bi bi-file-earmark-bar-graph-fill"></i> Relatórios
+        <span class="seta">▶</span>
+      </div>
+      <div class="nav-submenu" id="nav-submenu-relatorios">
+        <a href="#" onclick="ir('custo-produto',this)">
+          <i class="bi bi-tag-fill"></i> Custo Produto
+        </a>
+      </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
         <i class="bi bi-gear-wide-connected"></i> Configurações
@@ -2134,6 +2144,66 @@
             </thead>
             <tbody id="tb-contas-pagar"></tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ RELATÓRIO: CUSTO PRODUTO ══════ -->
+    <section id="pg-custo-produto" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-tag-fill"></i> Custo Produto</h1>
+        <span class="text-muted small" id="cp-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="cp-ini" onchange="renderCustoProduto()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="cp-fim" onchange="renderCustoProduto()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="cpPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="cpPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="cpPeriodo(12)">12 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Categoria</label>
+          <select class="form-select form-select-sm" id="cp-categoria" onchange="renderCustoProduto()" style="min-width:180px">
+            <option value="">Todas</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="cp-busca" placeholder="Buscar produto..." oninput="renderCustoProduto()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarCustoProduto()"><i class="bi bi-download"></i> CSV</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Categoria</th>
+                <th class="text-center">Unid. Uso</th>
+                <th class="text-end">Último Preço</th>
+                <th class="text-center">Data Últ.</th>
+                <th class="text-end">Média Período</th>
+                <th class="text-center">Nº Compras</th>
+              </tr>
+            </thead>
+            <tbody id="lst-custo-produto">
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Custo por <strong>unidade de uso</strong> (÷ conversão ÷ perda), a partir do que foi efetivamente <strong>recebido</strong> no período. Lista só produtos com compras recebidas no período.
+          </small>
         </div>
       </div>
     </section>

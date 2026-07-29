@@ -214,6 +214,10 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
+  if (['custo-produto'].includes(nome)) {
+    document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
+    document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
+  }
 
   if (nome === 'dashboard')   carregarDashboard();
   if (nome === 'bi')          carregarBI();
@@ -229,6 +233,7 @@ function ir(nome, el) {
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
+  if (nome === 'custo-produto') carregarCustoProduto();
 }
 
 function irCad(tab, el) {
@@ -8423,6 +8428,152 @@ async function _carregarMediaCusto() {
     const a = agg[norm((p.nome || '').trim())];
     if (a && a.q > 0) _saldoCustoMedia[p.id] = a.v / a.q;
   });
+}
+
+// ═══════════════ RELATÓRIO: CUSTO PRODUTO ═══════════════
+// Produtos efetivamente comprados (recebidos) no período, com último preço e média
+// ponderada, exibidos por UNIDADE DE USO (÷ conversão ÷ perda). Filtros: período + categoria.
+let _custoProdutoDados = [];
+
+function cpPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('cp-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('cp-fim').value = fim.toISOString().slice(0, 10);
+  renderCustoProduto();
+}
+
+async function carregarCustoProduto() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('cp-ini').value) cpPeriodo(3);   // default: últimos 3 meses
+  else await renderCustoProduto();
+}
+
+function _cpDivisor(prod) {
+  const fator = prod?.fator_conversao || 1;
+  const rend  = 1 - ((prod?.perda || 0) / 100);
+  return fator * (rend > 0 ? rend : 1);   // custo_compra ÷ este divisor = custo por unidade de uso
+}
+
+async function renderCustoProduto() {
+  const tbody = document.getElementById('lst-custo-produto');
+  const ini = document.getElementById('cp-ini').value;
+  const fim = document.getElementById('cp-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+
+  // 1. recebimentos no período
+  const { data: recs } = await sb.from('cmp_recebimentos')
+    .select('id,data_receb').gte('data_receb', ini).lte('data_receb', fim);
+  if (!recs || !recs.length) {
+    _custoProdutoDados = [];
+    _preencherCategoriasCP();
+    document.getElementById('cp-contador').textContent = '0 produtos';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma compra recebida no período.</td></tr>';
+    return;
+  }
+  const dataById = {};
+  recs.forEach(r => { dataById[r.id] = r.data_receb; });
+
+  // 2. itens dos recebimentos (em lotes por causa do .in)
+  const ids = recs.map(r => r.id);
+  let itens = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await sb.from('cmp_recebimento_itens')
+      .select('produto,qtd_recebida,total_recebido,valor_unitario,recebimento_id,categoria')
+      .in('recebimento_id', ids.slice(i, i + 300));
+    itens = itens.concat(data || []);
+  }
+
+  // 3. agrega por produto (matched por nome normalizado)
+  const agg = {};
+  itens.forEach(it => {
+    const q = Number(it.qtd_recebida) || 0;
+    if (q <= 0) return;
+    const k = norm((it.produto || '').trim());
+    if (!k) return;
+    const dt   = dataById[it.recebimento_id] || '';
+    const unit = Number(it.valor_unitario) || ((Number(it.total_recebido) || 0) / q);
+    if (!agg[k]) agg[k] = { nome: it.produto, q: 0, v: 0, ultData: '', ultUnit: 0, count: 0, catReceb: it.categoria || '' };
+    agg[k].q += q;
+    agg[k].v += Number(it.total_recebido) || (unit * q);
+    agg[k].count += 1;
+    if (dt >= agg[k].ultData) { agg[k].ultData = dt; agg[k].ultUnit = unit; }
+  });
+
+  // 4. cruza com o cadastro (conversão / perda / categoria / unidade de uso)
+  const linhas = Object.values(agg).map(a => {
+    const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm((a.nome || '').trim()));
+    const div  = _cpDivisor(prod);
+    return {
+      nome:        prod?.nome || a.nome,
+      categoria:   prod?.categoria || a.catReceb || '—',
+      unidade_uso: prod?.unidade_uso || 'UN',
+      ultimo:      a.ultUnit / div,
+      ultData:     a.ultData,
+      media:       (a.q > 0 ? a.v / a.q : 0) / div,
+      count:       a.count,
+      cadastrado:  !!prod,
+    };
+  });
+  linhas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  _custoProdutoDados = linhas;
+  _preencherCategoriasCP();
+
+  // 5. filtros de categoria + busca
+  const cat   = document.getElementById('cp-categoria').value;
+  const busca = norm(document.getElementById('cp-busca').value.trim());
+  const filtrado = linhas.filter(l =>
+    (!cat || l.categoria === cat) &&
+    (!busca || norm(l.nome).includes(busca)));
+
+  document.getElementById('cp-contador').textContent = `${filtrado.length} produto(s)`;
+  if (!filtrado.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum produto para esse filtro.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtrado.map(l => {
+    const semCad  = !l.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Sem match no cadastro — custo sem conversão"></i>' : '';
+    const dataFmt = l.ultData ? l.ultData.split('-').reverse().join('/') : '—';
+    return `<tr>
+      <td><strong>${esc(l.nome)}</strong>${semCad}</td>
+      <td class="small text-muted">${esc(l.categoria)}</td>
+      <td class="text-center small">${esc(l.unidade_uso)}</td>
+      <td class="text-end fw-semibold">${brl(l.ultimo)}</td>
+      <td class="text-center small text-muted">${dataFmt}</td>
+      <td class="text-end" style="color:#0d6efd">${brl(l.media)}</td>
+      <td class="text-center">${l.count}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _preencherCategoriasCP() {
+  const sel = document.getElementById('cp-categoria');
+  const atual = sel.value;
+  const cats = [...new Set(_custoProdutoDados.map(l => l.categoria).filter(c => c && c !== '—'))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  sel.innerHTML = '<option value="">Todas</option>' + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  if (cats.includes(atual)) sel.value = atual;
+}
+
+function exportarCustoProduto() {
+  if (!_custoProdutoDados.length) { toast('Nada para exportar.', 'erro'); return; }
+  const cat   = document.getElementById('cp-categoria').value;
+  const busca = norm(document.getElementById('cp-busca').value.trim());
+  const linhas = _custoProdutoDados.filter(l =>
+    (!cat || l.categoria === cat) && (!busca || norm(l.nome).includes(busca)));
+  const head = ['Produto', 'Categoria', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'N Compras'];
+  const rows = linhas.map(l => [
+    l.nome, l.categoria, l.unidade_uso,
+    l.ultimo.toFixed(4).replace('.', ','), l.ultData,
+    l.media.toFixed(4).replace('.', ','), l.count,
+  ]);
+  const csv = [head, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'custo-produto.csv'; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Agrega saldo × custo de TODOS os produtos (todos os grupos) para KPIs e snapshot
