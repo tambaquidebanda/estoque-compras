@@ -8483,7 +8483,9 @@ async function renderCustoProduto() {
   const ini = document.getElementById('cp-ini').value;
   const fim = document.getElementById('cp-fim').value;
   if (!ini || !fim) return;
-  tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  const tfoot = document.getElementById('cp-tfoot');
+  if (tfoot) tfoot.innerHTML = '';
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
 
   // 1. recebimentos no período
   const { data: recs } = await sb.from('cmp_recebimentos')
@@ -8492,7 +8494,7 @@ async function renderCustoProduto() {
     _custoProdutoDados = [];
     _preencherCategoriasCP();
     document.getElementById('cp-contador').textContent = '0 produtos';
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Nenhuma compra recebida no período.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma compra recebida no período.</td></tr>';
     return;
   }
   const dataById = {};
@@ -8555,23 +8557,31 @@ async function renderCustoProduto() {
 
   document.getElementById('cp-contador').textContent = `${filtrado.length} produto(s)`;
   if (!filtrado.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Nenhum produto para esse filtro.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum produto para esse filtro.</td></tr>';
+    if (tfoot) tfoot.innerHTML = '';
     return;
   }
   tbody.innerHTML = filtrado.map(l => {
     const semCad  = !l.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Produto não encontrado no cadastro (nome divergente)"></i>' : '';
-    const dataFmt = l.ultData ? l.ultData.split('-').reverse().join('/') : '—';
     return `<tr>
       <td><strong>${esc(l.nome)}</strong>${semCad}</td>
       <td class="small text-muted">${esc(l.categoria)}</td>
       <td class="text-center small">${esc(l.unidade_uso)}</td>
       <td class="text-end fw-semibold">${brl(l.ultimo)}</td>
-      <td class="text-center small text-muted">${dataFmt}</td>
       <td class="text-end" style="color:#0d6efd">${brl(l.media)}</td>
       <td class="text-end">${_cpFmtQtd(l.qtd)}</td>
       <td class="text-end fw-bold" style="color:#198754">${brl(l.total)}</td>
     </tr>`;
   }).join('');
+
+  // Total do período (soma do Total Comprado das linhas filtradas)
+  if (tfoot) {
+    const totalPeriodo = filtrado.reduce((s, l) => s + (l.total || 0), 0);
+    tfoot.innerHTML = `<tr class="border-top" style="border-top-width:2px !important">
+      <td colspan="6" class="text-end fw-bold py-2">TOTAL DO PERÍODO</td>
+      <td class="text-end fw-bold py-2" style="color:#198754">${brl(totalPeriodo)}</td>
+    </tr>`;
+  }
 }
 
 function _preencherCategoriasCP() {
@@ -8587,22 +8597,48 @@ function exportarCustoProduto() {
   if (!_custoProdutoDados.length) { toast('Nada para exportar.', 'erro'); return; }
   const cat   = document.getElementById('cp-categoria').value;
   const busca = norm(document.getElementById('cp-busca').value.trim());
+  const ini   = document.getElementById('cp-ini').value;
+  const fim   = document.getElementById('cp-fim').value;
   const linhas = _custoProdutoDados.filter(l =>
     (!cat || l.categoria === cat) && (!busca || norm(l.nome).includes(busca)));
-  const head = ['Produto', 'Grupo', 'Unid. Uso', 'Ultimo Preco', 'Data Ultimo', 'Media Periodo', 'Qtd Comprada', 'Total Comprado'];
-  const rows = linhas.map(l => [
+  if (!linhas.length) { toast('Nada para exportar com esse filtro.', 'erro'); return; }
+
+  const totalPeriodo = linhas.reduce((s, l) => s + (l.total || 0), 0);
+  const periodoLabel = (ini && fim)
+    ? `${ini.split('-').reverse().join('/')} a ${fim.split('-').reverse().join('/')}`
+    : '';
+
+  // Cabeçalho do relatório + colunas. Valores numéricos entram como número (não texto)
+  // para o Excel somar/formatar corretamente.
+  const head = ['Produto', 'Grupo', 'Unid. Uso', 'Último Preço', 'Média Período', 'Qtd. Comprada', 'Total Comprado'];
+  const aoa = [];
+  aoa.push(['Custo Produto' + (periodoLabel ? ` — ${periodoLabel}` : '')]);
+  aoa.push([]);
+  aoa.push(head);
+  linhas.forEach(l => aoa.push([
     l.nome, l.categoria, l.unidade_uso,
-    l.ultimo.toFixed(4).replace('.', ','), l.ultData,
-    l.media.toFixed(4).replace('.', ','),
-    String(l.qtd).replace('.', ','),
-    l.total.toFixed(2).replace('.', ','),
-  ]);
-  const csv = [head, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'custo-produto.csv'; a.click();
-  URL.revokeObjectURL(url);
+    +(l.ultimo || 0), +(l.media || 0), +(l.qtd || 0), +(l.total || 0),
+  ]));
+  aoa.push(['TOTAL DO PERÍODO', '', '', '', '', '', +totalPeriodo]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const nRows = aoa.length;                 // total de linhas (0-based header do relatório na 0)
+  const money = 'R$ #,##0.00';
+  const qtd   = '#,##0.###';
+  // Formata colunas numéricas: D=Último, E=Média, F=Qtd, G=Total. Dados começam na linha 4 (índice 3).
+  for (let r = 3; r < nRows; r++) {
+    [['D', money], ['E', money], ['F', qtd], ['G', money]].forEach(([col, z]) => {
+      const cell = ws[col + (r + 1)];
+      if (cell && typeof cell.v === 'number') cell.z = z;
+    });
+  }
+  ws['!cols'] = [{ wch: 34 }, { wch: 20 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];   // título mesclado
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Custo Produto');
+  const nomeArq = `custo-produto${ini ? '_' + ini : ''}${fim ? '_a_' + fim : ''}.xlsx`;
+  XLSX.writeFile(wb, nomeArq);
 }
 
 // Agrega saldo × custo de TODOS os produtos (todos os grupos) para KPIs e snapshot

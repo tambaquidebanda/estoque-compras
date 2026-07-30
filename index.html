@@ -2178,7 +2178,7 @@
         </div>
         <div class="flex-grow-1"></div>
         <input type="search" class="form-control form-control-sm" id="cp-busca" placeholder="Buscar produto..." oninput="renderCustoProduto()" style="width:200px">
-        <button class="btn btn-sm btn-outline-success" onclick="exportarCustoProduto()"><i class="bi bi-download"></i> CSV</button>
+        <button class="btn btn-sm btn-outline-success" onclick="exportarCustoProduto()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
       </div>
 
       <div class="card-grafico p-0 overflow-hidden">
@@ -2190,15 +2190,15 @@
                 <th>Grupo</th>
                 <th class="text-center">Unid. Uso</th>
                 <th class="text-end">Último Preço</th>
-                <th class="text-center">Data Últ.</th>
                 <th class="text-end">Média Período</th>
                 <th class="text-end">Qtd. Comprada</th>
                 <th class="text-end">Total Comprado</th>
               </tr>
             </thead>
             <tbody id="lst-custo-produto">
-              <tr><td colspan="8" class="text-center text-muted py-4">Selecione o período.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
             </tbody>
+            <tfoot id="cp-tfoot"></tfoot>
           </table>
         </div>
         <div class="px-3 py-2 border-top bg-light">
