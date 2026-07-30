@@ -7877,7 +7877,16 @@ async function _executarFinalizarCompExt(pedido_num, conta, ref, unidade_id, nf)
   // Detecta banco do adiantamento
   let bancoDespesa = BANCO_NUBANK_ID;
   if (conta.adiantamento_lancamento_id) {
-    const { data: adLanc } = await sb.from('lancamentos').select('banco_id').eq('id', conta.adiantamento_lancamento_id).maybeSingle();
+    const { data: adLanc } = await sb.from('lancamentos').select('banco_id,status').eq('id', conta.adiantamento_lancamento_id).maybeSingle();
+    // Anti-duplicata (dinheiro): se o adiantamento já foi PAGO em Caixa (dinheiro),
+    // esse pagamento já é a saída do pedido — NÃO cria uma despesa separada (duplicaria
+    // no Contas a Pagar). Vincula o próprio pagamento em dinheiro como a conta do pedido.
+    // No fluxo PIX/Nubank o adiantamento fica pendente (vira transferência), então segue
+    // criando a despesa normalmente.
+    if (adLanc?.status === 'pago' && adLanc.banco_id === BANCO_CAIXA_ID) {
+      await sb.from('cmp_contas_pagar').update({ lancamento_id: conta.adiantamento_lancamento_id }).eq('id', conta.id);
+      return;
+    }
     if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
   }
 
@@ -8135,6 +8144,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
 
 const BANCO_SANTANDER_ID = '2bc3c4df-923b-407b-91d1-99b0bee89882';
 const BANCO_NUBANK_ID    = 'c342ece3-9015-40d6-a5ce-72c668f17395';
+const BANCO_CAIXA_ID     = '5f8f152e-8ef7-47ad-8df3-b251f4225a1f';
 const COMP_EXT_FORN_ID   = 'c194fd5b-1ba9-4229-a416-2e7cdc05f287';
 
 const FORNEC_EXT_HISTORICO = [
