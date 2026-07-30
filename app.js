@@ -6340,16 +6340,22 @@ async function carregarCompras() {
   // senão pedidos antigos fora do limite de 1000 linhas nunca apareceriam.
   const pedidoBusca = (document.getElementById('cps-pedido')?.value || '').trim().replace('#','');
 
-  let query = sb.from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor,acrescimo')
-    .not('pedido_num','is',null)
-    .order('data', { ascending: false })
-    .order('pedido_num', { ascending: false });
-  if (ini) query = query.gte('data', ini);
-  if (fim) query = query.lte('data', fim);
-  if (pedidoBusca) query = query.ilike('pedido_num', `%${pedidoBusca}%`);
-
-  const { data: rows } = await query;
+  // Carrega TODOS os itens paginando (limite de 1000 linhas do Supabase) — cmp_compras
+  // é 1 linha por item, então sem paginar a lista/TOTAL ficavam capados nos pedidos recentes.
+  const rows = await _fetchAllPaged(
+    'cmp_compras',
+    'id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor,acrescimo',
+    q => {
+      q = q.not('pedido_num','is',null)
+           .order('data', { ascending: false })
+           .order('pedido_num', { ascending: false })
+           .order('id', { ascending: false });   // tiebreaker estável p/ paginação
+      if (ini) q = q.gte('data', ini);
+      if (fim) q = q.lte('data', fim);
+      if (pedidoBusca) q = q.ilike('pedido_num', `%${pedidoBusca}%`);
+      return q;
+    }
+  );
   if (!rows) return;
 
   // Agrupa por pedido_num
