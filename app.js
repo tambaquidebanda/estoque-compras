@@ -6336,6 +6336,10 @@ async function carregarCompras() {
   const fim     = document.getElementById('cps-fim')?.value || '';
   const fornSel = document.getElementById('cps-forn')?.value || '';
 
+  // Busca por número do pedido é aplicada NO BANCO (não só na janela já carregada),
+  // senão pedidos antigos fora do limite de 1000 linhas nunca apareceriam.
+  const pedidoBusca = (document.getElementById('cps-pedido')?.value || '').trim().replace('#','');
+
   let query = sb.from('cmp_compras')
     .select('id,pedido_num,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,categoria,quantidade,custo_unit,status_receb,setor,acrescimo')
     .not('pedido_num','is',null)
@@ -6343,6 +6347,7 @@ async function carregarCompras() {
     .order('pedido_num', { ascending: false });
   if (ini) query = query.gte('data', ini);
   if (fim) query = query.lte('data', fim);
+  if (pedidoBusca) query = query.ilike('pedido_num', `%${pedidoBusca}%`);
 
   const { data: rows } = await query;
   if (!rows) return;
@@ -6420,8 +6425,8 @@ async function carregarCompras() {
   }
   if (fornSel) lista = lista.filter(g => g.forn === fornSel);
 
-  // Filtro de busca por número do pedido (ignora o '#')
-  const pedidoBusca = (document.getElementById('cps-pedido')?.value || '').trim().replace('#','');
+  // Filtro de busca por número do pedido (ignora o '#') — reforço client-side
+  // (a query já filtrou no banco; isto só refina a exibição)
   if (pedidoBusca) lista = lista.filter(g => (g.pedido_num || '').replace('#','').includes(pedidoBusca));
 
   // KPIs
