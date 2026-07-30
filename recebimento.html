@@ -1049,6 +1049,27 @@ function _normNome(s) {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
 
+// Paginação (limite de 1000 linhas do Supabase). Espelha _fetchAllPaged do desktop.
+// est_ficha_ingredientes tem >1000 linhas — sem paginar, fichas cujos ingredientes
+// caem após a linha 1000 calculam custo 0 e gravam isso (custo "some" no cadastro).
+async function _fetchAllPagedReceb(tabela, colunas, filtro = null) {
+  const PAGE = 1000;
+  let todos = [], from = 0, continua = true;
+  while (continua) {
+    let qy = sb.from(tabela).select(colunas).range(from, from + PAGE - 1);
+    if (filtro) qy = filtro(qy);
+    const { data } = await qy;
+    if (data && data.length) {
+      todos = todos.concat(data);
+      continua = data.length === PAGE;
+      from += PAGE;
+    } else {
+      continua = false;
+    }
+  }
+  return todos;
+}
+
 async function _recebimentoAtualizaCustos(itensReceb) {
   try {
     // Preço pago por nome de produto (normalizado)
@@ -1059,11 +1080,11 @@ async function _recebimentoAtualizaCustos(itensReceb) {
     }
     if (!Object.keys(precoPorNome).length) return;
 
-    // Carrega catálogo + fichas + ingredientes de uma vez
-    const [{ data: prods }, { data: fichas }, { data: ings }] = await Promise.all([
-      sb.from('est_produtos').select('id,nome,fator_conversao,perda,custo_comp'),
-      sb.from('est_fichas_tecnicas').select('id,produto_id,rendimento').eq('ativo', true),
-      sb.from('est_ficha_ingredientes').select('ficha_id,quantidade,ingrediente_id'),
+    // Carrega catálogo + fichas + ingredientes de uma vez — TODOS paginados (>1000 linhas)
+    const [prods, fichas, ings] = await Promise.all([
+      _fetchAllPagedReceb('est_produtos', 'id,nome,fator_conversao,perda,custo_comp'),
+      _fetchAllPagedReceb('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
+      _fetchAllPagedReceb('est_ficha_ingredientes', 'ficha_id,quantidade,ingrediente_id'),
     ]);
     if (!prods?.length) return;
 
