@@ -8984,6 +8984,7 @@ async function abrirHistoricoInventario() {
         <td class="text-end small">${diffHtml}</td>
         <td class="text-end text-nowrap">
           <button class="btn btn-sm btn-outline-primary" title="Ver / Imprimir" onclick="verInventarioValorado('${inv.id}')"><i class="bi bi-eye"></i></button>
+          <button class="btn btn-sm btn-outline-success" title="Exportar Excel" onclick="exportarInventarioValorado('${inv.id}')"><i class="bi bi-file-earmark-excel"></i></button>
           <button class="btn btn-sm btn-outline-danger" title="Excluir" onclick="excluirInventarioValorado('${inv.id}')"><i class="bi bi-trash3"></i></button>
         </td>
       </tr>`;
@@ -9047,6 +9048,7 @@ async function verInventarioValorado(id) {
       @media print{.noprint{display:none}}
     </style></head><body>
     <button class="noprint" onclick="window.print()" style="float:right;padding:8px 16px;background:#16a34a;color:#fff;border:0;border-radius:6px;cursor:pointer">🖨️ Imprimir</button>
+    <button class="noprint" onclick="if(window.opener&&window.opener.exportarInventarioValorado){window.opener.exportarInventarioValorado('${id}')}else{alert('Abra o Histórico e use o botão Excel na lista.')}" style="float:right;margin-right:8px;padding:8px 16px;background:#0f7b3f;color:#fff;border:0;border-radius:6px;cursor:pointer">📊 Excel</button>
     <h1>📸 Inventário Valorado — ${dataFmt}</h1>
     <div class="meta">
       Base de custo: <strong>${inv.base_custo === 'media_3m' ? 'Média dos últimos 3 meses' : 'Último preço de compra'}</strong>
@@ -9063,6 +9065,62 @@ async function verInventarioValorado(id) {
   if (!w) { toast('Permita pop-ups para visualizar.', 'erro'); return; }
   w.document.write(html);
   w.document.close();
+}
+
+// Exporta um inventário valorado salvo para Excel (.xlsx) formatado, para a contabilidade.
+// Roda na janela principal (onde o XLSX/SheetJS está carregado). Espelha o agrupamento
+// por categoria com subtotais da tela "Ver", com total geral no fim.
+async function exportarInventarioValorado(id) {
+  const { data: inv } = await sb.from('est_inventario_valorado').select('*').eq('id', id).single();
+  const { data: itens } = await sb.from('est_inventario_valorado_itens')
+    .select('*').eq('inventario_id', id).order('grupo').order('nome');
+  if (!inv) { toast('Inventário não encontrado.', 'erro'); return; }
+  if (!itens?.length) { toast('Inventário sem itens para exportar.', 'erro'); return; }
+
+  const dataFmt   = (inv.data || '').split('-').reverse().join('/');
+  const baseLabel = inv.base_custo === 'media_3m' ? 'Média dos últimos 3 meses' : 'Último preço de compra';
+  const vpl = inv.valor_por_local || {};
+  const setoresTxt = Object.entries(vpl)
+    .map(([l, v]) => `${l === 'ESTOQUE_LOJA' ? 'Loja' : (_SETOR_LABEL[l] || l)}: ${brl(v)}`)
+    .join(' · ');
+
+  const grupos = {};
+  itens.forEach(it => { (grupos[it.grupo || 'Sem grupo'] ||= []).push(it); });
+
+  const head = ['Produto', 'Grupo', 'Qtd', 'Custo Un.', 'Valor'];
+  const aoa = [];
+  aoa.push([`Inventário Valorado — ${dataFmt}`]);
+  aoa.push([`Base de custo: ${baseLabel}${inv.responsavel ? ' · Responsável: ' + inv.responsavel : ''} · ${inv.qtd_produtos ?? itens.length} produtos`]);
+  if (setoresTxt) aoa.push([`Valor por setor: ${setoresTxt}`]);
+  aoa.push([]);
+  aoa.push(head);
+
+  Object.entries(grupos).forEach(([g, arr]) => {
+    arr.forEach(it => aoa.push([it.nome, it.grupo, +(it.quantidade || 0), +(it.custo_unit || 0), +(it.valor || 0)]));
+    const sub = arr.reduce((s, it) => s + Number(it.valor || 0), 0);
+    aoa.push([`Subtotal ${g}`, '', '', '', +sub]);
+  });
+  aoa.push(['TOTAL GERAL', '', '', '', +(inv.total_valor || 0)]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const nRows = aoa.length;
+  const money = 'R$ #,##0.00';
+  const qtd   = '#,##0.###';
+  // Formata colunas numéricas: C=Qtd, D=Custo Un., E=Valor. Dados começam após o header.
+  for (let r = 0; r < nRows; r++) {
+    [['C', qtd], ['D', money], ['E', money]].forEach(([col, z]) => {
+      const cell = ws[col + (r + 1)];
+      if (cell && typeof cell.v === 'number') cell.z = z;
+    });
+  }
+  ws['!cols'] = [{ wch: 40 }, { wch: 22 }, { wch: 10 }, { wch: 14 }, { wch: 16 }];
+  const headRow = setoresTxt ? 3 : 2;   // índice 0-based da linha de meta acima do header
+  ws['!merges'] = [];
+  for (let r = 0; r < headRow; r++) ws['!merges'].push({ s: { r, c: 0 }, e: { r, c: 4 } });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+  XLSX.writeFile(wb, `inventario-valorado_${inv.data || ''}.xlsx`);
 }
 
 // ─── GERENCIAR SETORES / GRUPOS POR UNIDADE ──────────────────────
