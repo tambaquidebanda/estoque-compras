@@ -4334,7 +4334,7 @@ function _rowEmerg(idx) {
   return `<div class="d-flex gap-2 align-items-start mb-2" id="emerg-row-${idx}">
     <div class="flex-grow-1">
       <input type="text" class="form-control form-control-sm" id="emerg-busca-${idx}"
-        placeholder="Clique para ver a lista ou digite..." oninput="buscarProdutoEmerg(${idx})"
+        placeholder="Clique para ver a lista ou digite..." oninput="_emergInputDesk(${idx})"
         onfocus="buscarProdutoEmerg(${idx})"
         onblur="setTimeout(()=>{const e=document.getElementById('emerg-sugest-${idx}');if(e)e.innerHTML=''},200)"
         autocomplete="off">
@@ -4373,6 +4373,13 @@ function abrirEmergencia() {
   new bootstrap.Modal(document.getElementById('modal-emergencia')).show();
 }
 
+// Digitar invalida a seleção anterior — o produto SÓ vale se escolhido da lista (senão iria
+// sem produto_id e não baixaria o estoque). onfocus não limpa (só mostra a lista).
+function _emergInputDesk(idx) {
+  const hid = document.getElementById(`emerg-id-${idx}`); if (hid) hid.value = '';
+  buscarProdutoEmerg(idx);
+}
+
 function buscarProdutoEmerg(idx) {
   const qn = norm((document.getElementById(`emerg-busca-${idx}`)?.value || '').trim());
   const el = document.getElementById(`emerg-sugest-${idx}`);
@@ -4405,8 +4412,9 @@ async function enviarEmergencia() {
     const prodId   = (document.getElementById(`emerg-id-${idx}`)?.value   || '').trim();
     const qtd      = parseQtd(document.getElementById(`emerg-qtd-${idx}`)?.value);
     if (!prodNome) continue;
+    if (!prodId) { toast(`Selecione "${prodNome}" na lista de produtos (não digite à mão) para vincular ao cadastro.`, 'warn'); return; }
     if (qtd <= 0) { toast(`Informe a quantidade para "${prodNome}".`, 'warn'); return; }
-    itens.push({ produto_id: prodId || null, nome: prodNome, qtd_pedida: qtd });
+    itens.push({ produto_id: prodId, nome: prodNome, qtd_pedida: qtd });
   }
 
   if (!itens.length) { toast('Adicione ao menos um produto.', 'warn'); return; }
