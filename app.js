@@ -7175,14 +7175,132 @@ async function criarProduto() {
   abrirProduto(data.id);
 }
 
-async function excluirProduto() {
+// Abre o modal de exclusão: primeiro passo = confirmação.
+function excluirProduto() {
   if (!_prodAtual) return;
-  if (!confirm(`Excluir o produto "${_prodAtual.nome}"? Esta ação não pode ser desfeita.`)) return;
-  const { error } = await sb.from('est_produtos').delete().eq('id', _prodAtual.id);
-  if (error) { toast('Não foi possível excluir — pode estar em uso em compras, fichas ou inventários.', 'erro'); return; }
-  toast('Produto excluído.', 'ok');
-  const idx = cProdutosFT.findIndex(p => p.id === _prodAtual.id);
-  if (idx >= 0) cProdutosFT.splice(idx, 1);
+  const body = document.getElementById('excl-prod-body');
+  const foot = document.getElementById('excl-prod-footer');
+  body.innerHTML = `
+    <p class="mb-1">Excluir o produto <strong>${esc(_prodAtual.nome)}</strong>?</p>
+    <p class="text-muted small mb-0">Esta ação não pode ser desfeita.</p>`;
+  foot.innerHTML = `
+    <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+    <button class="btn btn-danger" id="excl-prod-btn-ok" onclick="confirmarExclusaoProduto()">
+      <i class="bi bi-trash3-fill"></i> Excluir
+    </button>`;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-excluir-produto')).show();
+}
+
+// Tenta excluir; se falhar por vínculo (FK), diagnostica ONDE está preso e mostra no modal.
+async function confirmarExclusaoProduto() {
+  if (!_prodAtual) return;
+  const id  = _prodAtual.id;
+  const btn = document.getElementById('excl-prod-btn-ok');
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Excluindo…'; }
+
+  const { error } = await sb.from('est_produtos').delete().eq('id', id);
+  if (!error) {
+    bootstrap.Modal.getInstance(document.getElementById('modal-excluir-produto'))?.hide();
+    toast('Produto excluído.', 'ok');
+    const idx = cProdutosFT.findIndex(p => p.id === id);
+    if (idx >= 0) cProdutosFT.splice(idx, 1);
+    _prodAtual = null;
+    irCadSb('produtos', null);
+    return;
+  }
+  // Bloqueado: descobre os vínculos e mostra a lista.
+  await _mostrarVinculosProduto(id);
+}
+
+// Consulta todas as tabelas que referenciam o produto e monta o detalhamento.
+async function _mostrarVinculosProduto(id) {
+  const nome = _prodAtual?.nome || '';
+  const body = document.getElementById('excl-prod-body');
+  const foot = document.getElementById('excl-prod-footer');
+  body.innerHTML = `<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span> Procurando onde o produto está vinculado…</div>`;
+  foot.innerHTML = '';
+
+  const cnt = (t, col) => sb.from(t).select('id', { count: 'exact', head: true }).eq(col, id);
+
+  // Fichas onde o produto entra como INGREDIENTE → nome das fichas afetadas.
+  const ingReq = sb.from('est_ficha_ingredientes').select('ficha_id').eq('ingrediente_id', id);
+  // Saldo → locais com saldo.
+  const saldoReq = sb.from('est_saldo_local').select('local,saldo').eq('produto_id', id);
+
+  const [fichaOwn, receb, pedInt, invCont, invVal, ing, saldo] = await Promise.all([
+    cnt('est_fichas_tecnicas',        'produto_id'),
+    cnt('cmp_recebimento_itens',      'produto_id'),
+    cnt('pedidos_internos_itens',     'produto_id'),
+    cnt('est_inventario_itens',       'produto_id'),
+    cnt('est_inventario_valorado_itens','produto_id'),
+    ingReq,
+    saldoReq,
+  ]);
+
+  // Resolve os nomes das fichas que usam este produto como ingrediente.
+  let nomesFichas = [];
+  const fichaIds = [...new Set((ing.data || []).map(r => r.ficha_id))];
+  if (fichaIds.length) {
+    const { data: fichas } = await sb.from('est_fichas_tecnicas')
+      .select('produto_id').in('id', fichaIds);
+    nomesFichas = [...new Set((fichas || []).map(f => {
+      const p = cProdutosFT.find(x => x.id === f.produto_id);
+      return p ? p.nome : '(produto sem nome)';
+    }))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }
+
+  const locais = (saldo.data || []);
+  const itens = [];
+  if (fichaOwn.count)  itens.push({ ic: 'bi-journal-text',  txt: `Tem <strong>ficha técnica própria</strong>`, sub: 'Abra a aba "Ficha Técnica" deste produto e exclua a ficha.', rem: true });
+  if (nomesFichas.length) itens.push({ ic: 'bi-egg-fried', txt: `É <strong>ingrediente</strong> em ${nomesFichas.length} ficha(s)`, sub: 'Fichas: ' + nomesFichas.map(esc).join(', ') + '. Remova este item dessas fichas.', rem: true });
+  if (locais.length)   itens.push({ ic: 'bi-box-seam',     txt: `Tem <strong>saldo em estoque</strong> em ${locais.length} local(is)`, sub: locais.map(l => `${esc(l.local)} (${l.saldo})`).join(', '), rem: true });
+  if (receb.count)     itens.push({ ic: 'bi-truck',        txt: `Aparece em <strong>${receb.count} recebimento(s) de compra</strong>`, sub: 'Histórico de compras — não deve ser apagado.', rem: false });
+  if (pedInt.count)    itens.push({ ic: 'bi-clipboard-check', txt: `Aparece em <strong>${pedInt.count} pedido(s) interno(s)</strong>`, sub: 'Histórico de pedidos dos setores — não deve ser apagado.', rem: false });
+  if (invCont.count)   itens.push({ ic: 'bi-list-ol',      txt: `Aparece em <strong>${invCont.count} contagem(ns) de inventário</strong>`, sub: 'Histórico de contagem — não deve ser apagado.', rem: false });
+  if (invVal.count)    itens.push({ ic: 'bi-cash-stack',   txt: `Aparece em <strong>${invVal.count} inventário(s) valorado(s)</strong>`, sub: 'Histórico enviado à contabilidade — não deve ser apagado.', rem: false });
+
+  const temHistorico = receb.count || pedInt.count || invCont.count || invVal.count;
+
+  if (!itens.length) {
+    // Bloqueou mas não achamos o vínculo conhecido (outra tabela/constraint).
+    body.innerHTML = `
+      <div class="alert alert-danger mb-0">
+        <strong>Não foi possível excluir "${esc(nome)}".</strong><br>
+        O produto está referenciado em algum registro, mas não identifiquei onde automaticamente.
+        O mais seguro é <strong>desativá-lo</strong> (desmarcar "Ativo") em vez de excluir.
+      </div>`;
+  } else {
+    body.innerHTML = `
+      <p class="mb-2">Não dá para excluir <strong>${esc(nome)}</strong> porque ele está vinculado a:</p>
+      <ul class="list-group list-group-flush mb-2">
+        ${itens.map(i => `
+          <li class="list-group-item px-0 py-2">
+            <div><i class="bi ${i.ic} ${i.rem ? 'text-warning' : 'text-secondary'} me-1"></i> ${i.txt}</div>
+            <div class="text-muted small ms-4">${i.sub}</div>
+          </li>`).join('')}
+      </ul>
+      ${temHistorico
+        ? `<div class="alert alert-warning small mb-0"><i class="bi bi-info-circle"></i> Como o produto tem <strong>histórico</strong> (compras/pedidos/inventário), o recomendado é <strong>desativá-lo</strong> em vez de excluir — assim ele some das telas de uso, mas o histórico é preservado.</div>`
+        : `<div class="alert alert-info small mb-0"><i class="bi bi-info-circle"></i> Remova os vínculos acima (ficha/saldo) e tente excluir de novo. Ou simplesmente <strong>desative</strong> o produto.</div>`}`;
+  }
+
+  foot.innerHTML = `
+    <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+    ${_prodAtual?.ativo !== false
+      ? `<button class="btn btn-warning" onclick="desativarProdutoModal()"><i class="bi bi-toggle-off"></i> Desativar produto</button>`
+      : ''}`;
+}
+
+// Desativa (ativo=false) direto do modal — resolução segura para produtos com histórico.
+async function desativarProdutoModal() {
+  if (!_prodAtual) return;
+  const id = _prodAtual.id;
+  const { error } = await sb.from('est_produtos').update({ ativo: false }).eq('id', id);
+  if (error) { toast('Não foi possível desativar.', 'erro'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('modal-excluir-produto'))?.hide();
+  toast('Produto desativado.', 'ok');
+  const idx = cProdutosFT.findIndex(p => p.id === id);
+  if (idx >= 0) cProdutosFT.splice(idx, 1);   // some da lista (carrega só ativos)
   _prodAtual = null;
   irCadSb('produtos', null);
 }
