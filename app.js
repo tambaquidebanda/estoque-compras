@@ -8649,6 +8649,69 @@ function exportarCustoProduto() {
   XLSX.writeFile(wb, nomeArq);
 }
 
+// Exporta em Excel os produtos de venda/produção que ainda NÃO têm ficha técnica ativa.
+// Tipos: VENDA (Cardápio), PPB (Bar), PPC (Cozinha), PPP (Produção), SA (Semi-Acabado).
+// Agrupado por tipo → grupo, com contagem por seção, para servir de checklist de
+// preenchimento a partir do sistema antigo.
+async function exportarProdutosSemFicha() {
+  await carregarProdutosFT();
+  if (!cProdutosFT.length) { toast('Aguarde o carregamento dos produtos.', 'erro'); return; }
+
+  const { data: fichas } = await sb.from('est_fichas_tecnicas')
+    .select('produto_id,ativo').eq('ativo', true);
+  const comFicha = new Set((fichas || []).map(f => f.produto_id));
+
+  const ORDEM = ['VENDA', 'PPB', 'PPC', 'PPP', 'SA'];
+  const LABEL = {
+    VENDA: 'Cardápio (VENDA)', PPB: 'PPB - Bar', PPC: 'PPC - Cozinha',
+    PPP: 'PPP - Produção', SA: 'SA - Semi-Acabado',
+  };
+
+  const faltando = cProdutosFT
+    .filter(p => ORDEM.includes(p.tipo) && !comFicha.has(p.id))
+    .sort((a, b) =>
+      (ORDEM.indexOf(a.tipo) - ORDEM.indexOf(b.tipo)) ||
+      (a.categoria || '').localeCompare(b.categoria || '', 'pt-BR') ||
+      a.nome.localeCompare(b.nome, 'pt-BR'));
+
+  if (!faltando.length) { toast('Todos os produtos desses tipos já têm ficha técnica. 🎉', 'ok'); return; }
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  const head = ['Tipo', 'Grupo', 'Produto', 'Un. Uso', 'Preço Venda'];
+  const aoa = [];
+  aoa.push([`Produtos SEM Ficha Técnica — ${faltando.length} item(ns) — ${hoje.split('-').reverse().join('/')}`]);
+  aoa.push([]);
+
+  // Uma "aba lógica" por tipo dentro da mesma planilha, com cabeçalho e subtotais por grupo.
+  ORDEM.forEach(tp => {
+    const doTipo = faltando.filter(p => p.tipo === tp);
+    if (!doTipo.length) return;
+    aoa.push([`${LABEL[tp]} — ${doTipo.length} produto(s) sem ficha`]);
+    aoa.push(head);
+    doTipo.forEach(p => aoa.push([
+      LABEL[tp],
+      p.categoria || '(sem grupo)',
+      p.nome,
+      p.unidade_uso || '',
+      p.preco_venda > 0 ? +p.preco_venda : '',
+    ]));
+    aoa.push([]);   // espaço entre tipos
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // Formata a coluna Preço Venda (E) como moeda quando for número.
+  for (let r = 0; r < aoa.length; r++) {
+    const cell = ws['E' + (r + 1)];
+    if (cell && typeof cell.v === 'number') cell.z = 'R$ #,##0.00';
+  }
+  ws['!cols'] = [{ wch: 18 }, { wch: 24 }, { wch: 40 }, { wch: 10 }, { wch: 14 }];
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sem Ficha');
+  XLSX.writeFile(wb, `produtos-sem-ficha_${hoje}.xlsx`);
+}
+
 // Agrega saldo × custo de TODOS os produtos (todos os grupos) para KPIs e snapshot
 async function _carregarValorTotalEstoque() {
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
