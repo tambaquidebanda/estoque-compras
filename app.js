@@ -2158,6 +2158,18 @@ async function carregarFichas() {
 
 function filtrarFichas() { carregarFichas(); }
 
+// Define a unidade de rendimento no <select>: casa case-insensitive com uma opção
+// existente (evita "porção"/"Porção" duplicados) ou adiciona o valor recebido — assim
+// unidades antigas/atípicas já salvas em fichas continuam aparecendo e não se perdem.
+function _setUnidadeRend(valor) {
+  const sel = document.getElementById('ft-unidade-rend');
+  if (!sel) return;
+  const v = (valor || 'porção').toString().trim() || 'porção';
+  let opt = [...sel.options].find(o => o.value.toLowerCase() === v.toLowerCase());
+  if (!opt) { opt = new Option(v, v); sel.add(opt); }
+  sel.value = opt.value;
+}
+
 async function abrirModalFicha(prodId = '', fichaId = '') {
   await carregarProdutosFT();
   ftIngredientes = [];
@@ -2167,7 +2179,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
   document.getElementById('ft-produto-nome').value   = '';
   document.getElementById('ft-produto-info').textContent = '';
   document.getElementById('ft-rendimento').value     = '1';
-  document.getElementById('ft-unidade-rend').value   = 'porção';
+  _setUnidadeRend('porção');
   document.getElementById('ft-custo-total').textContent = 'R$ 0,00';
   document.getElementById('ft-custo-porcao').textContent = '';
   document.getElementById('ft-ing-nome').value = '';
@@ -2182,6 +2194,10 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
       document.getElementById('ft-produto-nome').value = p.nome;
       document.getElementById('ft-produto-info').textContent =
         `Tipo: ${p.tipo} | Preço venda: ${p.preco_venda > 0 ? brl(p.preco_venda) : '—'}`;
+      // Ficha nova: pré-preenche a unidade de rendimento com a unidade de uso do produto
+      // (a ficha rende o próprio produto). Ao carregar ficha existente, o valor salvo
+      // sobrescreve isso logo abaixo.
+      _setUnidadeRend(p.unidade_uso || 'porção');
     }
   }
 
@@ -2219,7 +2235,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
     const ficha = ftFichasCache.find(f => f.id === fichaId);
     if (ficha) {
       document.getElementById('ft-rendimento').value     = ficha.rendimento;
-      document.getElementById('ft-unidade-rend').value   = ficha.unidade_rendimento;
+      _setUnidadeRend(ficha.unidade_rendimento);
     }
   } else {
     document.getElementById('modal-ficha-titulo').textContent = 'Nova Ficha Técnica';
