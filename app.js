@@ -1153,12 +1153,20 @@ function adicionarItemPedido(e) {
     toast('Selecione a Unidade.', 'erro'); return;
   }
 
+  // Vínculo por código: o produto TEM que estar no cadastro (casa por id, não por nome).
+  // Sem isso o recebimento não consegue lançar no saldo de forma confiável.
+  const prodCad = cProdutosFT.find(p => norm(p.nome.trim()) === norm(prod.trim()));
+  if (!prodCad) {
+    toast(`"${prod}" não está no cadastro. Selecione o produto na lista de sugestões para vincular.`, 'erro');
+    return;
+  }
+
   const catObj     = cCat.find(c => c.nome === cat);
   const planoConta = catObj ? (catObj.plano_conta || '') : '';
 
   _pedidoItens.push({
     data, fornNome, fornId, comp,
-    prod, cat, planoConta, un, custo, qtd,
+    prod, produtoId: prodCad.id, cat, planoConta, un, custo, qtd,
     uso: usoNome, unidadeId: usoId,
     total: custo * qtd,
   });
@@ -1318,6 +1326,7 @@ async function finalizarPedido() {
     fornecedor_id:   it.fornId,
     fornecedor_nome: it.fornNome,
     produto:         it.prod,
+    produto_id:      it.produtoId || null,
     categoria:       it.cat,
     plano_conta:     it.planoConta,
     tipo_produto:    it.uso,
@@ -5036,7 +5045,9 @@ function _planLinhasDados(keys) {
       const catObj = cCat.find(c => c.nome === cat);
       plano = catObj?.plano_conta || '';
     }
-    return { key, comprar, forn, cat, tipo, nome, unidade, valor, plano };
+    // Vínculo por código: resolve o produto no cadastro pelo nome (uma vez, aqui).
+    const prodCad = cProdutosFT.find(p => norm(p.nome.trim()) === norm((nome || '').trim()));
+    return { key, comprar, forn, cat, tipo, nome, unidade, valor, plano, produto_id: prodCad?.id || null };
   }).filter(Boolean);
 }
 
@@ -5058,7 +5069,7 @@ async function confirmarPedidoFornecedor() {
   const registros  = linhasRepor.map(l => ({
     data, pedido_num, data_entrega: dataEntr || null,
     fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
-    fornecedor_nome: l.forn, produto: l.nome,
+    fornecedor_nome: l.forn, produto: l.nome, produto_id: l.produto_id || null,
     categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
     unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
     quantidade: l.comprar, comprador,
@@ -5089,7 +5100,7 @@ async function gerarPedidosPlanejamento() {
     registros.push({
       data, pedido_num: numPorForn[l.forn],
       fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
-      fornecedor_nome: l.forn, produto: l.nome,
+      fornecedor_nome: l.forn, produto: l.nome, produto_id: l.produto_id || null,
       categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
       unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
       quantidade: l.comprar, comprador,
@@ -5365,7 +5376,7 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso')
+    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
@@ -5493,7 +5504,8 @@ async function confirmarRecebimento() {
     const diverg = document.getElementById(`div-rec-${x.id}`)?.checked || false;
     const obs    = document.getElementById(`obs-rec-${x.id}`)?.value || '';
     return {
-      compra_id: x.id, produto: x.produto, categoria: x.categoria || '',
+      compra_id: x.id, produto: x.produto, produto_id: x.produto_id || null,
+      categoria: x.categoria || '',
       unidade: x.unidade_med || '', qtd_pedida: x.quantidade || 0,
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
       total_recebido: totalItem,
@@ -5645,13 +5657,15 @@ async function confirmarRecebimento() {
     }
   }
 
-  // Aumentar saldo ESTOQUE_LOJA para cada item recebido com produto cadastrado
+  // Aumentar saldo ESTOQUE_LOJA para cada item recebido. Casa por produto_id (vínculo
+  // por código); só cai no match por nome como fallback para pedidos antigos sem id.
   if (!cProdutosFT.length) await carregarProdutosFT();
   await Promise.all(itensReceb.map(async it => {
     if (!it.qtd_recebida) return;
-    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()));
-    if (!prod) return;
-    await _movSaldo(prod.id, 'ESTOQUE_LOJA', +it.qtd_recebida);
+    const pid = it.produto_id
+      || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
+    if (!pid) return;
+    await _movSaldo(pid, 'ESTOQUE_LOJA', +it.qtd_recebida);
   }));
 
   // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
@@ -5659,8 +5673,9 @@ async function confirmarRecebimento() {
   const _precoPorProd = new Map();
   itensReceb.forEach(it => {
     if (!it.qtd_recebida || !(it.valor_unitario > 0)) return;
-    const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()));
-    if (prod) _precoPorProd.set(prod.id, +it.valor_unitario);
+    const pid = it.produto_id
+      || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
+    if (pid) _precoPorProd.set(pid, +it.valor_unitario);
   });
   if (_precoPorProd.size) {
     const ids = [..._precoPorProd.keys()];
@@ -6775,7 +6790,7 @@ async function reabrirPedido(pedido_num) {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento')
+    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -6793,6 +6808,7 @@ async function editarPedido(pedido_num) {
       fornId:     it.fornecedor_id,
       comp:       it.comprador,
       prod:       it.produto,
+      produtoId:  it.produto_id || null,
       cat:        it.categoria,
       planoConta: it.plano_conta,
       un:         it.unidade_med,

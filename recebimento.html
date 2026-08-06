@@ -615,7 +615,7 @@ async function irParaLista() {
 async function carregarPedidosPendentes() {
   const { data, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,data,data_entrega,fornecedor_nome,produto,categoria,unidade_med,quantidade,custo_unit,status_receb')
+    .select('id,pedido_num,data,data_entrega,fornecedor_nome,produto,produto_id,categoria,unidade_med,quantidade,custo_unit,status_receb')
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('pedido_num', { ascending: false });
 
@@ -864,7 +864,8 @@ async function confirmarRecebimento() {
     const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
     const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
-      compra_id: it.id, produto: it.produto, categoria: it.categoria || '',
+      compra_id: it.id, produto: it.produto, produto_id: it.produto_id || null,
+      categoria: it.categoria || '',
       unidade: it.unidade_med || '', qtd_pedida: it.quantidade || 0,
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
       total_recebido: totalItem,
@@ -1151,29 +1152,26 @@ async function _recebimentoAtualizaCustos(itensReceb) {
   }
 }
 
-// ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por nome ──
+// ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por produto_id ──
 async function _recebimentoAtualizaSaldo(itensReceb) {
   try {
-    const delta = {};
-    for (const it of itensReceb) {
-      if (!it.qtd_recebida || !it.produto) continue;
-      const k = _normNome(it.produto);
-      delta[k] = (delta[k] || 0) + Number(it.qtd_recebida);
-    }
-    if (!Object.keys(delta).length) return;
-
-    // PAGINADO: est_produtos tem >1000 linhas. Sem paginar, o Supabase corta em 1000
-    // e produtos além da 1ª página ficam de fora do mapa → o item recebido é pulado
-    // em silêncio e "não entra no saldo" (bug real observado nos pedidos 810/811).
-    const prods = await _fetchAllPagedReceb('est_produtos', 'id,nome');
-    if (!prods?.length) return;
+    // Fallback por nome só para itens sem produto_id (pedidos antigos). PAGINADO:
+    // est_produtos tem >1000 linhas; sem paginar o Supabase corta em 1000 e produtos
+    // além da 1ª página ficam de fora (bug real observado nos pedidos 810/811).
+    const precisaNome = itensReceb.some(it => it.qtd_recebida && !it.produto_id);
     const idPorNome = {};
-    prods.forEach(p => { idPorNome[_normNome(p.nome)] = p.id; });
+    if (precisaNome) {
+      const prods = await _fetchAllPagedReceb('est_produtos', 'id,nome');
+      (prods || []).forEach(p => { idPorNome[_normNome(p.nome)] = p.id; });
+    }
 
+    // Casa por produto_id (vínculo por código); nome só como fallback.
     const deltaPorId = {};
-    for (const [nome, q] of Object.entries(delta)) {
-      const pid = idPorNome[nome];
-      if (pid) deltaPorId[pid] = (deltaPorId[pid] || 0) + q;
+    for (const it of itensReceb) {
+      if (!it.qtd_recebida) continue;
+      const pid = it.produto_id || idPorNome[_normNome(it.produto || '')];
+      if (!pid) continue;
+      deltaPorId[pid] = (deltaPorId[pid] || 0) + Number(it.qtd_recebida);
     }
     const ids = Object.keys(deltaPorId);
     if (!ids.length) return;
