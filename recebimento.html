@@ -1162,7 +1162,10 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
     }
     if (!Object.keys(delta).length) return;
 
-    const { data: prods } = await sb.from('est_produtos').select('id,nome');
+    // PAGINADO: est_produtos tem >1000 linhas. Sem paginar, o Supabase corta em 1000
+    // e produtos além da 1ª página ficam de fora do mapa → o item recebido é pulado
+    // em silêncio e "não entra no saldo" (bug real observado nos pedidos 810/811).
+    const prods = await _fetchAllPagedReceb('est_produtos', 'id,nome');
     if (!prods?.length) return;
     const idPorNome = {};
     prods.forEach(p => { idPorNome[_normNome(p.nome)] = p.id; });
