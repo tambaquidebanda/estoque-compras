@@ -4031,8 +4031,13 @@ async function _movSaldo(produto_id, local, delta) {
   const { data: cur } = await sb.from('est_saldo_local')
     .select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
   const novoSaldo = (cur?.saldo ?? 0) + delta;
-  await sb.from('est_saldo_local')
-    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() });
+  // onConflict obrigatório: a PK é 'id' (surrogate) e (produto_id,local) é UNIQUE.
+  // Sem isso o upsert vira INSERT, viola o UNIQUE (23505) e o saldo NÃO era gravado
+  // (recebimento/transferência/pedido interno "não iam" para o saldo).
+  const { error } = await sb.from('est_saldo_local')
+    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() },
+            { onConflict: 'produto_id,local' });
+  if (error) console.error('_movSaldo upsert falhou:', produto_id, local, error.message);
 }
 
 async function abrirReceberPedido(pedidoId) {
@@ -9078,7 +9083,8 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
   if (novoStr === null) return;
   const novoSaldo = parseQtd(novoStr);
   const { error } = await sb.from('est_saldo_local')
-    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() });
+    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() },
+            { onConflict: 'produto_id,local' });
   if (error) { toast('Erro: ' + error.message, 'erro'); return; }
   if (!_saldoMatrix[produto_id]) _saldoMatrix[produto_id] = {};
   _saldoMatrix[produto_id][local] = novoSaldo;
