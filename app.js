@@ -9709,46 +9709,78 @@ function _pintarRelForn() {
   const tfoot = document.getElementById('rf-tfoot');
   const fornSel = document.getElementById('rf-fornecedor').value;
   const busca = norm(document.getElementById('rf-busca').value.trim());
+  const modo = document.getElementById('rf-modo')?.value || 'forn';   // 'forn' | 'ranking'
 
-  const forn = {};
+  // agrega por (fornecedor × produto): qtd, total, menor/maior preço (com dia do menor)
+  const combos = {};
   _relFornRaw.forEach(d => {
     if (d.qtd <= 0) return;
     const f = d.fornecedor || '(sem fornecedor)';
     if (fornSel && f !== fornSel) return;
     if (busca && !norm(d.produto).includes(busca)) return;
-    if (!forn[f]) forn[f] = {};
-    const k = d.produto_id || 'nome:' + norm(d.produto);
-    if (!forn[f][k]) forn[f][k] = { fornecedor: f, produto: d.produto, unidade_uso: d.unidade_uso, categoria: d.categoria, qtd: 0, total: 0, ultData: '', ultUnit: 0, cadastrado: d.cadastrado };
-    const a = forn[f][k];
+    const k = f + '||' + (d.produto_id || 'nome:' + norm(d.produto));
+    if (!combos[k]) combos[k] = { fornecedor: f, produto: d.produto, unidade_uso: d.unidade_uso, categoria: d.categoria, qtd: 0, total: 0, ultData: '', ultUnit: 0, minUnit: Infinity, maxUnit: 0, minData: '', cadastrado: d.cadastrado };
+    const a = combos[k];
     a.qtd += d.qtd; a.total += d.total;
     if (d.data >= a.ultData) { a.ultData = d.data; a.ultUnit = d.unit; }
+    if (d.unit > 0) {
+      if (d.unit < a.minUnit) { a.minUnit = d.unit; a.minData = d.data; }
+      if (d.unit > a.maxUnit) a.maxUnit = d.unit;
+    }
   });
 
-  const nomesForn = Object.keys(forn).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  const flat = [];
-  let html = '', totalGeral = 0;
-  nomesForn.forEach(f => {
-    const prods = Object.values(forn[f]).sort((a, b) => b.total - a.total);
-    const totalForn = prods.reduce((s, p) => s + p.total, 0);
-    totalGeral += totalForn;
-    html += `<tr class="table-active"><td colspan="4"><strong>${esc(f)}</strong> <span class="text-muted small">· ${prods.length} produto(s)</span></td><td class="text-end fw-bold" style="color:#198754">${brl(totalForn)}</td></tr>`;
-    prods.forEach(p => {
-      flat.push(p);
-      const semCad = !p.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Nome divergente do cadastro"></i>' : '';
+  const lista = Object.values(combos);
+  const grand = lista.reduce((s, a) => s + a.total, 0);
+  lista.forEach(a => {
+    if (a.minUnit === Infinity) a.minUnit = 0;
+    a.pctRepr = grand > 0 ? (a.total / grand) * 100 : 0;
+    a.difVal  = a.maxUnit > a.minUnit ? a.maxUnit - a.minUnit : 0;
+    a.difPct  = (a.minUnit > 0 && a.maxUnit > a.minUnit) ? (a.maxUnit / a.minUnit - 1) * 100 : 0;
+  });
+
+  const semCadIco = a => !a.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Nome divergente do cadastro"></i>' : '';
+  const celPreco = a => `<td class="text-end"><span title="Mais barato em ${_dataBR(a.minData)}">${brl(a.minUnit)}</span></td>
+    <td class="text-end">${brl(a.maxUnit)}</td>
+    <td class="text-end">${a.difVal > 0 ? `+${brl(a.difVal)} <span class="text-muted small">(+${a.difPct.toFixed(1)}%)</span>` : '—'}</td>`;
+  const celFim = a => `<td class="text-end small">${a.pctRepr.toFixed(1)}%</td>
+    <td class="text-end fw-semibold">${brl(a.total)}</td>`;
+
+  let html = '';
+  if (modo === 'ranking') {
+    lista.sort((x, y) => y.total - x.total).forEach((a, i) => {
       html += `<tr>
-        <td class="ps-4">${esc(p.produto)}${semCad}</td>
-        <td class="text-center small text-muted">${esc(p.unidade_uso)}</td>
-        <td class="text-end">${_cpFmtQtd(p.qtd)}</td>
-        <td class="text-end">${brl(p.ultUnit)}</td>
-        <td class="text-end fw-semibold">${brl(p.total)}</td>
+        <td class="small text-muted">${esc(a.fornecedor)}</td>
+        <td>${i + 1}. ${esc(a.produto)}${semCadIco(a)}</td>
+        <td class="text-center small text-muted">${esc(a.unidade_uso)}</td>
+        <td class="text-end">${_cpFmtQtd(a.qtd)}</td>
+        ${celPreco(a)}${celFim(a)}
       </tr>`;
     });
-  });
-  _relFornExport = flat;
-  document.getElementById('rf-contador').textContent = `${nomesForn.length} fornecedor(es) · ${flat.length} produto(s)`;
-  tbody.innerHTML = html || '<tr><td colspan="5" class="text-center text-muted py-4">Nenhuma compra recebida no período/filtro.</td></tr>';
-  tfoot.innerHTML = flat.length
-    ? `<tr style="border-top:2px solid"><td colspan="4" class="text-end fw-bold py-2">TOTAL GERAL</td><td class="text-end fw-bold py-2" style="color:#198754">${brl(totalGeral)}</td></tr>`
+  } else {
+    const fornMap = {};
+    lista.forEach(a => (fornMap[a.fornecedor] ||= []).push(a));
+    Object.keys(fornMap).sort((a, b) => a.localeCompare(b, 'pt-BR')).forEach(f => {
+      const prods = fornMap[f].sort((a, b) => b.total - a.total);
+      const totalForn = prods.reduce((s, p) => s + p.total, 0);
+      const pctForn = grand > 0 ? (totalForn / grand) * 100 : 0;
+      html += `<tr class="table-active"><td colspan="7"><strong>${esc(f)}</strong> <span class="text-muted small">· ${prods.length} produto(s)</span></td><td class="text-end small">${pctForn.toFixed(1)}%</td><td class="text-end fw-bold" style="color:#198754">${brl(totalForn)}</td></tr>`;
+      prods.forEach(p => {
+        html += `<tr>
+          <td></td>
+          <td class="ps-3">${esc(p.produto)}${semCadIco(p)}</td>
+          <td class="text-center small text-muted">${esc(p.unidade_uso)}</td>
+          <td class="text-end">${_cpFmtQtd(p.qtd)}</td>
+          ${celPreco(p)}${celFim(p)}
+        </tr>`;
+      });
+    });
+  }
+
+  _relFornExport = lista.slice().sort((a, b) => b.total - a.total);
+  document.getElementById('rf-contador').textContent = `${new Set(lista.map(a => a.fornecedor)).size} fornecedor(es) · ${lista.length} produto(s)`;
+  tbody.innerHTML = html || '<tr><td colspan="9" class="text-center text-muted py-4">Nenhuma compra recebida no período/filtro.</td></tr>';
+  tfoot.innerHTML = lista.length
+    ? `<tr style="border-top:2px solid"><td colspan="7" class="text-end fw-bold py-2">TOTAL GERAL</td><td class="text-end fw-bold py-2">100%</td><td class="text-end fw-bold py-2" style="color:#198754">${brl(grand)}</td></tr>`
     : '';
 }
 
@@ -9759,6 +9791,11 @@ function exportarRelForn() {
   const periodoLabel = (ini && fim)
     ? `${ini.split('-').reverse().join('/')} a ${fim.split('-').reverse().join('/')}` : '';
   const total = _relFornExport.reduce((s, p) => s + p.total, 0);
+  const linhas = _relFornExport.map(a => ({
+    fornecedor: a.fornecedor, produto: a.produto, categoria: a.categoria, unidade_uso: a.unidade_uso,
+    qtd: a.qtd, menor: a.minUnit, dia_menor: _dataBR(a.minData), maior: a.maxUnit,
+    dif: a.difVal, dif_pct: +a.difPct.toFixed(1), pct_repr: +a.pctRepr.toFixed(1), total: a.total,
+  }));
   exportarRelExcel({
     titulo: 'Compra por Fornecedor',
     periodoLabel,
@@ -9767,11 +9804,16 @@ function exportarRelForn() {
       { header: 'Produto',        key: 'produto',     wch: 32 },
       { header: 'Grupo',          key: 'categoria',   wch: 18 },
       { header: 'Unid. Uso',      key: 'unidade_uso', wch: 10 },
-      { header: 'Qtd. Comprada',  key: 'qtd',    tipo: 'qtd',   wch: 14 },
-      { header: 'Último Preço',   key: 'ultUnit', tipo: 'moeda', wch: 14 },
-      { header: 'Total Comprado', key: 'total',  tipo: 'moeda', wch: 16 },
+      { header: 'Qtd. Comprada',  key: 'qtd',      tipo: 'qtd',   wch: 14 },
+      { header: 'Menor Preço',    key: 'menor',    tipo: 'moeda', wch: 13 },
+      { header: 'Dia + Barato',   key: 'dia_menor',               wch: 13 },
+      { header: 'Maior Preço',    key: 'maior',    tipo: 'moeda', wch: 13 },
+      { header: 'Δ Preço (R$)',   key: 'dif',      tipo: 'moeda', wch: 13 },
+      { header: 'Δ Preço (%)',    key: 'dif_pct',  tipo: 'qtd',   wch: 12 },
+      { header: '% Repr.',        key: 'pct_repr', tipo: 'qtd',   wch: 10 },
+      { header: 'Total Comprado', key: 'total',    tipo: 'moeda', wch: 16 },
     ],
-    linhas: _relFornExport,
+    linhas,
     rodape: [{ key: 'total', valor: total }],
     nomeArq: `compra-fornecedor${ini ? '_' + ini : ''}${fim ? '_a_' + fim : ''}.xlsx`,
   });

@@ -2262,6 +2262,13 @@
             <option value="">Todos</option>
           </select>
         </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Visão</label>
+          <select class="form-select form-select-sm" id="rf-modo" onchange="_pintarRelForn()">
+            <option value="forn">Por Fornecedor</option>
+            <option value="ranking">Ranking (maiores)</option>
+          </select>
+        </div>
         <div class="flex-grow-1"></div>
         <input type="search" class="form-control form-control-sm" id="rf-busca" placeholder="Buscar produto..." oninput="_pintarRelForn()" style="width:200px">
         <button class="btn btn-sm btn-outline-success" onclick="exportarRelForn()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
@@ -2272,22 +2279,26 @@
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
+                <th>Fornecedor</th>
                 <th>Produto</th>
-                <th class="text-center">Unid. Uso</th>
-                <th class="text-end">Qtd. Comprada</th>
-                <th class="text-end">Último Preço</th>
-                <th class="text-end">Total Comprado</th>
+                <th class="text-center">Unid.</th>
+                <th class="text-end">Qtd</th>
+                <th class="text-end">Menor Preço</th>
+                <th class="text-end">Maior Preço</th>
+                <th class="text-end">Δ Preço</th>
+                <th class="text-end">% Repr.</th>
+                <th class="text-end">Total</th>
               </tr>
             </thead>
             <tbody id="lst-rel-forn">
-              <tr><td colspan="5" class="text-center text-muted py-4">Selecione o período.</td></tr>
+              <tr><td colspan="9" class="text-center text-muted py-4">Selecione o período.</td></tr>
             </tbody>
             <tfoot id="rf-tfoot"></tfoot>
           </table>
         </div>
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
-            <i class="bi bi-info-circle me-1"></i>Agrupa as <strong>compras recebidas</strong> por fornecedor e produto (vínculo por <strong>código do produto</strong>). Mostra total por fornecedor e total geral. Valores por unidade de uso, conforme o recebimento.
+            <i class="bi bi-info-circle me-1"></i><strong>Compras recebidas</strong> por fornecedor × produto (vínculo por código). <strong>Menor/Maior Preço</strong> do período com <strong>Δ</strong> em R$ e % (passe o mouse no menor preço para ver o dia). <strong>% Repr.</strong> = peso do produto no total. Alterne entre <strong>Por Fornecedor</strong> e <strong>Ranking (maiores)</strong> na Visão.
           </small>
         </div>
       </div>
