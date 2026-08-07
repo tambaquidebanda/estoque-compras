@@ -768,6 +768,72 @@ function _dedupSaldoRows(rows) {
   return [...m.values()];
 }
 
+// ── Livro-razão (F3) — mesmas funções do app.js, replicadas p/ o mobile ──
+async function _movSaldo(produto_id, local, delta) {
+  if (!produto_id || !delta) return;
+  const { data: cur } = await sb.from('est_saldo_local')
+    .select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
+  const novoSaldo = (cur?.saldo ?? 0) + delta;
+  const { error } = await sb.from('est_saldo_local')
+    .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() }, { onConflict: 'produto_id,local' });
+  if (error) console.error('_movSaldo upsert falhou:', produto_id, local, error.message);
+}
+
+async function movimentar(mov) {
+  const m = mov || {};
+  const { produto_id, local, tipo } = m;
+  const quantidade = Number(m.quantidade);
+  if (!produto_id || !local || !tipo || !quantidade) return;
+  await _movSaldo(produto_id, local, quantidade);
+  try {
+    const linha = { produto_id, local, tipo, quantidade };
+    ['custo_unit', 'unidade_id', 'motivo', 'origem', 'ref_tabela', 'ref_id', 'responsavel', 'data']
+      .forEach(k => { if (m[k] !== undefined && m[k] !== null && m[k] !== '') linha[k] = m[k]; });
+    const { error } = await sb.from('est_movimentacoes').insert(linha);
+    if (error) console.error('movimentar: razão falhou (saldo OK):', tipo, produto_id, error.message);
+  } catch (e) { console.error('movimentar: exceção no razão (saldo OK):', e); }
+}
+
+// Contagem: snapshot absoluto (igual hoje) + razão com delta = contado − esperado.
+async function registrarContagem(rows, opts) {
+  const o = opts || {};
+  const dedup = {};
+  (rows || []).forEach(r => { if (r.produto_id && r.local) dedup[r.produto_id + '||' + r.local] = r; });
+  const linhas = Object.values(dedup);
+  if (!linhas.length) return { error: null };
+
+  const anterior = {};
+  const ids = [...new Set(linhas.map(r => r.produto_id))];
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data: cur } = await sb.from('est_saldo_local')
+      .select('produto_id,local,saldo').in('produto_id', ids.slice(i, i + 300));
+    (cur || []).forEach(s => { anterior[s.produto_id + '||' + s.local] = Number(s.saldo) || 0; });
+  }
+
+  const agora = new Date().toISOString();
+  const saldoRows = linhas.map(r => ({ produto_id: r.produto_id, local: r.local, saldo: r.saldo, updated_at: agora }));
+  const { error } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
+  if (!error) {
+    try {
+      const movs = linhas.map(r => {
+        const esp = anterior[r.produto_id + '||' + r.local] || 0;
+        const delta = (Number(r.saldo) || 0) - esp;
+        if (Math.abs(delta) <= 0.0001) return null;
+        const m = { produto_id: r.produto_id, local: r.local, tipo: 'contagem', quantidade: delta, origem: 'contagem', motivo: o.motivo || 'Contagem' };
+        if (o.responsavel) m.responsavel = o.responsavel;
+        if (o.data) m.data = o.data;
+        return m;
+      }).filter(Boolean);
+      if (movs.length) {
+        const { error: eLed } = await sb.from('est_movimentacoes').insert(movs);
+        if (eLed) console.error('registrarContagem: razão falhou (saldo OK):', eLed.message);
+      }
+    } catch (e) { console.error('registrarContagem: exceção no razão (saldo OK):', e); }
+  }
+  return { error };
+}
+
 function getPadrao(nome) {
   const key   = `${_setor}|${_grupo}|${nome.trim().toUpperCase()}`;
   const entry = _padroes[key];
@@ -1084,12 +1150,11 @@ async function salvarSaldoContagem() {
     await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
   }
 
-  // Atualiza saldo absoluto em est_saldo_local
-  const saldoRows = _dedupSaldoRows(itensCont
-    .filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora })));
+  // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
@@ -1243,10 +1308,10 @@ async function salvarSaldoInicialSetorMob() {
     itens.map(it => ({ ...it, inventario_id: inv.id, pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0, total: it.estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 }))
   );
 
-  const saldoRows = _dedupSaldoRows(itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: agora })));
+  const saldoRows = itens.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_setor}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
@@ -1293,11 +1358,11 @@ async function enviarPedido() {
   if (eInv) { toast('Erro: '+eInv.message,'err'); btn.disabled=false; btn.textContent='📤 Enviar Pedido'; return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({...it, inventario_id:inv.id})));
 
-  // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo passa a refletir a contagem do dia
-  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque, updated_at: new Date().toISOString() })));
+  // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_setor}/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
@@ -1543,14 +1608,10 @@ async function confirmarRecebimento() {
   }));
   await sb.from('pedidos_internos').update({status:'recebido',recebido_em:new Date().toISOString()}).eq('id',_pedReceberId);
 
-  // Movimentar saldo
+  // Movimentar saldo (livro-razão): saída do ESTOQUE_LOJA, entrada no setor
   await Promise.all(itens.filter(it => it.produto_id && it.qtd).map(async it => {
-    const { data: cur1 } = await sb.from('est_saldo_local').select('saldo').eq('produto_id',it.produto_id).eq('local','ESTOQUE_LOJA').maybeSingle();
-    await sb.from('est_saldo_local').upsert({produto_id:it.produto_id,local:'ESTOQUE_LOJA',saldo:(cur1?.saldo??0)-it.qtd,updated_at:new Date().toISOString()});
-    if (_pedReceberSetor) {
-      const { data: cur2 } = await sb.from('est_saldo_local').select('saldo').eq('produto_id',it.produto_id).eq('local',_pedReceberSetor).maybeSingle();
-      await sb.from('est_saldo_local').upsert({produto_id:it.produto_id,local:_pedReceberSetor,saldo:(cur2?.saldo??0)+it.qtd,updated_at:new Date().toISOString()});
-    }
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -it.qtd, origem: 'pedido_interno', motivo: `Pedido interno${_pedReceberSetor ? ' → ' + _pedReceberSetor : ''}` });
+    if (_pedReceberSetor) await movimentar({ produto_id: it.produto_id, local: _pedReceberSetor, tipo: 'pedido_interno_entrada', quantidade: +it.qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   fecharModal('modal-receber');

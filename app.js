@@ -3650,11 +3650,11 @@ async function enviarPedidoInterno() {
   if (eInv) { toast('Erro ao salvar contagem: ' + eInv.message, 'erro'); return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
-  // Atualiza o saldo do setor (est_saldo_local) — a tela de Saldo reflete a contagem do dia
-  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: new Date().toISOString() })));
+  // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
@@ -3712,11 +3712,11 @@ async function salvarSaldoContagemDesktop() {
   }]).select().single();
   if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
-  // Atualiza saldo absoluto
-  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque, updated_at: agora })));
+  // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
@@ -3753,11 +3753,11 @@ async function salvarSaldoInicialSetor() {
   }]).select().single();
   if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
-  // Salva saldo absoluto do setor
-  const saldoRows = _dedupSaldoRows(itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque, updated_at: agora })));
+  // Salva saldo absoluto do setor + registra no livro-razão (delta)
+  const saldoRows = itensCont.filter(it => it.produto_id)
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
@@ -4112,6 +4112,52 @@ function _custoUsoProd(p) {
   const rend  = 1 - ((p.perda || 0) / 100);
   const bruto = p.custo_comp || p.custo_uso || 0;
   return rend > 0 ? (bruto / fator) / rend : 0;
+}
+
+// CONTAGEM → livro-razão. Grava o saldo ABSOLUTO no snapshot (comportamento idêntico
+// ao de hoje) E lança no razão o movimento tipo='contagem' com quantidade = contado −
+// esperado (saldo anterior). Isso é a base da acuracidade de inventário (D10).
+// rows = [{ produto_id, local, saldo(absoluto) }]. Razão é best-effort (nunca derruba
+// a contagem). Retorna o { error } do upsert do snapshot.
+async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null, data = null } = {}) {
+  const dedup = {};
+  (rows || []).forEach(r => { if (r.produto_id && r.local) dedup[r.produto_id + '||' + r.local] = r; });
+  const linhas = Object.values(dedup);
+  if (!linhas.length) return { error: null };
+
+  // 1) esperado (saldo anterior) por produto+local — para o delta do razão
+  const anterior = {};
+  const ids = [...new Set(linhas.map(r => r.produto_id))];
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data: cur } = await sb.from('est_saldo_local')
+      .select('produto_id,local,saldo').in('produto_id', ids.slice(i, i + 300));
+    (cur || []).forEach(s => { anterior[s.produto_id + '||' + s.local] = Number(s.saldo) || 0; });
+  }
+
+  // 2) snapshot absoluto (mesmo upsert de sempre)
+  const agora = new Date().toISOString();
+  const saldoRows = linhas.map(r => ({ produto_id: r.produto_id, local: r.local, saldo: r.saldo, updated_at: agora }));
+  const { error } = await sb.from('est_saldo_local').upsert(saldoRows, { onConflict: 'produto_id,local' });
+
+  // 3) razão: delta = contado − esperado (best-effort)
+  if (!error) {
+    try {
+      const movs = linhas.map(r => {
+        const esp = anterior[r.produto_id + '||' + r.local] || 0;
+        const delta = (Number(r.saldo) || 0) - esp;
+        if (Math.abs(delta) <= 0.0001) return null;
+        const m = { produto_id: r.produto_id, local: r.local, tipo: 'contagem', quantidade: delta, origem: 'contagem', motivo };
+        if (responsavel) m.responsavel = responsavel;
+        if (data) m.data = data;
+        return m;
+      }).filter(Boolean);
+      if (movs.length) {
+        const { error: eLed } = await sb.from('est_movimentacoes').insert(movs);
+        if (eLed) console.error('registrarContagem: razão falhou (saldo OK):', eLed.message);
+      }
+    } catch (e) { console.error('registrarContagem: exceção no razão (saldo OK):', e); }
+  }
+  return { error };
 }
 
 async function abrirReceberPedido(pedidoId) {
