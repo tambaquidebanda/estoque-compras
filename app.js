@@ -4168,8 +4168,8 @@ async function confirmarRecebimentoInv() {
   await Promise.all(_pedReceberItens.filter(it => it.produto_id).map(async it => {
     const qtd = parseQtd(document.getElementById(`rec-qtd-${it.id}`)?.value);
     if (!qtd) return;
-    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', -qtd);
-    if (_pedReceberSetor) await _movSaldo(it.produto_id, _pedReceberSetor, +qtd);
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -qtd, origem: 'pedido_interno', motivo: `Pedido interno${_pedReceberSetor ? ' → ' + _pedReceberSetor : ''}` });
+    if (_pedReceberSetor) await movimentar({ produto_id: it.produto_id, local: _pedReceberSetor, tipo: 'pedido_interno_entrada', quantidade: +qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
@@ -4359,7 +4359,7 @@ async function aprovarTransferencia(pedidoId) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
   for (const it of itens || []) {
     const qtd = it.qtd_aprovada ?? it.qtd_pedida;
-    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', -qtd);
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_saida', quantidade: -qtd, origem: 'transferencia', motivo: 'Transferência enviada (Estoque Central)' });
   }
   toast('Transferência aprovada e enviada! 📦', 'ok');
   await _carregarTransfAtender();
@@ -4375,7 +4375,7 @@ async function confirmarRecebimentoTransf(pedidoId) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
   for (const it of itens || []) {
     const qtd = it.qtd_aprovada ?? it.qtd_pedida;
-    await _movSaldo(it.produto_id, 'ESTOQUE_LOJA', +qtd);
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_entrada', quantidade: +qtd, origem: 'transferencia', motivo: 'Transferência recebida' });
   }
   toast('Recebimento confirmado! ✅', 'ok');
   await _carregarTransfSolicitacoes(_invLocal || 'Centro');
@@ -5730,7 +5730,7 @@ async function confirmarRecebimento() {
     const pid = it.produto_id
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) return;
-    await _movSaldo(pid, 'ESTOQUE_LOJA', +it.qtd_recebida);
+    await movimentar({ produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: +it.qtd_recebida, custo_unit: Number(it.valor_unitario) || null, origem: 'recebimento', motivo: `Recebimento ${pedido_num}` });
   }));
 
   // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
