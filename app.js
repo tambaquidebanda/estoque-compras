@@ -10635,6 +10635,15 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
     .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() },
             { onConflict: 'produto_id,local' });
   if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  // Livro-razão: registra o ajuste manual (delta = novo − atual) — best-effort
+  const deltaAj = novoSaldo - (Number(atual) || 0);
+  if (Math.abs(deltaAj) > 0.0001) {
+    try {
+      const { error: eLed } = await sb.from('est_movimentacoes')
+        .insert({ produto_id, local, tipo: 'ajuste', quantidade: deltaAj, origem: 'ajuste_manual', motivo: 'Ajuste manual de saldo' });
+      if (eLed) console.error('ajuste manual: razão falhou (saldo OK):', eLed.message);
+    } catch (e) { console.error('ajuste manual: exceção no razão (saldo OK):', e); }
+  }
   if (!_saldoMatrix[produto_id]) _saldoMatrix[produto_id] = {};
   _saldoMatrix[produto_id][local] = novoSaldo;
   const item = _saldoList.find(p => p.produto_id === produto_id);
