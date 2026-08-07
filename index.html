@@ -140,6 +140,9 @@
         <a href="#" onclick="ir('custo-produto',this)">
           <i class="bi bi-tag-fill"></i> Custo Produto
         </a>
+        <a href="#" onclick="ir('rel-fornecedor',this)">
+          <i class="bi bi-truck"></i> Compra por Fornecedor
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2208,6 +2211,65 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Custo e quantidade <strong>por unidade de uso</strong>, conforme digitado no <strong>recebimento</strong> (ex: água por UN, chopp por litro). Último preço = compra mais recente; média = ponderada do período. Lista só produtos com compras recebidas no período.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ RELATÓRIO: COMPRA POR FORNECEDOR × PRODUTO (D1) ═══════════ -->
+    <section id="pg-rel-fornecedor" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-truck"></i> Compra por Fornecedor</h1>
+        <span class="text-muted small" id="rf-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="rf-ini" onchange="renderRelForn()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="rf-fim" onchange="renderRelForn()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="rfPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="rfPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="rfPeriodo(12)">12 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Fornecedor</label>
+          <select class="form-select form-select-sm" id="rf-fornecedor" onchange="_pintarRelForn()" style="min-width:200px">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="rf-busca" placeholder="Buscar produto..." oninput="_pintarRelForn()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarRelForn()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th class="text-center">Unid. Uso</th>
+                <th class="text-end">Qtd. Comprada</th>
+                <th class="text-end">Último Preço</th>
+                <th class="text-end">Total Comprado</th>
+              </tr>
+            </thead>
+            <tbody id="lst-rel-forn">
+              <tr><td colspan="5" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+            <tfoot id="rf-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Agrupa as <strong>compras recebidas</strong> por fornecedor e produto (vínculo por <strong>código do produto</strong>). Mostra total por fornecedor e total geral. Valores por unidade de uso, conforme o recebimento.
           </small>
         </div>
       </div>

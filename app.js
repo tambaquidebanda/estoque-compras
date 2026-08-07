@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -234,6 +234,7 @@ function ir(nome, el) {
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
   if (nome === 'custo-produto') carregarCustoProduto();
+  if (nome === 'rel-fornecedor') carregarRelForn();
 }
 
 function irCad(tab, el) {
@@ -8615,6 +8616,250 @@ async function _carregarMediaCusto() {
   cProdutosFT.forEach(p => {
     const a = agg[norm((p.nome || '').trim())];
     if (a && a.q > 0) _saldoCustoMedia[p.id] = a.v / a.q;
+  });
+}
+
+// ═══════════════ RELATÓRIOS — FUNDAÇÃO (F1) ═══════════════
+// Camada reutilizável dos relatórios: fetchers canônicos que casam por produto_id
+// (fallback nome) + exportador Excel genérico. Servem Custo Produto, Fornecedor×Produto,
+// Divergências, Curva ABC, etc. Um lugar só para buscar/normalizar dados de compra.
+
+// Índice do cadastro por produto_id (nome/categoria/unidade de uso oficiais).
+function _relCadIndex() {
+  const idx = {};
+  cProdutosFT.forEach(p => { idx[p.id] = p; });
+  return idx;
+}
+
+// Fetcher RECEBIDO — junta cmp_recebimentos (cabeçalho: fornecedor, data) com
+// cmp_recebimento_itens (linhas: produto_id, qtd, total). Uma linha por item recebido.
+// Filtros: {ini, fim, fornecedor?}. Casa o produto pelo produto_id (fallback: nome).
+async function fetchRecebido({ ini, fim, fornecedor = '' } = {}) {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const recs = await _fetchAllPaged('cmp_recebimentos',
+    'id,pedido_num,data_receb,fornecedor',
+    q => {
+      let x = q;
+      if (ini)        x = x.gte('data_receb', ini);
+      if (fim)        x = x.lte('data_receb', fim);
+      if (fornecedor) x = x.eq('fornecedor', fornecedor);
+      return x;
+    });
+  if (!recs.length) return [];
+  const hdr = {};
+  recs.forEach(r => { hdr[r.id] = r; });
+  const ids = recs.map(r => r.id);
+  let itens = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const lote = ids.slice(i, i + 300);
+    const data = await _fetchAllPaged('cmp_recebimento_itens',
+      'produto,produto_id,qtd_recebida,total_recebido,valor_unitario,recebimento_id,categoria',
+      q => q.in('recebimento_id', lote));
+    itens = itens.concat(data);
+  }
+  const cad = _relCadIndex();
+  return itens.map(it => {
+    const h = hdr[it.recebimento_id] || {};
+    const p = it.produto_id ? cad[it.produto_id]
+            : cProdutosFT.find(x => norm((x.nome || '').trim()) === norm((it.produto || '').trim()));
+    const q     = Number(it.qtd_recebida) || 0;
+    const total = Number(it.total_recebido) || 0;
+    const unit  = Number(it.valor_unitario) || (q > 0 ? total / q : 0);
+    return {
+      produto_id:  it.produto_id || p?.id || null,
+      produto:     p?.nome || it.produto || '',
+      fornecedor:  h.fornecedor || '',
+      data:        h.data_receb || '',
+      pedido_num:  h.pedido_num || '',
+      categoria:   p?.categoria || it.categoria || '—',
+      unidade_uso: p?.unidade_uso || 'UN',
+      qtd:         q,
+      unit,
+      total,
+      cadastrado:  !!p,
+    };
+  });
+}
+
+// Fetcher PEDIDOS — cmp_compras (uma linha por item pedido). Mesmos filtros.
+async function fetchPedidos({ ini, fim, fornecedor = '' } = {}) {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const rows = await _fetchAllPaged('cmp_compras',
+    'id,pedido_num,data,fornecedor_nome,produto,produto_id,categoria,unidade_med,unidade_uso,quantidade,custo_unit,status_receb',
+    q => {
+      let x = q;
+      if (ini)        x = x.gte('data', ini);
+      if (fim)        x = x.lte('data', fim);
+      if (fornecedor) x = x.eq('fornecedor_nome', fornecedor);
+      return x;
+    });
+  const cad = _relCadIndex();
+  return rows.map(c => {
+    const p = c.produto_id ? cad[c.produto_id]
+            : cProdutosFT.find(x => norm((x.nome || '').trim()) === norm((c.produto || '').trim()));
+    const q    = Number(c.quantidade) || 0;
+    const unit = Number(c.custo_unit) || 0;
+    return {
+      produto_id:   c.produto_id || p?.id || null,
+      produto:      p?.nome || c.produto || '',
+      fornecedor:   c.fornecedor_nome || '',
+      data:         c.data || '',
+      pedido_num:   c.pedido_num || '',
+      categoria:    p?.categoria || c.categoria || '—',
+      unidade_uso:  p?.unidade_uso || c.unidade_uso || c.unidade_med || 'UN',
+      qtd:          q,
+      unit,
+      total:        q * unit,
+      status_receb: c.status_receb || '',
+      cadastrado:   !!p,
+    };
+  });
+}
+
+// Exportador Excel genérico. colunas = [{header, key, tipo:'texto'|'moeda'|'qtd'|'int', wch}].
+// rodape (opcional) = [{key, valor}] p/ linha TOTAL. Reusa o padrão de exportarCustoProduto.
+function exportarRelExcel({ titulo, periodoLabel, colunas, linhas, rodape = null, nomeArq }) {
+  if (!linhas || !linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  const zByTipo = { moeda: 'R$ #,##0.00', qtd: '#,##0.###', int: '#,##0' };
+  const aoa = [];
+  aoa.push([titulo + (periodoLabel ? ` — ${periodoLabel}` : '')]);
+  aoa.push([]);
+  aoa.push(colunas.map(c => c.header));
+  linhas.forEach(l => aoa.push(colunas.map(c =>
+    (c.tipo && c.tipo !== 'texto') ? +(l[c.key] || 0) : (l[c.key] ?? ''))));
+  if (rodape) {
+    aoa.push(colunas.map((c, i) => {
+      const r = rodape.find(x => x.key === c.key);
+      if (r) return (c.tipo && c.tipo !== 'texto') ? +(r.valor || 0) : r.valor;
+      return i === 0 ? 'TOTAL' : '';
+    }));
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  for (let r = 3; r < aoa.length; r++) {
+    colunas.forEach((c, i) => {
+      if (!c.tipo || c.tipo === 'texto') return;
+      const cell = ws[XLSX.utils.encode_col(i) + (r + 1)];
+      if (cell && typeof cell.v === 'number') cell.z = zByTipo[c.tipo] || zByTipo.moeda;
+    });
+  }
+  ws['!cols'] = colunas.map(c => ({ wch: c.wch || 16 }));
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: colunas.length - 1 } }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, titulo.slice(0, 28));
+  XLSX.writeFile(wb, nomeArq || (titulo.toLowerCase().replace(/\s+/g, '-') + '.xlsx'));
+}
+
+// ═══════════════ RELATÓRIO: COMPRA POR FORNECEDOR × PRODUTO (D1) ═══════════════
+// Compras recebidas no período, agrupadas por Fornecedor → Produto (vínculo por código).
+// Total por fornecedor e geral. Filtros: período + fornecedor + busca de produto.
+let _relFornRaw = [];      // saída bruta do fetchRecebido (refetch só ao mudar período)
+let _relFornExport = [];   // linhas achatadas (fornecedor+produto) já filtradas p/ export
+
+function rfPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('rf-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('rf-fim').value = fim.toISOString().slice(0, 10);
+  renderRelForn();
+}
+
+async function carregarRelForn() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('rf-ini').value) rfPeriodo(3);   // default: últimos 3 meses
+  else await renderRelForn();
+}
+
+async function renderRelForn() {
+  const tbody = document.getElementById('lst-rel-forn');
+  const ini = document.getElementById('rf-ini').value;
+  const fim = document.getElementById('rf-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  _relFornRaw = await fetchRecebido({ ini, fim });
+  _preencherFornecedoresRF(_relFornRaw);
+  _pintarRelForn();
+}
+
+function _preencherFornecedoresRF(dados) {
+  const sel = document.getElementById('rf-fornecedor');
+  const atual = sel.value;
+  const fs = [...new Set(dados.map(d => d.fornecedor || '(sem fornecedor)'))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  sel.innerHTML = '<option value="">Todos</option>' + fs.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+  if (fs.includes(atual)) sel.value = atual;
+}
+
+// Re-agrega/pinta a partir do bruto (sem refetch) — usado pelos filtros fornecedor/busca.
+function _pintarRelForn() {
+  const tbody = document.getElementById('lst-rel-forn');
+  const tfoot = document.getElementById('rf-tfoot');
+  const fornSel = document.getElementById('rf-fornecedor').value;
+  const busca = norm(document.getElementById('rf-busca').value.trim());
+
+  const forn = {};
+  _relFornRaw.forEach(d => {
+    if (d.qtd <= 0) return;
+    const f = d.fornecedor || '(sem fornecedor)';
+    if (fornSel && f !== fornSel) return;
+    if (busca && !norm(d.produto).includes(busca)) return;
+    if (!forn[f]) forn[f] = {};
+    const k = d.produto_id || 'nome:' + norm(d.produto);
+    if (!forn[f][k]) forn[f][k] = { fornecedor: f, produto: d.produto, unidade_uso: d.unidade_uso, categoria: d.categoria, qtd: 0, total: 0, ultData: '', ultUnit: 0, cadastrado: d.cadastrado };
+    const a = forn[f][k];
+    a.qtd += d.qtd; a.total += d.total;
+    if (d.data >= a.ultData) { a.ultData = d.data; a.ultUnit = d.unit; }
+  });
+
+  const nomesForn = Object.keys(forn).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const flat = [];
+  let html = '', totalGeral = 0;
+  nomesForn.forEach(f => {
+    const prods = Object.values(forn[f]).sort((a, b) => b.total - a.total);
+    const totalForn = prods.reduce((s, p) => s + p.total, 0);
+    totalGeral += totalForn;
+    html += `<tr class="table-active"><td colspan="4"><strong>${esc(f)}</strong> <span class="text-muted small">· ${prods.length} produto(s)</span></td><td class="text-end fw-bold" style="color:#198754">${brl(totalForn)}</td></tr>`;
+    prods.forEach(p => {
+      flat.push(p);
+      const semCad = !p.cadastrado ? ' <i class="bi bi-exclamation-circle text-warning" title="Nome divergente do cadastro"></i>' : '';
+      html += `<tr>
+        <td class="ps-4">${esc(p.produto)}${semCad}</td>
+        <td class="text-center small text-muted">${esc(p.unidade_uso)}</td>
+        <td class="text-end">${_cpFmtQtd(p.qtd)}</td>
+        <td class="text-end">${brl(p.ultUnit)}</td>
+        <td class="text-end fw-semibold">${brl(p.total)}</td>
+      </tr>`;
+    });
+  });
+  _relFornExport = flat;
+  document.getElementById('rf-contador').textContent = `${nomesForn.length} fornecedor(es) · ${flat.length} produto(s)`;
+  tbody.innerHTML = html || '<tr><td colspan="5" class="text-center text-muted py-4">Nenhuma compra recebida no período/filtro.</td></tr>';
+  tfoot.innerHTML = flat.length
+    ? `<tr style="border-top:2px solid"><td colspan="4" class="text-end fw-bold py-2">TOTAL GERAL</td><td class="text-end fw-bold py-2" style="color:#198754">${brl(totalGeral)}</td></tr>`
+    : '';
+}
+
+function exportarRelForn() {
+  if (!_relFornExport.length) { toast('Nada para exportar.', 'erro'); return; }
+  const ini = document.getElementById('rf-ini').value;
+  const fim = document.getElementById('rf-fim').value;
+  const periodoLabel = (ini && fim)
+    ? `${ini.split('-').reverse().join('/')} a ${fim.split('-').reverse().join('/')}` : '';
+  const total = _relFornExport.reduce((s, p) => s + p.total, 0);
+  exportarRelExcel({
+    titulo: 'Compra por Fornecedor',
+    periodoLabel,
+    colunas: [
+      { header: 'Fornecedor',     key: 'fornecedor',  wch: 28 },
+      { header: 'Produto',        key: 'produto',     wch: 32 },
+      { header: 'Grupo',          key: 'categoria',   wch: 18 },
+      { header: 'Unid. Uso',      key: 'unidade_uso', wch: 10 },
+      { header: 'Qtd. Comprada',  key: 'qtd',    tipo: 'qtd',   wch: 14 },
+      { header: 'Último Preço',   key: 'ultUnit', tipo: 'moeda', wch: 14 },
+      { header: 'Total Comprado', key: 'total',  tipo: 'moeda', wch: 16 },
+    ],
+    linhas: _relFornExport,
+    rodape: [{ key: 'total', valor: total }],
+    nomeArq: `compra-fornecedor${ini ? '_' + ini : ''}${fim ? '_a_' + fim : ''}.xlsx`,
   });
 }
 
