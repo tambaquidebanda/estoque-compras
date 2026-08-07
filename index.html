@@ -2458,23 +2458,21 @@
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>Produto / Fornecedor</th>
-                <th class="text-end">Último Preço</th>
-                <th class="text-end">Preço Médio</th>
-                <th class="text-end">Qtd</th>
-                <th class="text-end">Nº Compras</th>
-                <th class="text-end">Última Compra</th>
-                <th class="text-end">vs Melhor</th>
+                <th>Produto</th>
+                <th class="text-end">Menor Preço</th>
+                <th class="text-end">Maior Preço</th>
+                <th class="text-end">Δ Economia</th>
+                <th class="text-center">Nº Forn.</th>
               </tr>
             </thead>
             <tbody id="lst-cpf">
-              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
+              <tr><td colspan="5" class="text-center text-muted py-4">Selecione o período.</td></tr>
             </tbody>
           </table>
         </div>
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
-            <i class="bi bi-info-circle me-1"></i>Agrupa por produto e mostra cada fornecedor pelo <strong>último preço pago</strong> (compra mais recente) e o preço médio. O mais barato leva <span style="color:#16a34a">✔ melhor</span>; os outros mostram <span style="color:#dc3545">+%</span> acima. Base: compras recebidas, por unidade de uso.
+            <i class="bi bi-info-circle me-1"></i>Uma linha por produto: <strong>Menor</strong> e <strong>Maior</strong> preço (último pago por fornecedor) e <strong>Δ Economia</strong> = quanto dá pra economizar comprando sempre no mais barato. <strong>Clique na linha</strong> para ver todos os fornecedores. Ordenado pela maior economia. <span style="color:#16a34a">✔</span> = melhor preço.
           </small>
         </div>
       </div>

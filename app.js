@@ -9525,7 +9525,7 @@ async function renderCompPreco() {
   const ini = document.getElementById('cpf-ini').value;
   const fim = document.getElementById('cpf-fim').value;
   if (!ini || !fim) return;
-  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
   _cpRaw = await fetchRecebido({ ini, fim });
   _pintarCompPreco();
 }
@@ -9552,41 +9552,57 @@ function _pintarCompPreco() {
   let grupos = Object.values(prod).map(P => {
     const fs = Object.values(P.forn).map(F => ({ ...F, medio: F.qtd > 0 ? F.total / F.qtd : 0 }));
     fs.sort((a, b) => (a.ultUnit || Infinity) - (b.ultUnit || Infinity));   // mais barato primeiro
-    return { produto: P.produto, unidade_uso: P.unidade_uso, fornecedores: fs };
+    const comPreco = fs.filter(f => f.ultUnit > 0);
+    const menor = comPreco.length ? comPreco[0].ultUnit : 0;
+    const maior = comPreco.length ? comPreco[comPreco.length - 1].ultUnit : 0;
+    return {
+      produto: P.produto, unidade_uso: P.unidade_uso, fornecedores: fs, nForn: fs.length,
+      menor, maior, melhorForn: comPreco[0]?.fornecedor || '', piorForn: comPreco[comPreco.length - 1]?.fornecedor || '',
+      difPct: (menor > 0 && maior > menor) ? (maior / menor - 1) * 100 : 0,
+    };
   });
   if (soMulti) grupos = grupos.filter(g => g.fornecedores.length > 1);
   if (busca)   grupos = grupos.filter(g => norm(g.produto).includes(busca));
-  grupos.sort((a, b) => a.produto.localeCompare(b.produto, 'pt-BR'));
+  grupos.sort((a, b) => (b.difPct - a.difPct) || a.produto.localeCompare(b.produto, 'pt-BR'));   // maior oportunidade primeiro
 
   const cont = document.getElementById('cpf-contador');
   if (cont) cont.textContent = grupos.length ? `${grupos.length} produto(s)` : '';
 
   const rows = [];
   _cpExport = [];
-  grupos.forEach(g => {
-    const melhor = g.fornecedores.find(f => f.ultUnit > 0)?.ultUnit || 0;
-    rows.push(`<tr class="table-light"><td colspan="7" class="fw-bold">${esc(g.produto)} <span class="text-muted small fw-normal">· ${esc(g.unidade_uso || '')}</span></td></tr>`);
-    g.fornecedores.forEach(f => {
+  grupos.forEach((g, i) => {
+    const melhor = g.menor;
+    // linha-resumo (clicável)
+    rows.push(`<tr style="cursor:pointer" onclick="_cpfToggle(${i})">
+      <td><i class="bi bi-caret-right-fill text-muted" id="cpf-car-${i}" style="font-size:.7rem"></i> ${esc(g.produto)} <span class="text-muted small">${esc(g.unidade_uso || '')} · ${g.nForn} forn.</span></td>
+      <td class="text-end"><strong style="color:#16a34a">${brl(g.menor)}</strong><div class="small text-success">${esc(g.melhorForn)}</div></td>
+      <td class="text-end">${brl(g.maior)}<div class="small text-muted">${esc(g.piorForn)}</div></td>
+      <td class="text-end">${g.difPct > 0 ? `<span style="color:#dc3545;font-weight:600">+${g.difPct.toFixed(1)}%</span>` : '—'}</td>
+      <td class="text-center text-muted">${g.nForn}</td>
+    </tr>`);
+    // detalhe (oculto) — lista de fornecedores
+    const det = g.fornecedores.map(f => {
       const ehMelhor = melhor > 0 && f.ultUnit === melhor;
       const diff = (melhor > 0 && f.ultUnit > 0) ? ((f.ultUnit / melhor - 1) * 100) : 0;
-      rows.push(`<tr>
-        <td class="ps-4">${esc(f.fornecedor)} ${ehMelhor ? '<span class="badge" style="color:#16a34a;background:#f0fdf4;border:1px solid #16a34a55">✔ melhor</span>' : ''}</td>
-        <td class="text-end fw-bold">${brl(f.ultUnit)}</td>
-        <td class="text-end">${brl(f.medio)}</td>
-        <td class="text-end">${f.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
-        <td class="text-end">${f.count}</td>
-        <td class="text-end small">${_dataBR(f.ultData)}</td>
-        <td class="text-end">${ehMelhor ? '—' : (diff > 0 ? `<span style="color:#dc3545">+${diff.toFixed(1)}%</span>` : '')}</td>
-      </tr>`);
-      _cpExport.push({
-        produto: g.produto, fornecedor: f.fornecedor, ultimo: f.ultUnit, medio: f.medio,
-        qtd: f.qtd, compras: f.count, ultdata: _dataBR(f.ultData),
-        vs: ehMelhor ? 0 : +diff.toFixed(1),
-      });
-    });
+      _cpExport.push({ produto: g.produto, fornecedor: f.fornecedor, ultimo: f.ultUnit, medio: f.medio, qtd: f.qtd, compras: f.count, ultdata: _dataBR(f.ultData), vs: ehMelhor ? 0 : +diff.toFixed(1) });
+      return `<div class="d-flex justify-content-between align-items-center py-1" style="max-width:680px">
+        <span>${ehMelhor ? '<i class="bi bi-check-circle-fill text-success me-1"></i>' : '<span class="me-1" style="display:inline-block;width:1.1em"></span>'}${esc(f.fornecedor)}</span>
+        <span class="text-end"><strong>${brl(f.ultUnit)}</strong> <span class="text-muted small">méd ${brl(f.medio)} · ${f.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} · ${f.count}x · ${_dataBR(f.ultData)}</span>${ehMelhor ? '' : ` <span style="color:#dc3545">+${diff.toFixed(1)}%</span>`}</span>
+      </div>`;
+    }).join('');
+    rows.push(`<tr id="cpf-det-${i}" style="display:none"><td colspan="5" class="bg-light px-4 py-2">${det}</td></tr>`);
   });
   tbody.innerHTML = rows.length ? rows.join('')
-    : '<tr><td colspan="7" class="text-center text-muted py-4">Sem compras no período' + (soMulti ? ' com mais de um fornecedor' : '') + '.</td></tr>';
+    : '<tr><td colspan="5" class="text-center text-muted py-4">Sem compras no período' + (soMulti ? ' com mais de um fornecedor' : '') + '.</td></tr>';
+}
+
+function _cpfToggle(i) {
+  const det = document.getElementById('cpf-det-' + i);
+  const car = document.getElementById('cpf-car-' + i);
+  if (!det) return;
+  const abrir = det.style.display === 'none';
+  det.style.display = abrir ? '' : 'none';
+  if (car) car.className = 'bi text-muted ' + (abrir ? 'bi-caret-down-fill' : 'bi-caret-right-fill');
 }
 
 function exportarCompPreco() {
