@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -238,6 +238,7 @@ function ir(nome, el) {
   if (nome === 'custo-produto') carregarCustoProduto();
   if (nome === 'rel-fornecedor') carregarRelForn();
   if (nome === 'rel-divergencia') carregarRelDiv();
+  if (nome === 'curva-abc')       carregarCurvaABC();
 }
 
 function irCad(tab, el) {
@@ -9287,6 +9288,138 @@ function exportarDevolucoes() {
     linhas,
     rodape: [{ key: 'valor', valor: linhas.reduce((s, l) => s + l.valor, 0) }],
     nomeArq: 'devolucoes.xlsx',
+  });
+}
+
+// ═══════════════════════════ D6 — CURVA ABC ═══════════════════════════
+// Classifica produtos pelo peso no gasto (compras recebidas) no período.
+// A = itens que somam até 80% do valor, B = até 95%, C = o resto (a "cauda").
+// Reusa fetchRecebido (F1) — relatório puro, não toca em estoque.
+let _caRaw = [];       // saída bruta do fetchRecebido (refetch só ao mudar período)
+let _caExport = [];    // itens já agregados+classificados (p/ export)
+const _CA_LIM_A = 80, _CA_LIM_B = 95;
+
+function caPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('ca-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('ca-fim').value = fim.toISOString().slice(0, 10);
+  renderCurvaABC();
+}
+
+async function carregarCurvaABC() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('ca-ini').value) caPeriodo(3);   // default: 3 meses
+  else await renderCurvaABC();
+}
+
+async function renderCurvaABC() {
+  const tbody = document.getElementById('lst-ca');
+  const ini = document.getElementById('ca-ini').value;
+  const fim = document.getElementById('ca-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  _caRaw = await fetchRecebido({ ini, fim });
+  _pintarCurvaABC();
+}
+
+function _caBadge(c) {
+  const cor = { A: ['#dc3545', '#fde8e8'], B: ['#fd7e14', '#fff3e6'], C: ['#6c757d', '#f1f3f5'] }[c] || ['#333', '#eee'];
+  return `<span class="badge" style="color:${cor[0]};background:${cor[1]};border:1px solid ${cor[0]}55">${c}</span>`;
+}
+
+function _pintarCurvaABC() {
+  const tbody = document.getElementById('lst-ca');
+  if (!tbody) return;
+  // agrega por produto (código; fallback nome)
+  const agg = {};
+  _caRaw.forEach(r => {
+    const k = r.produto_id || 'nome:' + norm(r.produto);
+    (agg[k] ||= { produto: r.produto, unidade_uso: r.unidade_uso, qtd: 0, total: 0 });
+    agg[k].qtd   += Number(r.qtd) || 0;
+    agg[k].total += Number(r.total) || 0;
+  });
+  let itens = Object.values(agg).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
+  const grand = itens.reduce((s, x) => s + x.total, 0);
+  // classifica pelo acumulado ANTES do item (garante que o 1º sempre é A)
+  let acc = 0;
+  itens.forEach((x, i) => {
+    x.pct  = grand > 0 ? (x.total / grand) * 100 : 0;
+    const before = acc;
+    acc += x.pct;
+    x.acum   = acc;
+    x.classe = before < _CA_LIM_A ? 'A' : (before < _CA_LIM_B ? 'B' : 'C');
+    x.rank   = i + 1;
+  });
+  _caExport = itens;
+  _renderCurvaKpis(itens, grand);
+
+  const cont = document.getElementById('ca-contador');
+  if (cont) cont.textContent = itens.length ? `${itens.length} produtos · ${brl(grand)}` : '';
+
+  const busca   = norm(document.getElementById('ca-busca')?.value || '').trim();
+  const fClasse = document.getElementById('ca-classe')?.value || '';
+  let show = itens;
+  if (fClasse) show = show.filter(x => x.classe === fClasse);
+  if (busca)   show = show.filter(x => norm(x.produto).includes(busca));
+
+  if (!show.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Sem compras no período.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = show.map(x => `<tr>
+    <td class="text-muted">${x.rank}</td>
+    <td>${esc(x.produto)}</td>
+    <td class="text-center">${esc(x.unidade_uso || '')}</td>
+    <td class="text-end">${x.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
+    <td class="text-end">${brl(x.total)}</td>
+    <td class="text-end">${x.pct.toFixed(1)}%</td>
+    <td class="text-end">${x.acum.toFixed(1)}%</td>
+    <td class="text-center">${_caBadge(x.classe)}</td>
+  </tr>`).join('');
+}
+
+function _renderCurvaKpis(itens, grand) {
+  const el = document.getElementById('ca-kpis');
+  if (!el) return;
+  const stat = c => { const g = itens.filter(x => x.classe === c); return { n: g.length, v: g.reduce((s, x) => s + x.total, 0) }; };
+  const card = (cl, cor, bg, s) => `<div class="col">
+    <div style="border:1px solid ${cor}55;border-left:4px solid ${cor};border-radius:.5rem;padding:.6rem .8rem;background:${bg};height:100%">
+      <div style="font-weight:700;color:${cor}">Classe ${cl}</div>
+      <div class="small text-muted">${s.n} produtos · ${grand > 0 ? ((s.v / grand) * 100).toFixed(0) : 0}% do gasto</div>
+      <div style="font-weight:700;font-size:1.05rem">${brl(s.v)}</div>
+    </div></div>`;
+  el.innerHTML = card('A', '#dc3545', '#fde8e8', stat('A'))
+              + card('B', '#fd7e14', '#fff3e6', stat('B'))
+              + card('C', '#6c757d', '#f1f3f5', stat('C'));
+}
+
+function exportarCurvaABC() {
+  const busca   = norm(document.getElementById('ca-busca')?.value || '').trim();
+  const fClasse = document.getElementById('ca-classe')?.value || '';
+  let show = (_caExport || []).slice();
+  if (fClasse) show = show.filter(x => x.classe === fClasse);
+  if (busca)   show = show.filter(x => norm(x.produto).includes(busca));
+  const linhas = show.map(x => ({
+    rank: x.rank, produto: x.produto, unidade: x.unidade_uso || '', qtd: x.qtd,
+    total: x.total, pct: +x.pct.toFixed(2), acum: +x.acum.toFixed(2), classe: x.classe,
+  }));
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Curva ABC de Compras',
+    periodoLabel: `${document.getElementById('ca-ini')?.value || ''} a ${document.getElementById('ca-fim')?.value || ''}`,
+    colunas: [
+      { header: '#', key: 'rank', tipo: 'int', wch: 6 },
+      { header: 'Produto', key: 'produto', tipo: 'texto', wch: 40 },
+      { header: 'Unid. Uso', key: 'unidade', tipo: 'texto', wch: 10 },
+      { header: 'Qtd', key: 'qtd', tipo: 'qtd', wch: 12 },
+      { header: 'Total Comprado', key: 'total', tipo: 'moeda', wch: 16 },
+      { header: '% do Total', key: 'pct', tipo: 'qtd', wch: 10 },
+      { header: '% Acumulado', key: 'acum', tipo: 'qtd', wch: 12 },
+      { header: 'Classe', key: 'classe', tipo: 'texto', wch: 8 },
+    ],
+    linhas,
+    nomeArq: 'curva-abc.xlsx',
   });
 }
 

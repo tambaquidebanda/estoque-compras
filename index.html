@@ -152,6 +152,9 @@
         <a href="#" onclick="ir('rel-divergencia',this)">
           <i class="bi bi-clipboard2-x"></i> Divergências Receb.
         </a>
+        <a href="#" onclick="ir('curva-abc',this)">
+          <i class="bi bi-bar-chart-steps"></i> Curva ABC
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2344,6 +2347,73 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Compara <strong>pedido × recebido</strong> por produto (vínculo por código). <span style="color:#dc3545">Faltou/Sobrou/Preço/Não recebido</span> = divergência; <span style="color:#6c757d">Pendente</span> = pedido ainda em aberto; <span style="color:#6c757d">Dispensado</span> = item cancelado no recebimento. Filtra por data do <strong>pedido</strong> (o recebimento pode ser posterior).
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ CURVA ABC (D6) ═══════════ -->
+    <section id="pg-curva-abc" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Curva ABC</h1>
+        <span class="text-muted small" id="ca-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="ca-ini" onchange="renderCurvaABC()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="ca-fim" onchange="renderCurvaABC()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="caPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="caPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="caPeriodo(12)">12 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Classe</label>
+          <select class="form-select form-select-sm" id="ca-classe" onchange="_pintarCurvaABC()">
+            <option value="">Todas</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="ca-busca" placeholder="Buscar produto..." oninput="_pintarCurvaABC()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarCurvaABC()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <!-- KPIs por classe -->
+      <div class="row row-cols-1 row-cols-md-3 g-2 mb-3" id="ca-kpis"></div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Produto</th>
+                <th class="text-center">Unid. Uso</th>
+                <th class="text-end">Qtd. Comprada</th>
+                <th class="text-end">Total Comprado</th>
+                <th class="text-end">% do Total</th>
+                <th class="text-end">% Acumulado</th>
+                <th class="text-center">Classe</th>
+              </tr>
+            </thead>
+            <tbody id="lst-ca">
+              <tr><td colspan="8" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i><strong>Classe A</strong> = poucos itens que somam ~80% do gasto (foco da gestão) · <strong>B</strong> = próximos ~15% · <strong>C</strong> = a cauda (muitos itens, pouco valor). Base: compras recebidas no período, por unidade de uso.
           </small>
         </div>
       </div>
