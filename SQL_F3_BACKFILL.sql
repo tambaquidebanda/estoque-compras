@@ -33,7 +33,8 @@ SELECT
 FROM est_saldo_local s
 JOIN est_produtos p ON p.id = s.produto_id
 WHERE s.saldo IS NOT NULL AND s.saldo <> 0
-ON CONFLICT (ref_tabela, ref_id, local, tipo) DO NOTHING;
+-- o WHERE abaixo casa com o índice PARCIAL uq_est_mov_ref (senão: erro 42P10)
+ON CONFLICT (ref_tabela, ref_id, local, tipo) WHERE ref_id IS NOT NULL DO NOTHING;
 
 -- Verificação: o ledger deve reconciliar com o snapshot (diferença = 0 em toda linha)
 SELECT
