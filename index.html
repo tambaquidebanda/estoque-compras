@@ -112,6 +112,9 @@
         <a href="#" onclick="ir('perdas',this)">
           <i class="bi bi-dash-circle-fill"></i> Perdas
         </a>
+        <a href="#" onclick="ir('devolucoes',this)">
+          <i class="bi bi-arrow-return-left"></i> Devoluções
+        </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
@@ -2441,6 +2444,128 @@
               <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
             </tbody>
             <tfoot id="pd-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ DEVOLUÇÕES AO FORNECEDOR (D4) ═══════════ -->
+    <section id="pg-devolucoes" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-arrow-return-left"></i> Devoluções ao Fornecedor</h1>
+        <span class="text-muted small" id="dv-contador"></span>
+      </div>
+
+      <!-- Registro (a partir do recebimento) -->
+      <div class="card-grafico p-3 mb-3">
+        <div class="row g-2 align-items-end mb-2">
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1">Fornecedor</label>
+            <select class="form-select form-select-sm" id="dv-forn" onchange="dvCarregarRecebimentos()"></select>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label small text-muted mb-1">Recebimento de origem</label>
+            <select class="form-select form-select-sm" id="dv-receb" onchange="dvCarregarItens()">
+              <option value="">Selecione o fornecedor primeiro</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Baixa do estoque em</label>
+            <select class="form-select form-select-sm" id="dv-local"></select>
+          </div>
+        </div>
+
+        <div class="table-responsive border rounded mb-2" style="max-height:280px;overflow:auto">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light" style="position:sticky;top:0">
+              <tr>
+                <th style="width:36px"></th>
+                <th>Produto</th>
+                <th class="text-end">Recebido</th>
+                <th class="text-end" style="width:110px">Devolver</th>
+              </tr>
+            </thead>
+            <tbody id="dv-itens">
+              <tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Motivo</label>
+            <select class="form-select form-select-sm" id="dv-motivo"></select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Data</label>
+            <input type="date" class="form-control form-control-sm" id="dv-data">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Responsável</label>
+            <input type="text" class="form-control form-control-sm" id="dv-resp" placeholder="quem registrou">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Observação</label>
+            <input type="text" class="form-control form-control-sm" id="dv-obs" placeholder="opcional">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-sm btn-danger w-100" id="dv-btn-salvar" onclick="salvarDevolucao()">
+              <i class="bi bi-arrow-return-left"></i> Registrar Devolução
+            </button>
+          </div>
+        </div>
+        <div class="small text-muted mt-2">
+          <i class="bi bi-info-circle me-1"></i>Marque os itens do recebimento a devolver. A devolução <strong>baixa o saldo</strong> e nasce como <strong>pendente de substituição</strong> — depois marque <em>Substituído</em> quando o fornecedor repor.
+        </div>
+      </div>
+
+      <!-- Filtros do histórico -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="dv-ini" onchange="renderDevolucoes()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="dv-fim" onchange="renderDevolucoes()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Fornecedor</label>
+          <select class="form-select form-select-sm" id="dv-filtro-forn" onchange="_pintarDevolucoes()" style="min-width:180px">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Status</label>
+          <select class="form-select form-select-sm" id="dv-filtro-status" onchange="_pintarDevolucoes()">
+            <option value="">Todos</option>
+            <option value="pendente">Pendente</option>
+            <option value="substituido">Substituído</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="dv-filtro-busca" placeholder="Buscar produto..." oninput="_pintarDevolucoes()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarDevolucoes()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Fornecedor</th>
+                <th>Produto</th>
+                <th class="text-end">Valor</th>
+                <th>Motivo</th>
+                <th>Status</th>
+                <th class="text-end">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="lst-dev">
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
           </table>
         </div>
       </div>

@@ -206,7 +206,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
-  if (['recebimento','inventario','saldo','perdas'].includes(nome)) {
+  if (['recebimento','inventario','saldo','perdas','devolucoes'].includes(nome)) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
@@ -230,6 +230,7 @@ function ir(nome, el) {
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'saldo')         carregarSaldo();
   if (nome === 'perdas')        carregarPerdas();
+  if (nome === 'devolucoes')    carregarDevolucoes();
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
@@ -8994,6 +8995,298 @@ function exportarPerdas() {
     linhas,
     rodape: [{ key: 'valor', valor: linhas.reduce((s, l) => s + l.valor, 0) }],
     nomeArq: 'perdas.xlsx',
+  });
+}
+
+// ═══════════════════════ D4 — DEVOLUÇÕES AO FORNECEDOR ═══════════════════════
+// A partir de um RECEBIMENTO: fornecedor → recebimento → itens a devolver.
+// Baixa o estoque via movimentar(tipo='devolucao') e rastreia a SUBSTITUIÇÃO
+// (status pendente → substituido/cancelado). SEM vínculo financeiro. Grupo Estoque.
+const _DEV_MOTIVOS = ['Avaria / Quebra', 'Vencido / Validade curta', 'Qualidade', 'Produto errado', 'Divergência de pedido', 'Outro'];
+let _devRaw      = [];   // devoluções do período (com .itens)
+let _devRecs     = [];   // recebimentos do fornecedor selecionado no form
+let _devRecItens = [];   // itens do recebimento selecionado no form
+
+async function carregarDevolucoes() {
+  if (!cForn.length) await carregarCaches();
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const hoje = new Date();
+  const ini = document.getElementById('dv-ini');
+  const fim = document.getElementById('dv-fim');
+  if (ini && !ini.value) ini.value = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+  if (fim && !fim.value) fim.value = hoje.toISOString().slice(0, 10);
+  const dt = document.getElementById('dv-data');
+  if (dt && !dt.value) dt.value = hoje.toISOString().slice(0, 10);
+
+  const selF = document.getElementById('dv-forn');
+  if (selF) selF.innerHTML = '<option value="">Selecione o fornecedor...</option>' +
+    cForn.map(f => `<option value="${esc(f.nome)}">${esc(f.nome)}</option>`).join('');
+  const mot = document.getElementById('dv-motivo');
+  if (mot) mot.innerHTML = _DEV_MOTIVOS.map(m => `<option>${m}</option>`).join('');
+  const loc = document.getElementById('dv-local');
+  if (loc) loc.innerHTML = _perdaLocais().map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+  const fFor = document.getElementById('dv-filtro-forn');
+  if (fFor) fFor.innerHTML = '<option value="">Todos</option>' +
+    cForn.map(f => `<option value="${esc(f.nome)}">${esc(f.nome)}</option>`).join('');
+
+  const rc = document.getElementById('dv-receb');
+  if (rc) rc.innerHTML = '<option value="">Selecione o fornecedor primeiro</option>';
+  const box = document.getElementById('dv-itens');
+  if (box) box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>';
+  _devRecItens = [];
+  await renderDevolucoes();
+}
+
+// fornecedor → carrega os recebimentos dele
+async function dvCarregarRecebimentos() {
+  const forn = document.getElementById('dv-forn')?.value;
+  const sel  = document.getElementById('dv-receb');
+  const box  = document.getElementById('dv-itens');
+  _devRecItens = []; _devRecs = [];
+  if (box) box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>';
+  if (!sel) return;
+  if (!forn) { sel.innerHTML = '<option value="">Selecione o fornecedor primeiro</option>'; return; }
+  sel.innerHTML = '<option>Carregando...</option>';
+  const { data } = await sb.from('cmp_recebimentos')
+    .select('id,pedido_num,data_receb,total_recebido')
+    .eq('fornecedor', forn).order('data_receb', { ascending: false }).limit(200);
+  _devRecs = data || [];
+  if (!_devRecs.length) { sel.innerHTML = '<option value="">Nenhum recebimento deste fornecedor</option>'; return; }
+  sel.innerHTML = '<option value="">Selecione o recebimento...</option>' + _devRecs.map(r =>
+    `<option value="${r.id}">${esc(r.pedido_num || 's/ nº')} · ${_dataBR(r.data_receb)} · ${brl(r.total_recebido || 0)}</option>`).join('');
+}
+
+// recebimento → lista itens para devolver
+async function dvCarregarItens() {
+  const recId = document.getElementById('dv-receb')?.value;
+  const box   = document.getElementById('dv-itens');
+  _devRecItens = [];
+  if (!box) return;
+  if (!recId) { box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>'; return; }
+  box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  const { data } = await sb.from('cmp_recebimento_itens')
+    .select('id,produto,produto_id,unidade,qtd_recebida,valor_unitario')
+    .eq('recebimento_id', recId);
+  _devRecItens = (data || []).filter(it => Number(it.qtd_recebida) > 0);
+  if (!_devRecItens.length) { box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Sem itens recebidos.</td></tr>'; return; }
+  box.innerHTML = _devRecItens.map((it, i) => `<tr>
+    <td style="width:36px"><input type="checkbox" class="form-check-input dv-it-chk" data-i="${i}"></td>
+    <td>${esc(it.produto)} <span class="text-muted small">· ${esc(it.unidade || '')}</span></td>
+    <td class="text-end small text-muted">receb: ${Number(it.qtd_recebida)}</td>
+    <td style="width:110px"><input type="number" class="form-control form-control-sm text-end dv-it-qtd" data-i="${i}" min="0" max="${Number(it.qtd_recebida)}" step="any" value="${Number(it.qtd_recebida)}"></td>
+  </tr>`).join('');
+}
+
+async function salvarDevolucao() {
+  const forn   = document.getElementById('dv-forn')?.value;
+  const recId  = document.getElementById('dv-receb')?.value;
+  const local  = document.getElementById('dv-local')?.value || 'ESTOQUE_LOJA';
+  const motivo = document.getElementById('dv-motivo')?.value || 'Outro';
+  const data   = document.getElementById('dv-data')?.value || new Date().toISOString().slice(0, 10);
+  const resp   = document.getElementById('dv-resp')?.value?.trim() || '';
+  const obs    = document.getElementById('dv-obs')?.value?.trim() || '';
+  if (!forn)  { toast('Selecione o fornecedor.', 'erro'); return; }
+  if (!recId) { toast('Selecione o recebimento.', 'erro'); return; }
+
+  const marcados = [...document.querySelectorAll('.dv-it-chk')].filter(c => c.checked);
+  if (!marcados.length) { toast('Marque ao menos um item para devolver.', 'erro'); return; }
+  const itens = [];
+  for (const c of marcados) {
+    const i = +c.dataset.i;
+    const it = _devRecItens[i];
+    const qtd = parseQtd(document.querySelector(`.dv-it-qtd[data-i="${i}"]`)?.value);
+    if (it && qtd > 0) itens.push({ it, qtd });
+  }
+  if (!itens.length) { toast('Informe a quantidade dos itens marcados.', 'erro'); return; }
+
+  const fornObj = cForn.find(f => f.nome === forn);
+  const recInfo = _devRecs.find(r => r.id === recId);
+  const valor_total = itens.reduce((s, x) => s + x.qtd * (Number(x.it.valor_unitario) || 0), 0);
+
+  const btn = document.getElementById('dv-btn-salvar');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...'; }
+  const restaurarBtn = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-return-left"></i> Registrar Devolução'; } };
+
+  // 1) cabeçalho
+  const { data: hdr, error: eh } = await sb.from('cmp_devolucoes').insert({
+    fornecedor: forn, fornecedor_id: fornObj?.id || null,
+    recebimento_id: recId, pedido_num: recInfo?.pedido_num || null,
+    data, motivo, valor_total, status: 'pendente', resolucao: 'Substituição',
+    responsavel: resp || null, obs: obs || null,
+  }).select().single();
+  if (eh || !hdr) { toast('Erro ao salvar devolução: ' + (eh?.message || ''), 'erro'); restaurarBtn(); return; }
+
+  // 2) itens
+  const itensRows = itens.map(x => ({
+    devolucao_id: hdr.id, produto_id: x.it.produto_id || null, produto: x.it.produto,
+    local, unidade: x.it.unidade || null, quantidade: x.qtd,
+    valor_unitario: Number(x.it.valor_unitario) || 0, recebimento_item_id: x.it.id,
+  }));
+  const { data: itensSalvos, error: ei } = await sb.from('cmp_devolucao_itens').insert(itensRows).select();
+  if (ei) { toast('Erro ao salvar itens: ' + ei.message, 'erro'); restaurarBtn(); return; }
+
+  // 3) baixa o estoque via razão (best-effort no razão; snapshot sempre atualiza)
+  for (const row of (itensSalvos || [])) {
+    if (!row.produto_id) continue;
+    await movimentar({
+      produto_id: row.produto_id, local: row.local, tipo: 'devolucao',
+      quantidade: -Math.abs(Number(row.quantidade)),
+      custo_unit: Number(row.valor_unitario) || 0,
+      motivo: `Devolução ${forn} — ${motivo}`, origem: 'devolucao',
+      ref_tabela: 'cmp_devolucao_itens', ref_id: row.id, responsavel: resp || null, data,
+    });
+  }
+
+  restaurarBtn();
+  toast('Devolução registrada e saldo baixado ✅', 'ok');
+  document.getElementById('dv-receb').value = '';
+  document.getElementById('dv-itens').innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>';
+  _devRecItens = [];
+  await renderDevolucoes();
+}
+
+// —— histórico ——
+async function renderDevolucoes() {
+  const tbody = document.getElementById('lst-dev');
+  if (!tbody) return;
+  const ini = document.getElementById('dv-ini')?.value;
+  const fim = document.getElementById('dv-fim')?.value;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  let q = sb.from('cmp_devolucoes').select('*')
+    .order('data', { ascending: false }).order('criado_em', { ascending: false });
+  if (ini) q = q.gte('data', ini);
+  if (fim) q = q.lte('data', fim);
+  const { data } = await q;
+  const devs = data || [];
+  let itens = [];
+  if (devs.length) {
+    const ids = devs.map(d => d.id);
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data: it } = await sb.from('cmp_devolucao_itens').select('*').in('devolucao_id', ids.slice(i, i + 300));
+      itens = itens.concat(it || []);
+    }
+  }
+  const byDev = {};
+  itens.forEach(it => (byDev[it.devolucao_id] ||= []).push(it));
+  _devRaw = devs.map(d => ({ ...d, itens: byDev[d.id] || [] }));
+  _pintarDevolucoes();
+}
+
+function _devStatusBadge(s) {
+  const map = {
+    pendente:   ['⏳ Pendente', '#b45309', '#fffbeb'],
+    substituido:['✅ Substituído', '#16a34a', '#f0fdf4'],
+    cancelado:  ['✖ Cancelado', '#6c757d', '#f8f9fa'],
+  };
+  const [t, c, bg] = map[s] || [s, '#333', '#eee'];
+  return `<span class="badge" style="color:${c};background:${bg};border:1px solid ${c}55">${t}</span>`;
+}
+function _devResumoItens(d) {
+  const its = d.itens || [];
+  if (!its.length) return '—';
+  const first = esc(its[0].produto || '?');
+  return its.length > 1 ? `${first} <span class="text-muted small">+${its.length - 1}</span>` : first;
+}
+function _devsFiltradas() {
+  const fFor  = document.getElementById('dv-filtro-forn')?.value || '';
+  const fSt   = document.getElementById('dv-filtro-status')?.value || '';
+  const busca = norm(document.getElementById('dv-filtro-busca')?.value || '').trim();
+  let devs = _devRaw.slice();
+  if (fFor)  devs = devs.filter(d => d.fornecedor === fFor);
+  if (fSt)   devs = devs.filter(d => d.status === fSt);
+  if (busca) devs = devs.filter(d => (d.itens || []).some(it => norm(it.produto || '').includes(busca)));
+  return devs;
+}
+
+function _pintarDevolucoes() {
+  const tbody = document.getElementById('lst-dev');
+  if (!tbody) return;
+  const devs = _devsFiltradas();
+  const pendente = devs.filter(d => d.status === 'pendente').reduce((s, d) => s + (Number(d.valor_total) || 0), 0);
+  const cont = document.getElementById('dv-contador');
+  if (cont) cont.innerHTML = devs.length
+    ? `${devs.length} devolução(ões) · <strong style="color:#b45309">Pendente de substituição: ${brl(pendente)}</strong>` : '';
+  if (!devs.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma devolução no período.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = devs.map(d => `<tr>
+    <td class="text-nowrap">${_dataBR(d.data)}</td>
+    <td>${esc(d.fornecedor || '')}</td>
+    <td>${_devResumoItens(d)}</td>
+    <td class="text-end">${brl(d.valor_total || 0)}</td>
+    <td class="small">${esc(d.motivo || '')}</td>
+    <td>${_devStatusBadge(d.status)}${d.data_resolucao ? `<div class="text-muted" style="font-size:.7rem">${_dataBR(d.data_resolucao)}</div>` : ''}</td>
+    <td class="text-end text-nowrap">${d.status === 'pendente' ? `
+      <button class="btn btn-sm btn-outline-success py-0 px-1" title="Marcar como substituído" onclick="marcarSubstituido('${d.id}')"><i class="bi bi-check-lg"></i></button>
+      <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Cancelar devolução (estorna estoque)" onclick="cancelarDevolucao('${d.id}')"><i class="bi bi-x-lg"></i></button>` : ''}</td>
+  </tr>`).join('');
+}
+
+async function marcarSubstituido(id) {
+  const d = _devRaw.find(x => x.id === id);
+  if (!d || d.status !== 'pendente') return;
+  if (!confirm('Marcar esta devolução como SUBSTITUÍDA?')) return;
+  const reentrar = confirm('O fornecedor repôs os produtos?\n\nOK = re-entrar os produtos no estoque (+ saldo)\nCancelar = só fechar o acompanhamento (sem mexer no estoque)');
+  await sb.from('cmp_devolucoes').update({ status: 'substituido', data_resolucao: new Date().toISOString().slice(0, 10) }).eq('id', id);
+  if (reentrar) {
+    const hoje = new Date().toISOString().slice(0, 10);
+    for (const it of (d.itens || [])) {
+      if (!it.produto_id) continue;
+      await movimentar({
+        produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
+        quantidade: Math.abs(Number(it.quantidade)), custo_unit: Number(it.valor_unitario) || 0,
+        motivo: 'Reentrada por substituição de devolução', origem: 'devolucao',
+        ref_tabela: 'cmp_devolucao_itens', ref_id: it.id, data: hoje,
+      });
+    }
+  }
+  toast('Devolução marcada como substituída ✅', 'ok');
+  await renderDevolucoes();
+}
+
+async function cancelarDevolucao(id) {
+  const d = _devRaw.find(x => x.id === id);
+  if (!d || d.status !== 'pendente') return;
+  if (!confirm('Cancelar esta devolução? O estoque baixado será estornado (devolvido ao saldo).')) return;
+  await sb.from('cmp_devolucoes').update({ status: 'cancelado', data_resolucao: new Date().toISOString().slice(0, 10) }).eq('id', id);
+  const hoje = new Date().toISOString().slice(0, 10);
+  for (const it of (d.itens || [])) {
+    if (!it.produto_id) continue;
+    await movimentar({
+      produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
+      quantidade: Math.abs(Number(it.quantidade)), custo_unit: Number(it.valor_unitario) || 0,
+      motivo: 'Estorno de devolução cancelada', origem: 'devolucao',
+      ref_tabela: 'cmp_devolucao_itens', ref_id: it.id, data: hoje,
+    });
+  }
+  toast('Devolução cancelada e estoque estornado.', 'ok');
+  await renderDevolucoes();
+}
+
+function exportarDevolucoes() {
+  const linhas = [];
+  _devsFiltradas().forEach(d => (d.itens || []).forEach(it => linhas.push({
+    data: _dataBR(d.data), fornecedor: d.fornecedor || '', produto: it.produto || '',
+    qtd: Math.abs(Number(it.quantidade) || 0), valor: Math.abs(Number(it.valor_total) || 0),
+    motivo: d.motivo || '', status: d.status,
+  })));
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Devoluções ao Fornecedor',
+    periodoLabel: `${document.getElementById('dv-ini')?.value || ''} a ${document.getElementById('dv-fim')?.value || ''}`,
+    colunas: [
+      { header: 'Data', key: 'data', tipo: 'texto', wch: 12 },
+      { header: 'Fornecedor', key: 'fornecedor', tipo: 'texto', wch: 26 },
+      { header: 'Produto', key: 'produto', tipo: 'texto', wch: 40 },
+      { header: 'Qtd', key: 'qtd', tipo: 'qtd', wch: 10 },
+      { header: 'Valor', key: 'valor', tipo: 'moeda', wch: 14 },
+      { header: 'Motivo', key: 'motivo', tipo: 'texto', wch: 22 },
+      { header: 'Status', key: 'status', tipo: 'texto', wch: 14 },
+    ],
+    linhas,
+    rodape: [{ key: 'valor', valor: linhas.reduce((s, l) => s + l.valor, 0) }],
+    nomeArq: 'devolucoes.xlsx',
   });
 }
 
