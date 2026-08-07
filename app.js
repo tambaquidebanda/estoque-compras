@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -239,6 +239,7 @@ function ir(nome, el) {
   if (nome === 'rel-fornecedor') carregarRelForn();
   if (nome === 'rel-divergencia') carregarRelDiv();
   if (nome === 'curva-abc')       carregarCurvaABC();
+  if (nome === 'comp-preco')      carregarCompPreco();
 }
 
 function irCad(tab, el) {
@@ -9420,6 +9421,115 @@ function exportarCurvaABC() {
     ],
     linhas,
     nomeArq: 'curva-abc.xlsx',
+  });
+}
+
+// ═══════════════ D7 — COMPARATIVO DE PREÇO ENTRE FORNECEDORES ═══════════════
+// Mesmo produto, vários fornecedores: quem está mais barato (último preço) e a
+// diferença % vs o melhor. Reusa fetchRecebido (F1/F2). Relatório puro.
+let _cpRaw = [];       // saída bruta do fetchRecebido (refetch só ao mudar período)
+let _cpExport = [];    // linhas achatadas (produto+fornecedor) já filtradas p/ export
+
+function cpfPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('cpf-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('cpf-fim').value = fim.toISOString().slice(0, 10);
+  renderCompPreco();
+}
+
+async function carregarCompPreco() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('cpf-ini').value) cpfPeriodo(6);   // default: 6 meses
+  else await renderCompPreco();
+}
+
+async function renderCompPreco() {
+  const tbody = document.getElementById('lst-cpf');
+  const ini = document.getElementById('cpf-ini').value;
+  const fim = document.getElementById('cpf-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  _cpRaw = await fetchRecebido({ ini, fim });
+  _pintarCompPreco();
+}
+
+function _pintarCompPreco() {
+  const tbody = document.getElementById('lst-cpf');
+  if (!tbody) return;
+  // agrupa produto → fornecedor
+  const prod = {};
+  _cpRaw.forEach(r => {
+    const pk = r.produto_id || 'nome:' + norm(r.produto);
+    const P = (prod[pk] ||= { produto: r.produto, unidade_uso: r.unidade_uso, forn: {} });
+    const fn = r.fornecedor || '(sem fornecedor)';
+    const F = (P.forn[fn] ||= { fornecedor: fn, qtd: 0, total: 0, count: 0, ultData: '', ultUnit: 0 });
+    F.qtd   += Number(r.qtd) || 0;
+    F.total += Number(r.total) || 0;
+    F.count += 1;
+    const d = r.data || '';
+    if (d >= F.ultData) { F.ultData = d; F.ultUnit = Number(r.unit) || 0; }   // último preço = compra mais recente
+  });
+
+  const soMulti = document.getElementById('cpf-multi')?.checked;
+  const busca   = norm(document.getElementById('cpf-busca')?.value || '').trim();
+  let grupos = Object.values(prod).map(P => {
+    const fs = Object.values(P.forn).map(F => ({ ...F, medio: F.qtd > 0 ? F.total / F.qtd : 0 }));
+    fs.sort((a, b) => (a.ultUnit || Infinity) - (b.ultUnit || Infinity));   // mais barato primeiro
+    return { produto: P.produto, unidade_uso: P.unidade_uso, fornecedores: fs };
+  });
+  if (soMulti) grupos = grupos.filter(g => g.fornecedores.length > 1);
+  if (busca)   grupos = grupos.filter(g => norm(g.produto).includes(busca));
+  grupos.sort((a, b) => a.produto.localeCompare(b.produto, 'pt-BR'));
+
+  const cont = document.getElementById('cpf-contador');
+  if (cont) cont.textContent = grupos.length ? `${grupos.length} produto(s)` : '';
+
+  const rows = [];
+  _cpExport = [];
+  grupos.forEach(g => {
+    const melhor = g.fornecedores.find(f => f.ultUnit > 0)?.ultUnit || 0;
+    rows.push(`<tr class="table-light"><td colspan="7" class="fw-bold">${esc(g.produto)} <span class="text-muted small fw-normal">· ${esc(g.unidade_uso || '')}</span></td></tr>`);
+    g.fornecedores.forEach(f => {
+      const ehMelhor = melhor > 0 && f.ultUnit === melhor;
+      const diff = (melhor > 0 && f.ultUnit > 0) ? ((f.ultUnit / melhor - 1) * 100) : 0;
+      rows.push(`<tr>
+        <td class="ps-4">${esc(f.fornecedor)} ${ehMelhor ? '<span class="badge" style="color:#16a34a;background:#f0fdf4;border:1px solid #16a34a55">✔ melhor</span>' : ''}</td>
+        <td class="text-end fw-bold">${brl(f.ultUnit)}</td>
+        <td class="text-end">${brl(f.medio)}</td>
+        <td class="text-end">${f.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
+        <td class="text-end">${f.count}</td>
+        <td class="text-end small">${_dataBR(f.ultData)}</td>
+        <td class="text-end">${ehMelhor ? '—' : (diff > 0 ? `<span style="color:#dc3545">+${diff.toFixed(1)}%</span>` : '')}</td>
+      </tr>`);
+      _cpExport.push({
+        produto: g.produto, fornecedor: f.fornecedor, ultimo: f.ultUnit, medio: f.medio,
+        qtd: f.qtd, compras: f.count, ultdata: _dataBR(f.ultData),
+        vs: ehMelhor ? 0 : +diff.toFixed(1),
+      });
+    });
+  });
+  tbody.innerHTML = rows.length ? rows.join('')
+    : '<tr><td colspan="7" class="text-center text-muted py-4">Sem compras no período' + (soMulti ? ' com mais de um fornecedor' : '') + '.</td></tr>';
+}
+
+function exportarCompPreco() {
+  if (!_cpExport.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Comparativo de Preço por Fornecedor',
+    periodoLabel: `${document.getElementById('cpf-ini')?.value || ''} a ${document.getElementById('cpf-fim')?.value || ''}`,
+    colunas: [
+      { header: 'Produto', key: 'produto', tipo: 'texto', wch: 40 },
+      { header: 'Fornecedor', key: 'fornecedor', tipo: 'texto', wch: 26 },
+      { header: 'Último Preço', key: 'ultimo', tipo: 'moeda', wch: 14 },
+      { header: 'Preço Médio', key: 'medio', tipo: 'moeda', wch: 14 },
+      { header: 'Qtd', key: 'qtd', tipo: 'qtd', wch: 10 },
+      { header: 'Nº Compras', key: 'compras', tipo: 'int', wch: 10 },
+      { header: 'Última Compra', key: 'ultdata', tipo: 'texto', wch: 14 },
+      { header: '% vs Melhor', key: 'vs', tipo: 'qtd', wch: 12 },
+    ],
+    linhas: _cpExport,
+    nomeArq: 'comparativo-preco.xlsx',
   });
 }
 

@@ -155,6 +155,9 @@
         <a href="#" onclick="ir('curva-abc',this)">
           <i class="bi bi-bar-chart-steps"></i> Curva ABC
         </a>
+        <a href="#" onclick="ir('comp-preco',this)">
+          <i class="bi bi-currency-dollar"></i> Comparativo de Preço
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2347,6 +2350,64 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Compara <strong>pedido × recebido</strong> por produto (vínculo por código). <span style="color:#dc3545">Faltou/Sobrou/Preço/Não recebido</span> = divergência; <span style="color:#6c757d">Pendente</span> = pedido ainda em aberto; <span style="color:#6c757d">Dispensado</span> = item cancelado no recebimento. Filtra por data do <strong>pedido</strong> (o recebimento pode ser posterior).
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ COMPARATIVO DE PREÇO (D7) ═══════════ -->
+    <section id="pg-comp-preco" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-currency-dollar"></i> Comparativo de Preço por Fornecedor</h1>
+        <span class="text-muted small" id="cpf-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="cpf-ini" onchange="renderCompPreco()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="cpf-fim" onchange="renderCompPreco()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="cpfPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="cpfPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="cpfPeriodo(12)">12 meses</button>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="cpf-multi" checked onchange="_pintarCompPreco()">
+          <label class="form-check-label small" for="cpf-multi">Só com +1 fornecedor</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="cpf-busca" placeholder="Buscar produto..." oninput="_pintarCompPreco()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarCompPreco()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Produto / Fornecedor</th>
+                <th class="text-end">Último Preço</th>
+                <th class="text-end">Preço Médio</th>
+                <th class="text-end">Qtd</th>
+                <th class="text-end">Nº Compras</th>
+                <th class="text-end">Última Compra</th>
+                <th class="text-end">vs Melhor</th>
+              </tr>
+            </thead>
+            <tbody id="lst-cpf">
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Agrupa por produto e mostra cada fornecedor pelo <strong>último preço pago</strong> (compra mais recente) e o preço médio. O mais barato leva <span style="color:#16a34a">✔ melhor</span>; os outros mostram <span style="color:#dc3545">+%</span> acima. Base: compras recebidas, por unidade de uso.
           </small>
         </div>
       </div>
