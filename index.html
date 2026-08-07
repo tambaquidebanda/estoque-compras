@@ -109,6 +109,9 @@
         <a href="#" onclick="ir('saldo',this)">
           <i class="bi bi-archive-fill"></i> Saldo Estoque
         </a>
+        <a href="#" onclick="ir('perdas',this)">
+          <i class="bi bi-dash-circle-fill"></i> Perdas
+        </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
@@ -2339,6 +2342,106 @@
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Compara <strong>pedido × recebido</strong> por produto (vínculo por código). <span style="color:#dc3545">Faltou/Sobrou/Preço/Não recebido</span> = divergência; <span style="color:#6c757d">Pendente</span> = pedido ainda em aberto; <span style="color:#6c757d">Dispensado</span> = item cancelado no recebimento. Filtra por data do <strong>pedido</strong> (o recebimento pode ser posterior).
           </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ PERDAS (D3) ═══════════ -->
+    <section id="pg-perdas" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-dash-circle"></i> Perdas</h1>
+        <span class="text-muted small" id="pd-contador"></span>
+      </div>
+
+      <!-- Formulário de registro -->
+      <div class="card-grafico p-3 mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Setor</label>
+            <select class="form-select form-select-sm" id="pd-local"></select>
+          </div>
+          <div class="col-md-4 position-relative">
+            <label class="form-label small text-muted mb-1">Produto</label>
+            <input type="search" class="form-control form-control-sm" id="pd-prod-busca" autocomplete="off"
+              placeholder="Digite o nome do produto..." oninput="_perdaBuscaProd()">
+            <div class="list-group position-absolute w-100 shadow-sm d-none" id="pd-prod-sugestoes" style="z-index:20;max-height:240px;overflow:auto"></div>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Qtd <span class="text-muted" id="pd-unid">—</span></label>
+            <input type="number" class="form-control form-control-sm" id="pd-qtd" min="0" step="any" placeholder="0">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Motivo</label>
+            <select class="form-select form-select-sm" id="pd-motivo"></select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1">Data</label>
+            <input type="date" class="form-control form-control-sm" id="pd-data">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1">Observação (opcional)</label>
+            <input type="text" class="form-control form-control-sm" id="pd-obs" placeholder="detalhe da perda...">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Responsável</label>
+            <input type="text" class="form-control form-control-sm" id="pd-resp" placeholder="quem registrou">
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-sm btn-danger w-100" id="pd-btn-salvar" onclick="salvarPerda()">
+              <i class="bi bi-dash-circle"></i> Registrar Perda
+            </button>
+          </div>
+        </div>
+        <div class="small text-muted mt-2">
+          <i class="bi bi-info-circle me-1"></i>A perda <strong>baixa o saldo</strong> do setor selecionado e registra no livro-razão de estoque (valor pelo custo efetivo do produto).
+        </div>
+      </div>
+
+      <!-- Filtros do histórico -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="pd-ini" onchange="renderPerdas()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="pd-fim" onchange="renderPerdas()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="pdPeriodo(1)">Mês</button>
+          <button class="btn btn-outline-secondary" onclick="pdPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="pdPeriodo(12)">12 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Setor</label>
+          <select class="form-select form-select-sm" id="pd-filtro-local" onchange="_pintarPerdas()" style="min-width:180px">
+            <option value="">Todos os setores</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="pd-filtro-busca" placeholder="Buscar produto..." oninput="_pintarPerdas()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarPerdas()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Setor</th>
+                <th>Produto</th>
+                <th class="text-end">Qtd</th>
+                <th class="text-end">Valor</th>
+                <th>Motivo</th>
+                <th>Responsável</th>
+              </tr>
+            </thead>
+            <tbody id="lst-perdas">
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+            <tfoot id="pd-tfoot"></tfoot>
+          </table>
         </div>
       </div>
     </section>

@@ -206,7 +206,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-cadastros')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-cadastros')?.classList.add('aberto');
   }
-  if (['recebimento','inventario','saldo'].includes(nome)) {
+  if (['recebimento','inventario','saldo','perdas'].includes(nome)) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
@@ -229,6 +229,7 @@ function ir(nome, el) {
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
   if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
   if (nome === 'saldo')         carregarSaldo();
+  if (nome === 'perdas')        carregarPerdas();
   if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
@@ -4065,6 +4066,48 @@ async function _movSaldo(produto_id, local, delta) {
     .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() },
             { onConflict: 'produto_id,local' });
   if (error) console.error('_movSaldo upsert falhou:', produto_id, local, error.message);
+}
+
+// ════════════════════════════════════════════════════════════════
+// LIVRO-RAZÃO DE ESTOQUE (F3) — ponto único de escrita
+// movimentar() atualiza o snapshot rápido (est_saldo_local via _movSaldo)
+// E grava uma linha no razão auditável (est_movimentacoes).
+//
+// PRODUÇÃO: a gravação no razão é BEST-EFFORT. Se falhar, o saldo AINDA é
+// atualizado e a operação conclui — o razão nunca derruba recebimento,
+// contagem ou perda. Divergências ficam reconciliáveis depois.
+//
+// quantidade tem SINAL: entrada +, saída −.
+// ════════════════════════════════════════════════════════════════
+async function movimentar(mov) {
+  const m = mov || {};
+  const { produto_id, local, tipo } = m;
+  const quantidade = Number(m.quantidade);
+  if (!produto_id || !local || !tipo || !quantidade) return;
+
+  // 1) snapshot — fonte rápida das telas (comportamento idêntico ao atual)
+  await _movSaldo(produto_id, local, quantidade);
+
+  // 2) razão — fonte auditável, best-effort (nunca derruba a operação)
+  try {
+    const linha = { produto_id, local, tipo, quantidade };
+    ['custo_unit', 'unidade_id', 'motivo', 'origem', 'ref_tabela', 'ref_id', 'responsavel', 'data']
+      .forEach(k => { if (m[k] !== undefined && m[k] !== null && m[k] !== '') linha[k] = m[k]; });
+    const { error } = await sb.from('est_movimentacoes').insert(linha);
+    if (error) console.error('movimentar: razão falhou (saldo OK):', tipo, produto_id, error.message);
+  } catch (e) {
+    console.error('movimentar: exceção no razão (saldo OK):', e);
+  }
+}
+
+// Custo unitário efetivo (por unidade de USO) — mesma fórmula da valorização
+// do Saldo: custo_comp ÷ conversão ÷ (1 − perda%).
+function _custoUsoProd(p) {
+  if (!p) return 0;
+  const fator = p.fator_conversao || 1;
+  const rend  = 1 - ((p.perda || 0) / 100);
+  const bruto = p.custo_comp || p.custo_uso || 0;
+  return rend > 0 ? (bruto / fator) / rend : 0;
 }
 
 async function abrirReceberPedido(pedidoId) {
@@ -8762,6 +8805,196 @@ function exportarRelExcel({ titulo, periodoLabel, colunas, linhas, rodape = null
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, titulo.slice(0, 28));
   XLSX.writeFile(wb, nomeArq || (titulo.toLowerCase().replace(/\s+/g, '-') + '.xlsx'));
+}
+
+// ═══════════════════════ D3 — REGISTRO DE PERDAS ═══════════════════════
+// Quebra / vencido / descarte por setor. Grava no livro-razão (tipo='perda',
+// quantidade negativa) via movimentar() e baixa o saldo do setor. Fluxo NOVO —
+// NÃO toca em recebimento nem contagem. O histórico lê o próprio razão.
+const _PERDA_MOTIVOS = ['Quebra', 'Vencido', 'Deterioração', 'Descarte', 'Sobra de produção', 'Outro'];
+let _perdasRaw = [];    // movimentos tipo='perda' do período (do razão)
+let _perdaProd = null;  // produto selecionado no formulário
+
+function _perdaLocais() {
+  const setores = Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA');
+  return [{ v: 'ESTOQUE_LOJA', l: '🏪 Estoque da Loja' },
+    ...setores.map(s => ({ v: s, l: `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` }))];
+}
+function _perdaLocalLabel(v) {
+  return v === 'ESTOQUE_LOJA' ? 'Estoque da Loja' : (_SETOR_LABEL[v] || v);
+}
+function _dataBR(d) {
+  if (!d) return '';
+  const [y, m, dd] = String(d).slice(0, 10).split('-');
+  return (y && m && dd) ? `${dd}/${m}/${y}` : d;
+}
+
+async function carregarPerdas() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const hoje = new Date();
+  const ini = document.getElementById('pd-ini');
+  const fim = document.getElementById('pd-fim');
+  if (ini && !ini.value) ini.value = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+  if (fim && !fim.value) fim.value = hoje.toISOString().slice(0, 10);
+  const dt = document.getElementById('pd-data');
+  if (dt && !dt.value) dt.value = hoje.toISOString().slice(0, 10);
+  const sel = document.getElementById('pd-local');
+  if (sel) sel.innerHTML = _perdaLocais().map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+  const mot = document.getElementById('pd-motivo');
+  if (mot) mot.innerHTML = _PERDA_MOTIVOS.map(m => `<option>${m}</option>`).join('');
+  const fsel = document.getElementById('pd-filtro-local');
+  if (fsel) fsel.innerHTML = '<option value="">Todos os setores</option>' + _perdaLocais().map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+  await renderPerdas();
+}
+
+function pdPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('pd-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('pd-fim').value = fim.toISOString().slice(0, 10);
+  renderPerdas();
+}
+
+// —— autocomplete de produto no formulário ——
+function _perdaBuscaProd() {
+  const q = norm(document.getElementById('pd-prod-busca')?.value || '').trim();
+  const box = document.getElementById('pd-prod-sugestoes');
+  if (!box) return;
+  if (q.length < 2) { box.innerHTML = ''; box.classList.add('d-none'); return; }
+  const hits = cProdutosFT.filter(p => norm(p.nome).includes(q)).slice(0, 10);
+  if (!hits.length) { box.innerHTML = ''; box.classList.add('d-none'); return; }
+  box.innerHTML = hits.map(p =>
+    `<button type="button" class="list-group-item list-group-item-action py-1 small"
+       onclick="_perdaSelProd('${p.id}')">${esc(p.nome)} <span class="text-muted">· ${esc(p.unidade_uso || '')}</span></button>`
+  ).join('');
+  box.classList.remove('d-none');
+}
+function _perdaSelProd(id) {
+  _perdaProd = cProdutosFT.find(p => p.id === id) || null;
+  const busca = document.getElementById('pd-prod-busca');
+  const box = document.getElementById('pd-prod-sugestoes');
+  if (busca) busca.value = _perdaProd?.nome || '';
+  if (box) { box.innerHTML = ''; box.classList.add('d-none'); }
+  const un = document.getElementById('pd-unid');
+  if (un) un.textContent = _perdaProd?.unidade_uso || '—';
+}
+
+async function salvarPerda() {
+  if (!_perdaProd) { toast('Selecione o produto.', 'erro'); return; }
+  const local  = document.getElementById('pd-local')?.value;
+  const qtd    = parseQtd(document.getElementById('pd-qtd')?.value);
+  const motivo = document.getElementById('pd-motivo')?.value || 'Outro';
+  const obs    = document.getElementById('pd-obs')?.value?.trim() || '';
+  const resp   = document.getElementById('pd-resp')?.value?.trim() || '';
+  const data   = document.getElementById('pd-data')?.value || new Date().toISOString().slice(0, 10);
+  if (!local)     { toast('Selecione o setor.', 'erro'); return; }
+  if (!(qtd > 0)) { toast('Informe a quantidade.', 'erro'); return; }
+
+  const btn = document.getElementById('pd-btn-salvar');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...'; }
+
+  await movimentar({
+    produto_id: _perdaProd.id,
+    local,
+    tipo: 'perda',
+    quantidade: -Math.abs(qtd),                 // saída
+    custo_unit: _custoUsoProd(_perdaProd),
+    motivo: obs ? `${motivo} — ${obs}` : motivo,
+    origem: 'perda',
+    responsavel: resp || null,
+    data,
+  });
+
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-dash-circle"></i> Registrar Perda'; }
+  toast('Perda registrada e saldo baixado ✅', 'ok');
+  _perdaProd = null;
+  ['pd-prod-busca', 'pd-qtd', 'pd-obs'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+  const un = document.getElementById('pd-unid'); if (un) un.textContent = '—';
+  await renderPerdas();
+}
+
+async function renderPerdas() {
+  const tbody = document.getElementById('lst-perdas');
+  if (!tbody) return;
+  const ini = document.getElementById('pd-ini')?.value;
+  const fim = document.getElementById('pd-fim')?.value;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  let q = sb.from('est_movimentacoes').select('*').eq('tipo', 'perda')
+    .order('data', { ascending: false }).order('criado_em', { ascending: false });
+  if (ini) q = q.gte('data', ini);
+  if (fim) q = q.lte('data', fim);
+  const { data } = await q;
+  _perdasRaw = data || [];
+  _pintarPerdas();
+}
+
+function _linhasPerdaFiltradas() {
+  const fLocal = document.getElementById('pd-filtro-local')?.value || '';
+  const busca  = norm(document.getElementById('pd-filtro-busca')?.value || '').trim();
+  const idx = _relCadIndex();
+  let linhas = _perdasRaw.map(m => {
+    const p = idx[m.produto_id];
+    return {
+      data: m.data, local: m.local, localLabel: _perdaLocalLabel(m.local),
+      produto: p?.nome || '(produto removido)', unidade: p?.unidade_uso || '',
+      qtd: Math.abs(Number(m.quantidade) || 0), valor: Math.abs(Number(m.valor_total) || 0),
+      motivo: m.motivo || '', resp: m.responsavel || '',
+    };
+  });
+  if (fLocal) linhas = linhas.filter(l => l.local === fLocal);
+  if (busca)  linhas = linhas.filter(l => norm(l.produto).includes(busca));
+  return linhas;
+}
+
+function _pintarPerdas() {
+  const tbody = document.getElementById('lst-perdas');
+  const tfoot = document.getElementById('pd-tfoot');
+  if (!tbody) return;
+  const linhas = _linhasPerdaFiltradas();
+  const total  = linhas.reduce((s, l) => s + l.valor, 0);
+  const cont = document.getElementById('pd-contador');
+  if (cont) cont.textContent = linhas.length ? `${linhas.length} perda(s) · ${brl(total)}` : '';
+  if (!linhas.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma perda no período.</td></tr>';
+    if (tfoot) tfoot.innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = linhas.map(l => `<tr>
+    <td class="text-nowrap">${_dataBR(l.data)}</td>
+    <td>${esc(l.localLabel)}</td>
+    <td>${esc(l.produto)}</td>
+    <td class="text-end">${l.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span class="text-muted small">${esc(l.unidade)}</span></td>
+    <td class="text-end">${brl(l.valor)}</td>
+    <td class="small">${esc(l.motivo)}</td>
+    <td class="small text-muted">${esc(l.resp)}</td>
+  </tr>`).join('');
+  if (tfoot) tfoot.innerHTML =
+    `<tr class="fw-bold border-top"><td colspan="4" class="text-end">TOTAL</td><td class="text-end">${brl(total)}</td><td colspan="2"></td></tr>`;
+}
+
+function exportarPerdas() {
+  const linhas = _linhasPerdaFiltradas().map(l => ({
+    data: _dataBR(l.data), setor: l.localLabel, produto: l.produto,
+    unidade: l.unidade, qtd: l.qtd, valor: l.valor, motivo: l.motivo, resp: l.resp,
+  }));
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Perdas de Estoque',
+    periodoLabel: `${document.getElementById('pd-ini')?.value || ''} a ${document.getElementById('pd-fim')?.value || ''}`,
+    colunas: [
+      { header: 'Data', key: 'data', tipo: 'texto', wch: 12 },
+      { header: 'Setor', key: 'setor', tipo: 'texto', wch: 18 },
+      { header: 'Produto', key: 'produto', tipo: 'texto', wch: 40 },
+      { header: 'Unid.', key: 'unidade', tipo: 'texto', wch: 8 },
+      { header: 'Qtd', key: 'qtd', tipo: 'qtd', wch: 10 },
+      { header: 'Valor', key: 'valor', tipo: 'moeda', wch: 14 },
+      { header: 'Motivo', key: 'motivo', tipo: 'texto', wch: 30 },
+      { header: 'Responsável', key: 'resp', tipo: 'texto', wch: 18 },
+    ],
+    linhas,
+    rodape: [{ key: 'valor', valor: linhas.reduce((s, l) => s + l.valor, 0) }],
+    nomeArq: 'perdas.xlsx',
+  });
 }
 
 // ═══════════════ RELATÓRIO: COMPRA POR FORNECEDOR × PRODUTO (D1) ═══════════════
