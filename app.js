@@ -9711,28 +9711,38 @@ function _pintarRelForn() {
   const busca = norm(document.getElementById('rf-busca').value.trim());
   const modo = document.getElementById('rf-modo')?.value || 'forn';   // 'forn' | 'ranking'
 
-  // agrega por (fornecedor × produto): qtd, total, menor/maior preço (com dia do menor)
+  // preço GERAL por produto (todo o período, todos os fornecedores) → menor/maior/dia
+  const precoProd = {};
+  _relFornRaw.forEach(d => {
+    if (!(d.unit > 0)) return;
+    const pk = d.produto_id || 'nome:' + norm(d.produto);
+    const pp = (precoProd[pk] ||= { minUnit: Infinity, maxUnit: 0, minData: '' });
+    if (d.unit < pp.minUnit) { pp.minUnit = d.unit; pp.minData = d.data; }
+    if (d.unit > pp.maxUnit) pp.maxUnit = d.unit;
+  });
+
+  // agrega por (fornecedor × produto): qtd, total
   const combos = {};
   _relFornRaw.forEach(d => {
     if (d.qtd <= 0) return;
     const f = d.fornecedor || '(sem fornecedor)';
     if (fornSel && f !== fornSel) return;
     if (busca && !norm(d.produto).includes(busca)) return;
-    const k = f + '||' + (d.produto_id || 'nome:' + norm(d.produto));
-    if (!combos[k]) combos[k] = { fornecedor: f, produto: d.produto, unidade_uso: d.unidade_uso, categoria: d.categoria, qtd: 0, total: 0, ultData: '', ultUnit: 0, minUnit: Infinity, maxUnit: 0, minData: '', cadastrado: d.cadastrado };
+    const pk = d.produto_id || 'nome:' + norm(d.produto);
+    const k = f + '||' + pk;
+    if (!combos[k]) combos[k] = { fornecedor: f, produto: d.produto, prodKey: pk, unidade_uso: d.unidade_uso, categoria: d.categoria, qtd: 0, total: 0, ultData: '', ultUnit: 0, cadastrado: d.cadastrado };
     const a = combos[k];
     a.qtd += d.qtd; a.total += d.total;
     if (d.data >= a.ultData) { a.ultData = d.data; a.ultUnit = d.unit; }
-    if (d.unit > 0) {
-      if (d.unit < a.minUnit) { a.minUnit = d.unit; a.minData = d.data; }
-      if (d.unit > a.maxUnit) a.maxUnit = d.unit;
-    }
   });
 
   const lista = Object.values(combos);
   const grand = lista.reduce((s, a) => s + a.total, 0);
   lista.forEach(a => {
-    if (a.minUnit === Infinity) a.minUnit = 0;
+    const pp = precoProd[a.prodKey] || { minUnit: 0, maxUnit: 0, minData: '' };
+    a.minUnit = pp.minUnit === Infinity ? 0 : pp.minUnit;
+    a.maxUnit = pp.maxUnit;
+    a.minData = pp.minData;
     a.pctRepr = grand > 0 ? (a.total / grand) * 100 : 0;
     a.difVal  = a.maxUnit > a.minUnit ? a.maxUnit - a.minUnit : 0;
     a.difPct  = (a.minUnit > 0 && a.maxUnit > a.minUnit) ? (a.maxUnit / a.minUnit - 1) * 100 : 0;
