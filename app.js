@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -240,6 +240,7 @@ function ir(nome, el) {
   if (nome === 'rel-divergencia') carregarRelDiv();
   if (nome === 'curva-abc')       carregarCurvaABC();
   if (nome === 'comp-preco')      carregarCompPreco();
+  if (nome === 'lead-time')       carregarLeadTime();
 }
 
 function irCad(tab, el) {
@@ -9530,6 +9531,135 @@ function exportarCompPreco() {
     ],
     linhas: _cpExport,
     nomeArq: 'comparativo-preco.xlsx',
+  });
+}
+
+// ═══════════════════════ D9 — LEAD TIME POR FORNECEDOR ═══════════════════════
+// Dias entre o PEDIDO (cmp_compras.data) e a ENTREGA (1º recebimento do pedido).
+// Casa pedido↔recebimento por pedido_num (mesmo pareamento do D2). Reusa F1/F2.
+let _ltPedidos = [];   // por pedido: {fornecedor, pedido_num, dataPedido, dataReceb, dias|null}
+let _ltExport  = [];
+
+function ltPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('lt-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('lt-fim').value = fim.toISOString().slice(0, 10);
+  renderLeadTime();
+}
+
+async function carregarLeadTime() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('lt-ini').value) ltPeriodo(6);   // default: 6 meses
+  else await renderLeadTime();
+}
+
+async function renderLeadTime() {
+  const tbody = document.getElementById('lst-lt');
+  const ini = document.getElementById('lt-ini').value;
+  const fim = document.getElementById('lt-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+
+  // 1) pedidos do período, agrupados por pedido_num
+  const pedidos = await fetchPedidos({ ini, fim });
+  const byPed = {};
+  pedidos.forEach(p => {
+    const pn = p.pedido_num || '';
+    if (!pn) return;
+    const g = (byPed[pn] ||= { pedido_num: pn, fornecedor: p.fornecedor || '', dataPedido: p.data || '' });
+    if (p.data && (!g.dataPedido || p.data < g.dataPedido)) g.dataPedido = p.data;
+    if (!g.fornecedor && p.fornecedor) g.fornecedor = p.fornecedor;
+  });
+  const pedNums = Object.keys(byPed);
+
+  // 2) datas de recebimento (1ª entrega) por pedido_num
+  const recByPed = {};
+  if (pedNums.length) {
+    const recRows = await fetchRecebido({ pedidoNums: pedNums });
+    recRows.forEach(r => {
+      const pn = r.pedido_num || '';
+      if (!pn || !r.data) return;
+      if (!recByPed[pn] || r.data < recByPed[pn]) recByPed[pn] = r.data;   // primeira entrega
+    });
+  }
+
+  // 3) lead time por pedido
+  _ltPedidos = pedNums.map(pn => {
+    const g = byPed[pn];
+    const dr = recByPed[pn] || null;
+    let dias = null;
+    if (dr && g.dataPedido) {
+      dias = Math.round((new Date(dr) - new Date(g.dataPedido)) / 86400000);
+      if (dias < 0) dias = 0;   // data de recebimento anterior ao pedido = trata como 0
+    }
+    return { fornecedor: g.fornecedor || '(sem fornecedor)', pedido_num: pn, dataPedido: g.dataPedido, dataReceb: dr, dias };
+  });
+  _pintarLeadTime();
+}
+
+function _pintarLeadTime() {
+  const tbody = document.getElementById('lst-lt');
+  if (!tbody) return;
+  const busca = norm(document.getElementById('lt-busca')?.value || '').trim();
+
+  // agrega por fornecedor
+  const forn = {};
+  _ltPedidos.forEach(p => {
+    const F = (forn[p.fornecedor] ||= { fornecedor: p.fornecedor, entregues: 0, pendentes: 0, soma: 0, min: Infinity, max: 0 });
+    if (p.dias != null) { F.entregues++; F.soma += p.dias; F.min = Math.min(F.min, p.dias); F.max = Math.max(F.max, p.dias); }
+    else F.pendentes++;
+  });
+  let linhas = Object.values(forn).map(F => ({
+    ...F, medio: F.entregues > 0 ? F.soma / F.entregues : null, min: F.min === Infinity ? null : F.min,
+  }));
+  if (busca) linhas = linhas.filter(l => norm(l.fornecedor).includes(busca));
+  linhas.sort((a, b) => (b.medio ?? -1) - (a.medio ?? -1));   // mais lento primeiro
+  _ltExport = linhas;
+
+  // resumo geral
+  const totEntregues = _ltPedidos.filter(p => p.dias != null).length;
+  const totPend = _ltPedidos.filter(p => p.dias == null).length;
+  const mediaGeral = totEntregues > 0 ? _ltPedidos.filter(p => p.dias != null).reduce((s, p) => s + p.dias, 0) / totEntregues : 0;
+  const cont = document.getElementById('lt-contador');
+  if (cont) cont.innerHTML = linhas.length
+    ? `${linhas.length} fornecedor(es) · lead médio geral <strong>${Math.round(mediaGeral)}d</strong> · ${totPend} pedido(s) sem entrega` : '';
+
+  if (!linhas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Sem pedidos no período.</td></tr>';
+    return;
+  }
+  const corLt = d => d == null ? '#6c757d' : (d <= 2 ? '#16a34a' : (d <= 5 ? '#b45309' : '#dc3545'));
+  tbody.innerHTML = linhas.map(l => `<tr>
+    <td>${esc(l.fornecedor)}</td>
+    <td class="text-end">${l.entregues}</td>
+    <td class="text-end fw-bold" style="color:${corLt(l.medio)}">${l.medio != null ? Math.round(l.medio) + 'd' : '—'}</td>
+    <td class="text-end">${l.min != null ? l.min + 'd' : '—'}</td>
+    <td class="text-end">${l.entregues ? l.max + 'd' : '—'}</td>
+    <td class="text-end">${l.pendentes ? `<span style="color:#b45309">${l.pendentes}</span>` : '0'}</td>
+  </tr>`).join('');
+}
+
+function exportarLeadTime() {
+  const linhas = (_ltExport || []).map(l => ({
+    fornecedor: l.fornecedor, entregues: l.entregues,
+    medio: l.medio != null ? Math.round(l.medio) : '', min: l.min != null ? l.min : '',
+    max: l.entregues ? l.max : '', pendentes: l.pendentes,
+  }));
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Lead Time por Fornecedor',
+    periodoLabel: `${document.getElementById('lt-ini')?.value || ''} a ${document.getElementById('lt-fim')?.value || ''}`,
+    colunas: [
+      { header: 'Fornecedor', key: 'fornecedor', tipo: 'texto', wch: 30 },
+      { header: 'Pedidos Entregues', key: 'entregues', tipo: 'int', wch: 16 },
+      { header: 'Lead Médio (dias)', key: 'medio', tipo: 'int', wch: 16 },
+      { header: 'Mínimo (dias)', key: 'min', tipo: 'int', wch: 14 },
+      { header: 'Máximo (dias)', key: 'max', tipo: 'int', wch: 14 },
+      { header: 'Sem Entrega', key: 'pendentes', tipo: 'int', wch: 12 },
+    ],
+    linhas,
+    nomeArq: 'lead-time.xlsx',
   });
 }
 

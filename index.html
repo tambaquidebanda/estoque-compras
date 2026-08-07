@@ -158,6 +158,9 @@
         <a href="#" onclick="ir('comp-preco',this)">
           <i class="bi bi-currency-dollar"></i> Comparativo de Preço
         </a>
+        <a href="#" onclick="ir('lead-time',this)">
+          <i class="bi bi-clock-history"></i> Lead Time Fornecedor
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2350,6 +2353,59 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Compara <strong>pedido × recebido</strong> por produto (vínculo por código). <span style="color:#dc3545">Faltou/Sobrou/Preço/Não recebido</span> = divergência; <span style="color:#6c757d">Pendente</span> = pedido ainda em aberto; <span style="color:#6c757d">Dispensado</span> = item cancelado no recebimento. Filtra por data do <strong>pedido</strong> (o recebimento pode ser posterior).
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ LEAD TIME FORNECEDOR (D9) ═══════════ -->
+    <section id="pg-lead-time" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-clock-history"></i> Lead Time por Fornecedor</h1>
+        <span class="text-muted small" id="lt-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De (data do pedido)</label>
+          <input type="date" class="form-control form-control-sm" id="lt-ini" onchange="renderLeadTime()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="lt-fim" onchange="renderLeadTime()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="ltPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="ltPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="ltPeriodo(12)">12 meses</button>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="lt-busca" placeholder="Buscar fornecedor..." oninput="_pintarLeadTime()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarLeadTime()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Fornecedor</th>
+                <th class="text-end">Pedidos Entregues</th>
+                <th class="text-end">Lead Médio</th>
+                <th class="text-end">Mínimo</th>
+                <th class="text-end">Máximo</th>
+                <th class="text-end">Sem Entrega</th>
+              </tr>
+            </thead>
+            <tbody id="lst-lt">
+              <tr><td colspan="6" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Dias entre a <strong>data do pedido</strong> e a <strong>1ª entrega</strong> (recebimento), casados por nº do pedido. <span style="color:#16a34a">Verde</span> ≤2d · <span style="color:#b45309">âmbar</span> ≤5d · <span style="color:#dc3545">vermelho</span> mais lento. "Sem entrega" = pedido do período ainda não recebido.
           </small>
         </div>
       </div>
