@@ -1167,11 +1167,13 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
 
     // Casa por produto_id (vínculo por código); nome só como fallback.
     const deltaPorId = {};
+    const custoPorId = {};
     for (const it of itensReceb) {
       if (!it.qtd_recebida) continue;
       const pid = it.produto_id || idPorNome[_normNome(it.produto || '')];
       if (!pid) continue;
       deltaPorId[pid] = (deltaPorId[pid] || 0) + Number(it.qtd_recebida);
+      if (Number(it.valor_unitario) > 0) custoPorId[pid] = Number(it.valor_unitario);
     }
     const ids = Object.keys(deltaPorId);
     if (!ids.length) return;
@@ -1185,7 +1187,21 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
       produto_id: pid, local: 'ESTOQUE_LOJA',
       saldo: (atual[pid] || 0) + deltaPorId[pid], updated_at: new Date().toISOString()
     }));
-    await sb.from('est_saldo_local').upsert(rows, { onConflict: 'produto_id,local' });
+    const { error: eUp } = await sb.from('est_saldo_local').upsert(rows, { onConflict: 'produto_id,local' });
+    if (eUp) { console.error('saldo recebimento (mobile):', eUp.message); return; }
+
+    // Livro-razão (F3): uma entrada de recebimento por produto — best-effort (nunca derruba)
+    try {
+      const movs = ids.filter(pid => deltaPorId[pid]).map(pid => {
+        const m = { produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: deltaPorId[pid], origem: 'recebimento', motivo: 'Recebimento (mobile)' };
+        if (custoPorId[pid] != null) m.custo_unit = custoPorId[pid];
+        return m;
+      });
+      if (movs.length) {
+        const { error: eLed } = await sb.from('est_movimentacoes').insert(movs);
+        if (eLed) console.error('recebimento mobile: razão falhou (saldo OK):', eLed.message);
+      }
+    } catch (e) { console.error('recebimento mobile: exceção no razão (saldo OK):', e); }
   } catch (e) {
     console.error('Atualização de saldo no recebimento (mobile) falhou:', e);
     // Nunca interrompe o recebimento
