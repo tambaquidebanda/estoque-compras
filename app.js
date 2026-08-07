@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -235,6 +235,7 @@ function ir(nome, el) {
   if (nome === 'usuarios')      carregarUsuarios();
   if (nome === 'custo-produto') carregarCustoProduto();
   if (nome === 'rel-fornecedor') carregarRelForn();
+  if (nome === 'rel-divergencia') carregarRelDiv();
 }
 
 function irCad(tab, el) {
@@ -8634,17 +8635,31 @@ function _relCadIndex() {
 // Fetcher RECEBIDO — junta cmp_recebimentos (cabeçalho: fornecedor, data) com
 // cmp_recebimento_itens (linhas: produto_id, qtd, total). Uma linha por item recebido.
 // Filtros: {ini, fim, fornecedor?}. Casa o produto pelo produto_id (fallback: nome).
-async function fetchRecebido({ ini, fim, fornecedor = '' } = {}) {
+// `pedidoNums` (opcional): busca os recebimentos por lista de pedidos, ignorando o
+// filtro de data — usado pelo D2 p/ captar recebimentos feitos após o fim do período.
+async function fetchRecebido({ ini, fim, fornecedor = '', pedidoNums = null } = {}) {
   if (!cProdutosFT.length) await carregarProdutosFT();
-  const recs = await _fetchAllPaged('cmp_recebimentos',
-    'id,pedido_num,data_receb,fornecedor',
-    q => {
-      let x = q;
-      if (ini)        x = x.gte('data_receb', ini);
-      if (fim)        x = x.lte('data_receb', fim);
-      if (fornecedor) x = x.eq('fornecedor', fornecedor);
-      return x;
-    });
+  let recs = [];
+  if (pedidoNums && pedidoNums.length) {
+    const uniq = [...new Set(pedidoNums)];
+    for (let i = 0; i < uniq.length; i += 300) {
+      const lote = uniq.slice(i, i + 300);
+      const data = await _fetchAllPaged('cmp_recebimentos',
+        'id,pedido_num,data_receb,fornecedor',
+        q => q.in('pedido_num', lote));
+      recs = recs.concat(data);
+    }
+  } else {
+    recs = await _fetchAllPaged('cmp_recebimentos',
+      'id,pedido_num,data_receb,fornecedor',
+      q => {
+        let x = q;
+        if (ini)        x = x.gte('data_receb', ini);
+        if (fim)        x = x.lte('data_receb', fim);
+        if (fornecedor) x = x.eq('fornecedor', fornecedor);
+        return x;
+      });
+  }
   if (!recs.length) return [];
   const hdr = {};
   recs.forEach(r => { hdr[r.id] = r; });
@@ -8860,6 +8875,175 @@ function exportarRelForn() {
     linhas: _relFornExport,
     rodape: [{ key: 'total', valor: total }],
     nomeArq: `compra-fornecedor${ini ? '_' + ini : ''}${fim ? '_a_' + fim : ''}.xlsx`,
+  });
+}
+
+// ═══════════════ RELATÓRIO: DIVERGÊNCIAS DE RECEBIMENTO (D2) ═══════════════
+// Compara PEDIDO × RECEBIDO por (pedido, produto) e destaca o que não bateu:
+// faltou, sobrou, preço diferente, não recebido (pedido fechado) ou recebido sem pedido.
+// Usa os fetchers do F1. Pedido 'pendente' (ainda em aberto) e 'dispensado' não são erro.
+let _relDivRaw = [];       // linhas classificadas (todas)
+let _relDivExport = [];    // linhas visíveis (após filtros) p/ export
+const _DIV_TOL_QTD = 0.001, _DIV_TOL_PRECO = 0.01;
+
+function rdPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('rd-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('rd-fim').value = fim.toISOString().slice(0, 10);
+  renderRelDiv();
+}
+
+async function carregarRelDiv() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  if (!document.getElementById('rd-ini').value) rdPeriodo(3);
+  else await renderRelDiv();
+}
+
+function _divClassifica(r) {
+  const pQtd = r.pedQtd, rQtd = r.recQtd;
+  const temPed = pQtd > 0 || r.temLinhaPed;
+  const temRec = rQtd > 0;
+  const dq = rQtd - pQtd;                 // recebido − pedido
+  const dp = (r.recUnit || 0) - (r.pedUnit || 0);
+  // Não recebido
+  if (temPed && !temRec) {
+    if (r.pedAllDispensado) return { status: 'Dispensado', cor: '#6c757d', div: false };
+    if (r.pedTemRecebido)   return { status: 'Não recebido', cor: '#dc3545', div: true };
+    return { status: 'Pendente', cor: '#6c757d', div: false };   // ainda em aberto
+  }
+  // Recebido sem pedido correspondente
+  if (!temPed && temRec) return { status: 'Recebido sem pedido', cor: '#fd7e14', div: true };
+  // Ambos existem → compara
+  const qtdOk   = Math.abs(dq) < _DIV_TOL_QTD;
+  const precoOk = Math.abs(dp) < _DIV_TOL_PRECO;
+  if (qtdOk && precoOk) return { status: 'OK', cor: '#198754', div: false };
+  const partes = [];
+  if (!qtdOk)   partes.push(dq < 0 ? `Faltou ${_cpFmtQtd(Math.abs(dq))}` : `Sobrou ${_cpFmtQtd(dq)}`);
+  if (!precoOk) partes.push(`Preço ${dp > 0 ? '+' : '−'}${brl(Math.abs(dp)).replace('R$', '').trim()}`);
+  return { status: partes.join(' · '), cor: '#dc3545', div: true };
+}
+
+async function renderRelDiv() {
+  const tbody = document.getElementById('lst-rel-div');
+  const ini = document.getElementById('rd-ini').value;
+  const fim = document.getElementById('rd-fim').value;
+  if (!ini || !fim) return;
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+
+  // 1. pedidos feitos no período (por data do pedido)
+  const pedidos = await fetchPedidos({ ini, fim });
+  // 2. recebimentos desses pedidos (independe da data de recebimento)
+  const nums = [...new Set(pedidos.map(p => p.pedido_num).filter(Boolean))];
+  const recebidos = nums.length ? await fetchRecebido({ pedidoNums: nums }) : [];
+
+  // 3. agrega por (pedido_num, produto_id|nome)
+  const map = {};
+  const chave = x => `${x.pedido_num}||${x.produto_id || 'nome:' + norm(x.produto)}`;
+  pedidos.forEach(p => {
+    const k = chave(p);
+    if (!map[k]) map[k] = { pedido_num: p.pedido_num, fornecedor: p.fornecedor, produto: p.produto, unidade_uso: p.unidade_uso, categoria: p.categoria, pedQtd: 0, pedVal: 0, recQtd: 0, recVal: 0, temLinhaPed: false, pedAllDispensado: true, pedTemRecebido: false };
+    const m = map[k];
+    m.temLinhaPed = true;
+    m.pedQtd += p.qtd;
+    m.pedVal += p.qtd * (p.unit || 0);
+    if (p.status_receb !== 'dispensado') m.pedAllDispensado = false;
+    if (p.status_receb === 'recebido')   m.pedTemRecebido = true;
+    if (!m.fornecedor && p.fornecedor) m.fornecedor = p.fornecedor;
+  });
+  recebidos.forEach(r => {
+    const k = chave(r);
+    if (!map[k]) map[k] = { pedido_num: r.pedido_num, fornecedor: r.fornecedor, produto: r.produto, unidade_uso: r.unidade_uso, categoria: r.categoria, pedQtd: 0, pedVal: 0, recQtd: 0, recVal: 0, temLinhaPed: false, pedAllDispensado: false, pedTemRecebido: false };
+    const m = map[k];
+    m.recQtd += r.qtd;
+    m.recVal += r.total;
+    if (!m.fornecedor && r.fornecedor) m.fornecedor = r.fornecedor;
+  });
+
+  // 4. calcula preços médios e classifica
+  _relDivRaw = Object.values(map).map(m => {
+    m.pedUnit = m.pedQtd > 0 ? m.pedVal / m.pedQtd : 0;
+    m.recUnit = m.recQtd > 0 ? m.recVal / m.recQtd : 0;
+    const c = _divClassifica(m);
+    return { ...m, status: c.status, cor: c.cor, ehDiv: c.div };
+  });
+
+  _preencherFornecedoresRD(_relDivRaw);
+  _pintarRelDiv();
+}
+
+function _preencherFornecedoresRD(dados) {
+  const sel = document.getElementById('rd-fornecedor');
+  const atual = sel.value;
+  const fs = [...new Set(dados.map(d => d.fornecedor || '(sem fornecedor)'))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  sel.innerHTML = '<option value="">Todos</option>' + fs.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+  if (fs.includes(atual)) sel.value = atual;
+}
+
+function _pintarRelDiv() {
+  const tbody = document.getElementById('lst-rel-div');
+  const fornSel = document.getElementById('rd-fornecedor').value;
+  const busca = norm(document.getElementById('rd-busca').value.trim());
+  const soDiv = document.getElementById('rd-so-div').checked;
+
+  let linhas = _relDivRaw.filter(d =>
+    (!fornSel || (d.fornecedor || '(sem fornecedor)') === fornSel) &&
+    (!busca || norm(d.produto).includes(busca)) &&
+    (!soDiv || d.ehDiv));
+  // divergências primeiro; depois por fornecedor, pedido, produto
+  linhas.sort((a, b) =>
+    (b.ehDiv - a.ehDiv) ||
+    (a.fornecedor || '').localeCompare(b.fornecedor || '', 'pt-BR') ||
+    (a.pedido_num || '').localeCompare(b.pedido_num || '', 'pt-BR') ||
+    a.produto.localeCompare(b.produto, 'pt-BR'));
+  _relDivExport = linhas;
+
+  const nDiv = _relDivRaw.filter(d => d.ehDiv).length;
+  document.getElementById('rd-contador').textContent =
+    `${nDiv} divergência(s) · ${_relDivRaw.length} linha(s) avaliada(s)`;
+
+  if (!linhas.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">${soDiv ? 'Nenhuma divergência no período/filtro. ✅' : 'Nada no período/filtro.'}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = linhas.map(l => {
+    const semCad = !l.produto_id ? ' <i class="bi bi-exclamation-circle text-warning" title="Sem código de produto (vínculo por nome)"></i>' : '';
+    return `<tr>
+      <td class="small">${esc(l.pedido_num || '—')}</td>
+      <td class="small">${esc(l.fornecedor || '—')}</td>
+      <td><strong>${esc(l.produto)}</strong> <span class="text-muted small">${esc(l.unidade_uso)}</span>${semCad}</td>
+      <td class="text-end">${_cpFmtQtd(l.pedQtd)}</td>
+      <td class="text-end">${_cpFmtQtd(l.recQtd)}</td>
+      <td class="text-end small">${l.pedUnit ? brl(l.pedUnit) : '—'}</td>
+      <td class="text-end small">${l.recUnit ? brl(l.recUnit) : '—'}</td>
+      <td class="text-end"><span class="badge" style="background:${l.cor}">${esc(l.status)}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function exportarRelDiv() {
+  if (!_relDivExport.length) { toast('Nada para exportar.', 'erro'); return; }
+  const ini = document.getElementById('rd-ini').value;
+  const fim = document.getElementById('rd-fim').value;
+  const periodoLabel = (ini && fim)
+    ? `${ini.split('-').reverse().join('/')} a ${fim.split('-').reverse().join('/')}` : '';
+  exportarRelExcel({
+    titulo: 'Divergências de Recebimento',
+    periodoLabel,
+    colunas: [
+      { header: 'Pedido',       key: 'pedido_num',  wch: 12 },
+      { header: 'Fornecedor',   key: 'fornecedor',  wch: 26 },
+      { header: 'Produto',      key: 'produto',     wch: 30 },
+      { header: 'Unid. Uso',    key: 'unidade_uso', wch: 10 },
+      { header: 'Qtd. Pedida',  key: 'pedQtd', tipo: 'qtd', wch: 12 },
+      { header: 'Qtd. Recebida',key: 'recQtd', tipo: 'qtd', wch: 13 },
+      { header: 'Preço Pedido', key: 'pedUnit', tipo: 'moeda', wch: 13 },
+      { header: 'Preço Receb.', key: 'recUnit', tipo: 'moeda', wch: 13 },
+      { header: 'Status',       key: 'status',      wch: 22 },
+    ],
+    linhas: _relDivExport,
+    nomeArq: `divergencias-recebimento${ini ? '_' + ini : ''}${fim ? '_a_' + fim : ''}.xlsx`,
   });
 }
 

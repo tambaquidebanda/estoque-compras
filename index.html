@@ -143,6 +143,9 @@
         <a href="#" onclick="ir('rel-fornecedor',this)">
           <i class="bi bi-truck"></i> Compra por Fornecedor
         </a>
+        <a href="#" onclick="ir('rel-divergencia',this)">
+          <i class="bi bi-clipboard2-x"></i> Divergências Receb.
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2270,6 +2273,71 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Agrupa as <strong>compras recebidas</strong> por fornecedor e produto (vínculo por <strong>código do produto</strong>). Mostra total por fornecedor e total geral. Valores por unidade de uso, conforme o recebimento.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ RELATÓRIO: DIVERGÊNCIAS DE RECEBIMENTO (D2) ═══════════ -->
+    <section id="pg-rel-divergencia" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-clipboard2-x"></i> Divergências de Recebimento</h1>
+        <span class="text-muted small" id="rd-contador"></span>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De (data do pedido)</label>
+          <input type="date" class="form-control form-control-sm" id="rd-ini" onchange="renderRelDiv()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="rd-fim" onchange="renderRelDiv()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="rdPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="rdPeriodo(6)">6 meses</button>
+          <button class="btn btn-outline-secondary" onclick="rdPeriodo(12)">12 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Fornecedor</label>
+          <select class="form-select form-select-sm" id="rd-fornecedor" onchange="_pintarRelDiv()" style="min-width:200px">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="rd-so-div" checked onchange="_pintarRelDiv()">
+          <label class="form-check-label small" for="rd-so-div">Só divergências</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="rd-busca" placeholder="Buscar produto..." oninput="_pintarRelDiv()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarRelDiv()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Pedido</th>
+                <th>Fornecedor</th>
+                <th>Produto</th>
+                <th class="text-end">Qtd. Pedida</th>
+                <th class="text-end">Qtd. Recebida</th>
+                <th class="text-end">Preço Pedido</th>
+                <th class="text-end">Preço Receb.</th>
+                <th class="text-end">Status</th>
+              </tr>
+            </thead>
+            <tbody id="lst-rel-div">
+              <tr><td colspan="8" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Compara <strong>pedido × recebido</strong> por produto (vínculo por código). <span style="color:#dc3545">Faltou/Sobrou/Preço/Não recebido</span> = divergência; <span style="color:#6c757d">Pendente</span> = pedido ainda em aberto; <span style="color:#6c757d">Dispensado</span> = item cancelado no recebimento. Filtra por data do <strong>pedido</strong> (o recebimento pode ser posterior).
           </small>
         </div>
       </div>
