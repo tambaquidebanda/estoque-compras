@@ -2503,6 +2503,20 @@
           <button class="btn btn-outline-secondary" onclick="caPeriodo(12)">12 meses</button>
         </div>
         <div>
+          <label class="form-label small text-muted mb-1">Classificar por</label>
+          <select class="form-select form-select-sm" id="ca-dim" onchange="_pintarCurvaABC()">
+            <option value="produto">Produto</option>
+            <option value="fornecedor">Fornecedor</option>
+            <option value="categoria">Categoria</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Unidade</label>
+          <select class="form-select form-select-sm" id="ca-unidade" onchange="_pintarCurvaABC()" style="min-width:150px">
+            <option value="">Todas as unidades</option>
+          </select>
+        </div>
+        <div>
           <label class="form-label small text-muted mb-1">Classe</label>
           <select class="form-select form-select-sm" id="ca-classe" onchange="_pintarCurvaABC()">
             <option value="">Todas</option>
@@ -2512,7 +2526,7 @@
           </select>
         </div>
         <div class="flex-grow-1"></div>
-        <input type="search" class="form-control form-control-sm" id="ca-busca" placeholder="Buscar produto..." oninput="_pintarCurvaABC()" style="width:200px">
+        <input type="search" class="form-control form-control-sm" id="ca-busca" placeholder="Buscar..." oninput="_pintarCurvaABC()" style="width:200px">
         <button class="btn btn-sm btn-outline-success" onclick="exportarCurvaABC()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
       </div>
 
@@ -2525,23 +2539,22 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Produto</th>
-                <th class="text-center">Unid. Uso</th>
-                <th class="text-end">Qtd. Comprada</th>
-                <th class="text-end">Total Comprado</th>
+                <th>Descrição</th>
+                <th class="text-end">Qtd</th>
+                <th class="text-end">Total Recebido</th>
                 <th class="text-end">% do Total</th>
-                <th class="text-end">% Acumulado</th>
+                <th class="text-end">% Acum.</th>
                 <th class="text-center">Classe</th>
               </tr>
             </thead>
             <tbody id="lst-ca">
-              <tr><td colspan="8" class="text-center text-muted py-4">Selecione o período.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">Selecione o período.</td></tr>
             </tbody>
           </table>
         </div>
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
-            <i class="bi bi-info-circle me-1"></i><strong>Classe A</strong> = poucos itens que somam ~80% do gasto (foco da gestão) · <strong>B</strong> = próximos ~15% · <strong>C</strong> = a cauda (muitos itens, pouco valor). Base: compras recebidas no período, por unidade de uso.
+            <i class="bi bi-info-circle me-1"></i><strong>Classe A</strong> = itens que somam ~80% do gasto (foco da gestão) · <strong>B</strong> ~15% · <strong>C</strong> = a cauda. Base: <strong>compras recebidas reais</strong> (total_recebido) no período. Classifique por <strong>Produto</strong>, <strong>Fornecedor</strong> ou <strong>Categoria</strong> (do pedido — mostra os produtos), e filtre pela <strong>Unidade</strong> da compra.
           </small>
         </div>
       </div>
