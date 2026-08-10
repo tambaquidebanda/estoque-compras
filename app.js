@@ -4518,7 +4518,7 @@ function buscarProdutoEmerg(idx) {
     const setorHits = _produtosEmergDesk.filter(p => norm(p.nome).includes(qn));
     const jaTem = new Set(setorHits.map(p => norm(p.nome)));
     const cadHits = cProdutosFT
-      .filter(p => norm(p.nome).includes(qn) && !jaTem.has(norm(p.nome)))
+      .filter(p => p.tipo !== 'VENDA' && norm(p.nome).includes(qn) && !jaTem.has(norm(p.nome)))
       .map(p => ({ id: p.id, nome: p.nome }));
     hits = [...setorHits, ...cadHits].slice(0, 60);
   }

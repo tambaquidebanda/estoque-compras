@@ -951,7 +951,7 @@ function atualizarBtnsDia() {
 async function carregarProdutos() {
   let todos = [], pag = 0;
   while (true) {
-    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp')
+    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp,tipo')
       .eq('ativo', true).range(pag * 1000, pag * 1000 + 999);
     if (!data?.length) break;
     todos = todos.concat(data);
@@ -1710,7 +1710,7 @@ function buscarEmergMob(idx) {
     const setorHits = _produtosEmerg.filter(p => norm(p.nome).includes(q));
     const jaTem = new Set(setorHits.map(p => norm(p.nome)));
     const cadHits = (_todosProdutos || [])
-      .filter(p => norm(p.nome).includes(q) && !jaTem.has(norm(p.nome)))
+      .filter(p => p.tipo !== 'VENDA' && norm(p.nome).includes(q) && !jaTem.has(norm(p.nome)))
       .map(p => ({ id: p.id, nome: p.nome }));
     hits = [...setorHits, ...cadHits].slice(0, 60);
   }
