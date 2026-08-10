@@ -1701,10 +1701,20 @@ function buscarEmergMob(idx) {
   const q  = norm(document.getElementById(`emerg-busca-${idx}`)?.value || '');
   const el = document.getElementById(`emerg-sugest-${idx}`);
   if (!el) return;
-  // Sem texto → mostra a lista inteira do setor (funciona como um dropdown).
-  // Com texto → filtra. Só busca dentro dos produtos deste setor (_produtosEmerg).
-  const hits = (q.length < 1 ? _produtosEmerg : _produtosEmerg.filter(p => norm(p.nome).includes(q))).slice(0, 60);
-  if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto neste setor.</div>'; el.style.display = 'block'; return; }
+  // Sem texto → lista do setor (dropdown, mantida). Com texto → produtos do setor
+  // primeiro e depois QUALQUER produto do cadastro (emergência pode pedir qualquer item).
+  let hits;
+  if (q.length < 1) {
+    hits = _produtosEmerg.slice(0, 60);
+  } else {
+    const setorHits = _produtosEmerg.filter(p => norm(p.nome).includes(q));
+    const jaTem = new Set(setorHits.map(p => norm(p.nome)));
+    const cadHits = (_todosProdutos || [])
+      .filter(p => norm(p.nome).includes(q) && !jaTem.has(norm(p.nome)))
+      .map(p => ({ id: p.id, nome: p.nome }));
+    hits = [...setorHits, ...cadHits].slice(0, 60);
+  }
+  if (!hits.length) { el.innerHTML = '<div class="sug-item" style="color:var(--txt2)">Nenhum produto encontrado.</div>'; el.style.display = 'block'; return; }
   el.innerHTML = hits.map(p =>
     `<button type="button" class="sug-item" data-id="${esc(p.id || '')}" data-nome="${esc(p.nome)}">${esc(p.nome)}</button>`
   ).join('');

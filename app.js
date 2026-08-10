@@ -4509,12 +4509,23 @@ function buscarProdutoEmerg(idx) {
   const qn = norm((document.getElementById(`emerg-busca-${idx}`)?.value || '').trim());
   const el = document.getElementById(`emerg-sugest-${idx}`);
   if (!el) return;
-  // Sem texto → lista inteira do setor (dropdown). Com texto → filtra. Só produtos do setor.
-  const hits = (qn.length < 1 ? _produtosEmergDesk : _produtosEmergDesk.filter(p => norm(p.nome).includes(qn))).slice(0, 60);
+  // Sem texto → lista do setor (dropdown, mantida). Com texto → produtos do setor
+  // primeiro e depois QUALQUER produto do cadastro (emergência pode pedir qualquer item).
+  let hits;
+  if (qn.length < 1) {
+    hits = _produtosEmergDesk.slice(0, 60);
+  } else {
+    const setorHits = _produtosEmergDesk.filter(p => norm(p.nome).includes(qn));
+    const jaTem = new Set(setorHits.map(p => norm(p.nome)));
+    const cadHits = cProdutosFT
+      .filter(p => norm(p.nome).includes(qn) && !jaTem.has(norm(p.nome)))
+      .map(p => ({ id: p.id, nome: p.nome }));
+    hits = [...setorHits, ...cadHits].slice(0, 60);
+  }
   el.innerHTML = hits.length
     ? hits.map(p => `<button type="button" class="list-group-item list-group-item-action py-1 small"
         onclick="selecionarProdEmerg(${idx},${JSON.stringify(p.id || '')},${JSON.stringify(p.nome)})">${esc(p.nome)}</button>`).join('')
-    : '<div class="list-group-item text-muted small py-1">Nenhum produto neste setor.</div>';
+    : '<div class="list-group-item text-muted small py-1">Nenhum produto encontrado.</div>';
 }
 
 function selecionarProdEmerg(idx, id, nome) {
