@@ -159,7 +159,7 @@
           <i class="bi bi-currency-dollar"></i> Comparativo de Preço
         </a>
         <a href="#" onclick="ir('lead-time',this)">
-          <i class="bi bi-clock-history"></i> Lead Time Fornecedor
+          <i class="bi bi-clock-history"></i> Pontualidade de Entrega
         </a>
         <a href="#" onclick="ir('sem-giro',this)">
           <i class="bi bi-hourglass-split"></i> Produtos sem Giro
@@ -450,6 +450,10 @@
                 <option value="Boleto">🏦 Boleto</option>
                 <option value="Cartão">💳 Cartão</option>
               </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">🚚 Data de Entrega <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="c-data-entrega" required>
             </div>
           </div>
 
@@ -2056,8 +2060,8 @@
             <input type="text" class="form-control form-control-sm" id="plan-comp-forn" readonly>
           </div>
           <div class="col-md-3">
-            <label class="form-label fw-semibold small mb-1">🚚 Data de Entrega</label>
-            <input type="date" class="form-control form-control-sm" id="plan-data-entrega">
+            <label class="form-label fw-semibold small mb-1">🚚 Data de Entrega <span class="text-danger">*</span></label>
+            <input type="date" class="form-control form-control-sm" id="plan-data-entrega" required>
           </div>
           <div class="col-md-2 d-flex align-items-end">
             <button class="btn btn-success w-100" onclick="confirmarPedidoFornecedor()" id="btn-confirmar-forn" disabled>
@@ -2378,14 +2382,14 @@
     <!-- ═══════════ LEAD TIME FORNECEDOR (D9) ═══════════ -->
     <section id="pg-lead-time" class="pagina">
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <h1 class="mb-0"><i class="bi bi-clock-history"></i> Lead Time por Fornecedor</h1>
+        <h1 class="mb-0"><i class="bi bi-clock-history"></i> Pontualidade de Entrega por Fornecedor</h1>
         <span class="text-muted small" id="lt-contador"></span>
       </div>
 
       <!-- Filtros -->
       <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
         <div>
-          <label class="form-label small text-muted mb-1">De (data do pedido)</label>
+          <label class="form-label small text-muted mb-1">De (data de entrega prevista)</label>
           <input type="date" class="form-control form-control-sm" id="lt-ini" onchange="renderLeadTime()">
         </div>
         <div>
@@ -2408,11 +2412,11 @@
             <thead>
               <tr>
                 <th>Fornecedor</th>
-                <th class="text-end">Pedidos Entregues</th>
-                <th class="text-end">Lead Médio</th>
-                <th class="text-end">Mínimo</th>
-                <th class="text-end">Máximo</th>
-                <th class="text-end">Sem Entrega</th>
+                <th class="text-end">Entregas Avaliadas</th>
+                <th class="text-end">% no Prazo</th>
+                <th class="text-end">Atraso Médio</th>
+                <th class="text-end">Pior Atraso</th>
+                <th class="text-end">Em Aberto Vencidas</th>
               </tr>
             </thead>
             <tbody id="lst-lt">
@@ -2422,7 +2426,7 @@
         </div>
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
-            <i class="bi bi-info-circle me-1"></i>Dias entre a <strong>data do pedido</strong> e a <strong>1ª entrega</strong> (recebimento), casados por nº do pedido. <span style="color:#16a34a">Verde</span> ≤2d · <span style="color:#b45309">âmbar</span> ≤5d · <span style="color:#dc3545">vermelho</span> mais lento. "Sem entrega" = pedido do período ainda não recebido.
+            <i class="bi bi-info-circle me-1"></i>Compara a <strong>data de entrega combinada</strong> com a <strong>1ª entrega real</strong> (recebimento), por nº do pedido. Atraso = recebimento − combinada: <strong>≤ 0 = no prazo</strong> (em dia/adiantado), <strong>&gt; 0 = atrasado</strong>. <span style="color:#16a34a">Verde</span> ≥90% no prazo · <span style="color:#b45309">âmbar</span> ≥70% · <span style="color:#dc3545">vermelho</span> abaixo. "Em Aberto Vencidas" = pedidos cuja data combinada já passou e ainda não foram recebidos. O período filtra pela <strong>data de entrega prevista</strong>; pedidos sem data combinada não entram.
           </small>
         </div>
       </div>

@@ -930,6 +930,8 @@ async function prepararFormCompra() {
       if (setorSel) setorSel.value = primeiro.setor || '';
       const fmSel = document.getElementById('c-forma-pgto');
       if (fmSel) fmSel.value = primeiro.formaPagamento || '';
+      const deEl = document.getElementById('c-data-entrega');
+      if (deEl) deEl.value = primeiro.dataEntrega || '';
     }
     setMoeda('c-acrescimo', _pedidoAcrescimo || 0);
     const proxEl = document.getElementById('prox-pedido-num');
@@ -1322,8 +1324,16 @@ async function finalizarPedido() {
   const acrescimo     = parseMoeda('c-acrescimo');
   const setor         = document.getElementById('c-setor')?.value || '';
   const forma_pagamento = document.getElementById('c-forma-pgto')?.value || '';
+  const data_entrega  = document.getElementById('c-data-entrega')?.value || '';
   if (!forma_pagamento) {
     toast('Selecione a Forma de Pagamento.', 'erro');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+    return;
+  }
+  if (!data_entrega) {
+    toast('Informe a Data de Entrega combinada com o fornecedor.', 'erro');
+    document.getElementById('c-data-entrega')?.focus();
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
     return;
@@ -1331,6 +1341,7 @@ async function finalizarPedido() {
 
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
+    data_entrega,
     pedido_num,
     fornecedor_id:   it.fornId,
     fornecedor_nome: it.fornNome,
@@ -1380,6 +1391,8 @@ function cancelarPedido() {
   if (setorSel) setorSel.value = '';
   const formaPgtoSel = document.getElementById('c-forma-pgto');
   if (formaPgtoSel) formaPgtoSel.value = '';
+  const dataEntEl = document.getElementById('c-data-entrega');
+  if (dataEntEl) dataEntEl.value = '';
   _renderItensPedido();
 
   // Oculta aviso de edição
@@ -5181,6 +5194,7 @@ async function confirmarPedidoFornecedor() {
   const dataEntr  = document.getElementById('plan-data-entrega')?.value || '';
   if (!forn)      { toast('Selecione um fornecedor no filtro.', 'erro'); return; }
   if (!comprador) { toast('Selecione um comprador.', 'erro'); return; }
+  if (!dataEntr)  { toast('Informe a Data de Entrega combinada com o fornecedor.', 'erro'); document.getElementById('plan-data-entrega')?.focus(); return; }
 
   const tbody = document.getElementById('lst-planejamento');
   const keys  = JSON.parse(tbody.dataset.keys || '[]');
@@ -6914,7 +6928,7 @@ async function reabrirPedido(pedido_num) {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento')
+    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -6928,6 +6942,7 @@ async function editarPedido(pedido_num) {
     const uniObj = cUnidades.find(u => u.nome === it.unidade_uso);
     return {
       data:       it.data,
+      dataEntrega: it.data_entrega || '',
       fornNome:   it.fornecedor_nome,
       fornId:     it.fornecedor_id,
       comp:       it.comprador,
@@ -8823,7 +8838,7 @@ async function fetchRecebido({ ini, fim, fornecedor = '', pedidoNums = null, com
 async function fetchPedidos({ ini, fim, fornecedor = '' } = {}) {
   if (!cProdutosFT.length) await carregarProdutosFT();
   const rows = await _fetchAllPaged('cmp_compras',
-    'id,pedido_num,data,fornecedor_nome,produto,produto_id,categoria,unidade_med,unidade_uso,quantidade,custo_unit,status_receb',
+    'id,pedido_num,data,data_entrega,fornecedor_nome,produto,produto_id,categoria,unidade_med,unidade_uso,quantidade,custo_unit,status_receb',
     q => {
       let x = q;
       if (ini)        x = x.gte('data', ini);
@@ -8842,6 +8857,7 @@ async function fetchPedidos({ ini, fim, fornecedor = '' } = {}) {
       produto:      p?.nome || c.produto || '',
       fornecedor:   c.fornecedor_nome || '',
       data:         c.data || '',
+      data_entrega: c.data_entrega || '',
       pedido_num:   c.pedido_num || '',
       categoria:    p?.categoria || c.categoria || '—',
       unidade_uso:  p?.unidade_uso || c.unidade_uso || c.unidade_med || 'UN',
@@ -9684,10 +9700,13 @@ function exportarCompPreco() {
   });
 }
 
-// ═══════════════════════ D9 — LEAD TIME POR FORNECEDOR ═══════════════════════
-// Dias entre o PEDIDO (cmp_compras.data) e a ENTREGA (1º recebimento do pedido).
-// Casa pedido↔recebimento por pedido_num (mesmo pareamento do D2). Reusa F1/F2.
-let _ltPedidos = [];   // por pedido: {fornecedor, pedido_num, dataPedido, dataReceb, dias|null}
+// ═══════════════════════ D9 — PONTUALIDADE DE ENTREGA ═══════════════════════
+// Mede o ATRASO do fornecedor: data de entrega COMBINADA (cmp_compras.data_entrega)
+// × 1ª entrega REAL (recebimento). A data do pedido NÃO é mais usada. Casa
+// pedido↔recebimento por pedido_num (mesmo pareamento do D2). Reusa F1/F2.
+// atraso = recebimento − combinada (dias): ≤0 = no prazo (em dia/adiantado), >0 = atrasado.
+// Período filtra pela DATA DE ENTREGA prevista. Pedidos sem data combinada não entram.
+let _ltPedidos = [];   // por pedido: {fornecedor, pedido_num, dataEntrega, dataReceb, atraso|null, emAberto}
 let _ltExport  = [];
 
 function ltPeriodo(meses) {
@@ -9710,18 +9729,25 @@ async function renderLeadTime() {
   const fim = document.getElementById('lt-fim').value;
   if (!ini || !fim) return;
   tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  const hojeStr = new Date().toISOString().slice(0, 10);
 
-  // 1) pedidos do período, agrupados por pedido_num
-  const pedidos = await fetchPedidos({ ini, fim });
+  // 1) pedidos: busca por data do pedido com folga (o pedido é feito antes da entrega),
+  //    depois filtra pela DATA DE ENTREGA combinada dentro do período. Agrupa por pedido_num.
+  const iniAmpl = new Date(new Date(ini).getTime() - 90 * 86400000).toISOString().slice(0, 10);
+  const pedidos = await fetchPedidos({ ini: iniAmpl, fim });
   const byPed = {};
   pedidos.forEach(p => {
     const pn = p.pedido_num || '';
     if (!pn) return;
-    const g = (byPed[pn] ||= { pedido_num: pn, fornecedor: p.fornecedor || '', dataPedido: p.data || '' });
-    if (p.data && (!g.dataPedido || p.data < g.dataPedido)) g.dataPedido = p.data;
+    const g = (byPed[pn] ||= { pedido_num: pn, fornecedor: p.fornecedor || '', dataEntrega: p.data_entrega || '' });
+    if (!g.dataEntrega && p.data_entrega) g.dataEntrega = p.data_entrega;
     if (!g.fornecedor && p.fornecedor) g.fornecedor = p.fornecedor;
   });
-  const pedNums = Object.keys(byPed);
+  // só pedidos com data combinada dentro do período
+  const pedNums = Object.keys(byPed).filter(pn => {
+    const de = byPed[pn].dataEntrega;
+    return de && de >= ini && de <= fim;
+  });
 
   // 2) datas de recebimento (1ª entrega) por pedido_num
   const recByPed = {};
@@ -9734,16 +9760,13 @@ async function renderLeadTime() {
     });
   }
 
-  // 3) lead time por pedido
+  // 3) atraso por pedido
   _ltPedidos = pedNums.map(pn => {
     const g = byPed[pn];
     const dr = recByPed[pn] || null;
-    let dias = null;
-    if (dr && g.dataPedido) {
-      dias = Math.round((new Date(dr) - new Date(g.dataPedido)) / 86400000);
-      if (dias < 0) dias = 0;   // data de recebimento anterior ao pedido = trata como 0
-    }
-    return { fornecedor: g.fornecedor || '(sem fornecedor)', pedido_num: pn, dataPedido: g.dataPedido, dataReceb: dr, dias };
+    const atraso = dr ? Math.round((new Date(dr) - new Date(g.dataEntrega)) / 86400000) : null;
+    const emAberto = !dr && g.dataEntrega < hojeStr;   // não recebido e já venceu a data combinada
+    return { fornecedor: g.fornecedor || '(sem fornecedor)', pedido_num: pn, dataEntrega: g.dataEntrega, dataReceb: dr, atraso, emAberto };
   });
   _pintarLeadTime();
 }
@@ -9756,60 +9779,69 @@ function _pintarLeadTime() {
   // agrega por fornecedor
   const forn = {};
   _ltPedidos.forEach(p => {
-    const F = (forn[p.fornecedor] ||= { fornecedor: p.fornecedor, entregues: 0, pendentes: 0, soma: 0, min: Infinity, max: 0 });
-    if (p.dias != null) { F.entregues++; F.soma += p.dias; F.min = Math.min(F.min, p.dias); F.max = Math.max(F.max, p.dias); }
-    else F.pendentes++;
+    const F = (forn[p.fornecedor] ||= { fornecedor: p.fornecedor, avaliadas: 0, noPrazo: 0, atrasadas: 0, somaAtraso: 0, pior: 0, emAberto: 0 });
+    if (p.atraso != null) {
+      F.avaliadas++;
+      if (p.atraso > 0) { F.atrasadas++; F.somaAtraso += p.atraso; F.pior = Math.max(F.pior, p.atraso); }
+      else F.noPrazo++;
+    }
+    if (p.emAberto) F.emAberto++;
   });
   let linhas = Object.values(forn).map(F => ({
-    ...F, medio: F.entregues > 0 ? F.soma / F.entregues : null, min: F.min === Infinity ? null : F.min,
+    ...F,
+    pontualidade: F.avaliadas > 0 ? (F.noPrazo / F.avaliadas) * 100 : null,
+    atrasoMedio: F.avaliadas > 0 ? F.somaAtraso / F.avaliadas : null,   // atraso médio por entrega (no prazo conta 0)
   }));
   if (busca) linhas = linhas.filter(l => norm(l.fornecedor).includes(busca));
-  linhas.sort((a, b) => (b.medio ?? -1) - (a.medio ?? -1));   // mais lento primeiro
+  linhas.sort((a, b) => (a.pontualidade ?? 999) - (b.pontualidade ?? 999));   // piores primeiro
   _ltExport = linhas;
 
   // resumo geral
-  const totEntregues = _ltPedidos.filter(p => p.dias != null).length;
-  const totPend = _ltPedidos.filter(p => p.dias == null).length;
-  const mediaGeral = totEntregues > 0 ? _ltPedidos.filter(p => p.dias != null).reduce((s, p) => s + p.dias, 0) / totEntregues : 0;
+  const avaliadasTot = _ltPedidos.filter(p => p.atraso != null).length;
+  const noPrazoTot   = _ltPedidos.filter(p => p.atraso != null && p.atraso <= 0).length;
+  const atrasadasTot = _ltPedidos.filter(p => p.atraso != null && p.atraso > 0).length;
+  const abertoTot    = _ltPedidos.filter(p => p.emAberto).length;
+  const pontGeral    = avaliadasTot > 0 ? (noPrazoTot / avaliadasTot) * 100 : null;
   const cont = document.getElementById('lt-contador');
   if (cont) cont.innerHTML = linhas.length
-    ? `${linhas.length} fornecedor(es) · lead médio geral <strong>${Math.round(mediaGeral)}d</strong> · ${totPend} pedido(s) sem entrega` : '';
+    ? `${linhas.length} fornecedor(es) · pontualidade geral <strong>${pontGeral != null ? pontGeral.toFixed(0) + '%' : '—'}</strong> · ${atrasadasTot} atrasada(s)${abertoTot ? ` · ${abertoTot} em aberto vencida(s)` : ''}` : '';
 
   if (!linhas.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Sem pedidos no período.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Sem entregas combinadas no período.</td></tr>';
     return;
   }
-  const corLt = d => d == null ? '#6c757d' : (d <= 2 ? '#16a34a' : (d <= 5 ? '#b45309' : '#dc3545'));
+  const corPont = p => p == null ? '#6c757d' : (p >= 90 ? '#16a34a' : (p >= 70 ? '#b45309' : '#dc3545'));
   tbody.innerHTML = linhas.map(l => `<tr>
     <td>${esc(l.fornecedor)}</td>
-    <td class="text-end">${l.entregues}</td>
-    <td class="text-end fw-bold" style="color:${corLt(l.medio)}">${l.medio != null ? Math.round(l.medio) + 'd' : '—'}</td>
-    <td class="text-end">${l.min != null ? l.min + 'd' : '—'}</td>
-    <td class="text-end">${l.entregues ? l.max + 'd' : '—'}</td>
-    <td class="text-end">${l.pendentes ? `<span style="color:#b45309">${l.pendentes}</span>` : '0'}</td>
+    <td class="text-end">${l.avaliadas}</td>
+    <td class="text-end fw-bold" style="color:${corPont(l.pontualidade)}">${l.pontualidade != null ? l.pontualidade.toFixed(0) + '%' : '—'}</td>
+    <td class="text-end">${l.avaliadas ? (l.atrasoMedio > 0 ? l.atrasoMedio.toFixed(1) + 'd' : '0d') : '—'}</td>
+    <td class="text-end">${l.pior > 0 ? `<span style="color:#dc3545">${l.pior}d</span>` : '0d'}</td>
+    <td class="text-end">${l.emAberto ? `<span style="color:#dc3545">${l.emAberto}</span>` : '0'}</td>
   </tr>`).join('');
 }
 
 function exportarLeadTime() {
   const linhas = (_ltExport || []).map(l => ({
-    fornecedor: l.fornecedor, entregues: l.entregues,
-    medio: l.medio != null ? Math.round(l.medio) : '', min: l.min != null ? l.min : '',
-    max: l.entregues ? l.max : '', pendentes: l.pendentes,
+    fornecedor: l.fornecedor, avaliadas: l.avaliadas,
+    pontualidade: l.pontualidade != null ? +l.pontualidade.toFixed(0) : '',
+    atrasoMedio: l.avaliadas ? +(l.atrasoMedio || 0).toFixed(1) : '',
+    pior: l.pior || 0, emAberto: l.emAberto,
   }));
   if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
   exportarRelExcel({
-    titulo: 'Lead Time por Fornecedor',
-    periodoLabel: `${document.getElementById('lt-ini')?.value || ''} a ${document.getElementById('lt-fim')?.value || ''}`,
+    titulo: 'Pontualidade de Entrega por Fornecedor',
+    periodoLabel: `entregas previstas de ${document.getElementById('lt-ini')?.value || ''} a ${document.getElementById('lt-fim')?.value || ''}`,
     colunas: [
       { header: 'Fornecedor', key: 'fornecedor', tipo: 'texto', wch: 30 },
-      { header: 'Pedidos Entregues', key: 'entregues', tipo: 'int', wch: 16 },
-      { header: 'Lead Médio (dias)', key: 'medio', tipo: 'int', wch: 16 },
-      { header: 'Mínimo (dias)', key: 'min', tipo: 'int', wch: 14 },
-      { header: 'Máximo (dias)', key: 'max', tipo: 'int', wch: 14 },
-      { header: 'Sem Entrega', key: 'pendentes', tipo: 'int', wch: 12 },
+      { header: 'Entregas Avaliadas', key: 'avaliadas', tipo: 'int', wch: 16 },
+      { header: '% no Prazo', key: 'pontualidade', tipo: 'int', wch: 12 },
+      { header: 'Atraso Médio (dias)', key: 'atrasoMedio', tipo: 'qtd', wch: 16 },
+      { header: 'Pior Atraso (dias)', key: 'pior', tipo: 'int', wch: 14 },
+      { header: 'Em Aberto Vencidas', key: 'emAberto', tipo: 'int', wch: 16 },
     ],
     linhas,
-    nomeArq: 'lead-time.xlsx',
+    nomeArq: 'pontualidade-entrega.xlsx',
   });
 }
 
