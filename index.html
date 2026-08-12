@@ -161,6 +161,12 @@
         <a href="#" onclick="ir('lead-time',this)">
           <i class="bi bi-clock-history"></i> Lead Time Fornecedor
         </a>
+        <a href="#" onclick="ir('sem-giro',this)">
+          <i class="bi bi-hourglass-split"></i> Produtos sem Giro
+        </a>
+        <a href="#" onclick="ir('acuracidade',this)">
+          <i class="bi bi-clipboard2-check"></i> Acuracidade Inventário
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2417,6 +2423,121 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Dias entre a <strong>data do pedido</strong> e a <strong>1ª entrega</strong> (recebimento), casados por nº do pedido. <span style="color:#16a34a">Verde</span> ≤2d · <span style="color:#b45309">âmbar</span> ≤5d · <span style="color:#dc3545">vermelho</span> mais lento. "Sem entrega" = pedido do período ainda não recebido.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ PRODUTOS SEM GIRO (D8) ═══════════ -->
+    <section id="pg-sem-giro" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-hourglass-split"></i> Produtos sem Giro</h1>
+        <span class="text-muted small" id="sg-contador"></span>
+      </div>
+
+      <!-- KPIs -->
+      <div class="d-flex flex-wrap gap-2 mb-3" id="sg-kpis"></div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">Sem saída há pelo menos</label>
+          <div class="btn-group btn-group-sm d-block" role="group" id="sg-dias-grp">
+            <button class="btn btn-outline-secondary" onclick="sgDias(30)">30 dias</button>
+            <button class="btn btn-outline-secondary" onclick="sgDias(60)">60 dias</button>
+            <button class="btn btn-outline-secondary" onclick="sgDias(90)">90 dias</button>
+            <button class="btn btn-outline-secondary" onclick="sgDias(180)">180 dias</button>
+          </div>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Local</label>
+          <select class="form-select form-select-sm" id="sg-local" onchange="_pintarSemGiro()" style="width:190px"></select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="sg-busca" placeholder="Buscar produto..." oninput="_pintarSemGiro()" style="width:200px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarSemGiro()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th class="text-end">Saldo</th>
+                <th>Local(is)</th>
+                <th class="text-end">Última Saída</th>
+                <th class="text-end">Dias Parado</th>
+                <th class="text-end">Valor Travado</th>
+              </tr>
+            </thead>
+            <tbody id="lst-sg">
+              <tr><td colspan="6" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+            <tfoot id="sg-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Produtos com <strong>saldo em estoque</strong> mas <strong>sem nenhuma saída</strong> (pedido interno, transferência, perda, produção, venda) no prazo escolhido — capital parado. "Última saída" é a movimentação de baixa mais recente; <span style="color:#dc3545">Nunca</span> = nunca teve baixa registrada no razão. Valor travado = saldo × custo por unidade de uso.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ ACURACIDADE DE INVENTÁRIO (D10) ═══════════ -->
+    <section id="pg-acuracidade" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-clipboard2-check"></i> Acuracidade de Inventário</h1>
+        <span class="text-muted small" id="acu-contador"></span>
+      </div>
+
+      <!-- KPIs -->
+      <div class="d-flex flex-wrap gap-2 mb-3" id="acu-kpis"></div>
+
+      <!-- Card seletor de dimensão -->
+      <div class="d-flex flex-wrap gap-2 mb-3" id="acu-dim-grp">
+        <button class="btn btn-sm btn-outline-primary active" data-dim="contagem" onclick="acuDim('contagem')">Por Contagem</button>
+        <button class="btn btn-sm btn-outline-primary" data-dim="produto" onclick="acuDim('produto')">Por Produto</button>
+      </div>
+
+      <!-- Filtros -->
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">De</label>
+          <input type="date" class="form-control form-control-sm" id="acu-ini" onchange="renderAcuracidade()">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Até</label>
+          <input type="date" class="form-control form-control-sm" id="acu-fim" onchange="renderAcuracidade()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="acuPeriodo(1)">1 mês</button>
+          <button class="btn btn-outline-secondary" onclick="acuPeriodo(3)">3 meses</button>
+          <button class="btn btn-outline-secondary" onclick="acuPeriodo(6)">6 meses</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Setor</label>
+          <select class="form-select form-select-sm" id="acu-local" onchange="_pintarAcuracidade()" style="width:180px"></select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="acu-busca" placeholder="Buscar produto..." oninput="_pintarAcuracidade()" style="width:190px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarAcuracidade()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead id="acu-thead"></thead>
+            <tbody id="lst-acu">
+              <tr><td colspan="6" class="text-center text-muted py-4">Selecione o período.</td></tr>
+            </tbody>
+            <tfoot id="acu-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>Mede a divergência <strong>contado × esperado</strong> registrada a cada contagem. <span style="color:#dc3545">Falta</span> = sistema tinha mais do que existia; <span style="color:#16a34a">Sobra</span> = existia mais do que o sistema marcava. <strong>Observação:</strong> só os itens que <em>divergiram</em> entram no razão — os que bateram exatamente não são registrados, então este relatório é o <strong>índice de divergência</strong> (quanto e onde erra), não uma taxa de acerto sobre o total contado.
           </small>
         </div>
       </div>

@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -241,6 +241,8 @@ function ir(nome, el) {
   if (nome === 'curva-abc')       carregarCurvaABC();
   if (nome === 'comp-preco')      carregarCompPreco();
   if (nome === 'lead-time')       carregarLeadTime();
+  if (nome === 'sem-giro')        carregarSemGiro();
+  if (nome === 'acuracidade')     carregarAcuracidade();
 }
 
 function irCad(tab, el) {
@@ -9809,6 +9811,347 @@ function exportarLeadTime() {
     linhas,
     nomeArq: 'lead-time.xlsx',
   });
+}
+
+// Card de KPI genérico p/ os relatórios (chip lado a lado num container flex).
+function _relKpiChip(label, valor, cor) {
+  return `<div style="border:1px solid ${cor}55;border-left:4px solid ${cor};border-radius:.5rem;padding:.5rem .9rem;background:${cor}11;min-width:150px">
+    <div class="small text-muted">${esc(label)}</div>
+    <div style="font-weight:700;font-size:1.1rem;color:${cor}">${valor}</div>
+  </div>`;
+}
+
+// ═══════════════ RELATÓRIO: PRODUTOS SEM GIRO (D8) ═══════════════
+// Produtos com saldo em estoque mas SEM nenhuma saída (baixa/consumo) no prazo escolhido
+// = capital parado. "Saída/giro" = movimentos de baixa no razão (pedido interno,
+// transferência, perda, produção, venda, devolução). Última saída vem do razão; valor
+// travado = saldo × custo por unidade de uso. Lê saldo do snapshot + razão. Sem SQL novo.
+const _GIRO_SAIDA_TIPOS = ['pedido_interno_saida', 'transferencia_saida', 'perda', 'producao_consumo', 'venda_pensera', 'devolucao'];
+const _GIRO_ENTRADA_TIPOS = ['recebimento', 'transferencia_entrada', 'pedido_interno_entrada', 'producao_entrada', 'saldo_inicial'];
+let _sgSaldos = [];         // [{produto_id, local, saldo}] com saldo > 0
+let _sgGiroProd = {};       // produto_id -> última data de saída (qualquer local)
+let _sgGiroProdLocal = {};  // produto_id||local -> última data de saída no local
+let _sgEntProd = {};        // produto_id -> última data de ENTRADA (qualquer local)
+let _sgEntProdLocal = {};   // produto_id||local -> última data de entrada no local
+let _sgDias = 60;
+let _sgExport = [];
+
+async function carregarSemGiro() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const sel = document.getElementById('sg-local');
+  if (sel && !sel.options.length)
+    sel.innerHTML = '<option value="">Todos os locais</option>' + _perdaLocais().map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+  await renderSemGiro();
+}
+
+function sgDias(d) { _sgDias = d; _sgMarcarDias(); _pintarSemGiro(); }
+function _sgMarcarDias() {
+  document.querySelectorAll('#sg-dias-grp button').forEach(b =>
+    b.classList.toggle('active', b.textContent.trim().startsWith(String(_sgDias))));
+}
+
+async function renderSemGiro() {
+  const tbody = document.getElementById('lst-sg');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  // 1) saldos > 0 (snapshot)
+  const saldos = await _fetchAllPaged('est_saldo_local', 'produto_id,local,saldo');
+  _sgSaldos = (saldos || []).filter(s => (Number(s.saldo) || 0) > 0.0001);
+  // 2) últimas saídas (giro) e últimas entradas do razão
+  const [saidas, entradas] = await Promise.all([
+    _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo', q => q.in('tipo', _GIRO_SAIDA_TIPOS)),
+    _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo', q => q.in('tipo', _GIRO_ENTRADA_TIPOS)),
+  ]);
+  const acumular = (rows, mapProd, mapLocal) => {
+    (rows || []).forEach(m => {
+      if (!m.produto_id || !m.data) return;
+      if (!mapProd[m.produto_id] || m.data > mapProd[m.produto_id]) mapProd[m.produto_id] = m.data;
+      const k = m.produto_id + '||' + m.local;
+      if (!mapLocal[k] || m.data > mapLocal[k]) mapLocal[k] = m.data;
+    });
+  };
+  _sgGiroProd = {}; _sgGiroProdLocal = {}; _sgEntProd = {}; _sgEntProdLocal = {};
+  acumular(saidas, _sgGiroProd, _sgGiroProdLocal);
+  acumular(entradas, _sgEntProd, _sgEntProdLocal);
+  _sgMarcarDias();
+  _pintarSemGiro();
+}
+
+function _pintarSemGiro() {
+  const tbody = document.getElementById('lst-sg');
+  const tfoot = document.getElementById('sg-tfoot');
+  if (!tbody) return;
+  const fLocal = document.getElementById('sg-local')?.value || '';
+  const busca = norm(document.getElementById('sg-busca')?.value || '').trim();
+  const idx = _relCadIndex();
+  const hojeStr = new Date().toISOString().slice(0, 10);
+
+  // agrega saldo por produto (respeitando o filtro de local)
+  const agg = {};
+  _sgSaldos.forEach(s => {
+    if (fLocal && s.local !== fLocal) return;
+    const A = (agg[s.produto_id] ||= { produto_id: s.produto_id, saldo: 0, locais: new Set() });
+    A.saldo += Number(s.saldo) || 0;
+    A.locais.add(s.local);
+  });
+
+  const diasDesde = d => d ? Math.round((new Date(hojeStr) - new Date(d)) / 86400000) : null;
+  let linhas = Object.values(agg).map(A => {
+    const p = idx[A.produto_id];
+    const kLocal = A.produto_id + '||' + fLocal;
+    // última saída: no local filtrado, senão a mais recente do produto (qualquer local)
+    const ultima = fLocal ? (_sgGiroProdLocal[kLocal] || null) : (_sgGiroProd[A.produto_id] || null);
+    // entrada (fallback p/ "há quanto tempo parado" quando nunca teve saída)
+    const entrada = fLocal ? (_sgEntProdLocal[kLocal] || null) : (_sgEntProd[A.produto_id] || null);
+    // dias parado = desde a última saída; se nunca saiu, desde que entrou (evita marcar item recém-recebido)
+    const dias = ultima ? diasDesde(ultima) : diasDesde(entrada);
+    return {
+      produto_id: A.produto_id,
+      produto: p?.nome || '(produto removido)',
+      tipoProd: p?.tipo || '',
+      unidade: p?.unidade_uso || '',
+      saldo: A.saldo,
+      locais: [...A.locais].map(_perdaLocalLabel).join(', '),
+      ultima, dias,
+      valor: A.saldo * _custoUsoProd(p),
+    };
+  });
+  // sem giro = nunca teve saída OU dias >= limiar; ignora produtos de VENDA (pratos vendidos)
+  linhas = linhas.filter(l => l.tipoProd !== 'VENDA' && (l.dias == null || l.dias >= _sgDias));
+  if (busca) linhas = linhas.filter(l => norm(l.produto).includes(busca));
+  linhas.sort((a, b) => b.valor - a.valor);
+  _sgExport = linhas;
+
+  const totalValor = linhas.reduce((s, l) => s + l.valor, 0);
+  const nunca = linhas.filter(l => l.ultima == null).length;
+  const cont = document.getElementById('sg-contador');
+  if (cont) cont.textContent = linhas.length ? `${linhas.length} produto(s) parado(s)` : '';
+  const kpis = document.getElementById('sg-kpis');
+  if (kpis) kpis.innerHTML = linhas.length
+    ? _relKpiChip('Produtos sem giro', String(linhas.length), '#b45309')
+    + _relKpiChip('Capital parado', brl(totalValor), '#dc3545')
+    + _relKpiChip('Nunca tiveram saída', String(nunca), '#6c757d')
+    : '';
+
+  if (!linhas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Nenhum produto parado nesse prazo. 🎉</td></tr>';
+    if (tfoot) tfoot.innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = linhas.map(l => `<tr>
+    <td>${esc(l.produto)}</td>
+    <td class="text-end">${l.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span class="text-muted small">${esc(l.unidade)}</span></td>
+    <td class="small text-muted">${esc(l.locais)}</td>
+    <td class="text-end text-nowrap">${l.ultima ? _dataBR(l.ultima) : '<span style="color:#dc3545">Nunca</span>'}</td>
+    <td class="text-end fw-bold" style="color:${l.dias == null || l.dias >= 90 ? '#dc3545' : '#b45309'}">${l.dias == null ? '—' : l.dias + 'd'}</td>
+    <td class="text-end">${brl(l.valor)}</td>
+  </tr>`).join('');
+  if (tfoot) tfoot.innerHTML = `<tr class="fw-bold border-top"><td colspan="5" class="text-end">CAPITAL PARADO</td><td class="text-end">${brl(totalValor)}</td></tr>`;
+}
+
+function exportarSemGiro() {
+  const linhas = (_sgExport || []).map(l => ({
+    produto: l.produto, saldo: l.saldo, unidade: l.unidade, locais: l.locais,
+    ultima: l.ultima ? _dataBR(l.ultima) : 'Nunca', dias: l.dias == null ? '' : l.dias, valor: l.valor,
+  }));
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  exportarRelExcel({
+    titulo: 'Produtos sem Giro',
+    periodoLabel: `sem saída há ${_sgDias}+ dias`,
+    colunas: [
+      { header: 'Produto', key: 'produto', tipo: 'texto', wch: 34 },
+      { header: 'Saldo', key: 'saldo', tipo: 'qtd', wch: 12 },
+      { header: 'Unidade', key: 'unidade', tipo: 'texto', wch: 10 },
+      { header: 'Local(is)', key: 'locais', tipo: 'texto', wch: 24 },
+      { header: 'Última Saída', key: 'ultima', tipo: 'texto', wch: 14 },
+      { header: 'Dias Parado', key: 'dias', tipo: 'int', wch: 12 },
+      { header: 'Valor Travado', key: 'valor', tipo: 'moeda', wch: 16 },
+    ],
+    linhas,
+    nomeArq: 'produtos-sem-giro.xlsx',
+  });
+}
+
+// ═══════════════ RELATÓRIO: ACURACIDADE DE INVENTÁRIO (D10) ═══════════════
+// Lê os movimentos tipo='contagem' do razão (quantidade = delta = contado − esperado).
+// IMPORTANTE: a contagem só grava no razão os itens que DIVERGIRAM (delta≠0); os que
+// bateram exato não geram linha. Logo este é o ÍNDICE DE DIVERGÊNCIA (quanto/onde erra),
+// não uma taxa de acerto sobre o total contado. custo_unit não é gravado na contagem →
+// o valor é calculado por custo de uso do cadastro. Delta<0 = falta; delta>0 = sobra.
+let _acuRaw = [];      // movimentos tipo='contagem' do período
+let _acuDim = 'contagem';
+let _acuExport = [];
+
+function acuPeriodo(meses) {
+  const fim = new Date();
+  const ini = new Date(); ini.setMonth(ini.getMonth() - meses);
+  document.getElementById('acu-ini').value = ini.toISOString().slice(0, 10);
+  document.getElementById('acu-fim').value = fim.toISOString().slice(0, 10);
+  renderAcuracidade();
+}
+
+async function carregarAcuracidade() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const sel = document.getElementById('acu-local');
+  if (sel && !sel.options.length)
+    sel.innerHTML = '<option value="">Todos os setores</option>' + _perdaLocais().map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+  if (!document.getElementById('acu-ini').value) acuPeriodo(3);   // default: 3 meses
+  else await renderAcuracidade();
+}
+
+function acuDim(d) {
+  _acuDim = d;
+  document.querySelectorAll('#acu-dim-grp button').forEach(b =>
+    b.classList.toggle('active', b.dataset.dim === d));
+  _pintarAcuracidade();
+}
+
+async function renderAcuracidade() {
+  const tbody = document.getElementById('lst-acu');
+  const ini = document.getElementById('acu-ini').value;
+  const fim = document.getElementById('acu-fim').value;
+  if (!ini || !fim) return;
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,quantidade,data',
+    q => q.eq('tipo', 'contagem').gte('data', ini).lte('data', fim));
+  _acuRaw = movs || [];
+  _pintarAcuracidade();
+}
+
+function _acuLinhasFiltradas() {
+  const fLocal = document.getElementById('acu-local')?.value || '';
+  const busca = norm(document.getElementById('acu-busca')?.value || '').trim();
+  const idx = _relCadIndex();
+  let linhas = _acuRaw.map(m => {
+    const p = idx[m.produto_id];
+    const delta = Number(m.quantidade) || 0;
+    return {
+      produto_id: m.produto_id, local: m.local, data: m.data,
+      produto: p?.nome || '(produto removido)', unidade: p?.unidade_uso || '',
+      delta, valor: Math.abs(delta) * _custoUsoProd(p),
+    };
+  });
+  if (fLocal) linhas = linhas.filter(l => l.local === fLocal);
+  if (busca) linhas = linhas.filter(l => norm(l.produto).includes(busca));
+  return linhas;
+}
+
+function _pintarAcuracidade() {
+  const thead = document.getElementById('acu-thead');
+  const tbody = document.getElementById('lst-acu');
+  const tfoot = document.getElementById('acu-tfoot');
+  if (!tbody) return;
+  const linhas = _acuLinhasFiltradas();
+
+  // KPIs gerais (sobre o conjunto filtrado)
+  const contagens = new Set(linhas.map(l => l.data + '||' + l.local)).size;
+  const faltaVal = linhas.filter(l => l.delta < 0).reduce((s, l) => s + l.valor, 0);
+  const sobraVal = linhas.filter(l => l.delta > 0).reduce((s, l) => s + l.valor, 0);
+  const liquido = sobraVal - faltaVal;
+  const kpis = document.getElementById('acu-kpis');
+  if (kpis) kpis.innerHTML = linhas.length
+    ? _relKpiChip('Contagens', String(contagens), '#0d6efd')
+    + _relKpiChip('Itens divergentes', String(linhas.length), '#b45309')
+    + _relKpiChip('Falta (R$)', brl(faltaVal), '#dc3545')
+    + _relKpiChip('Sobra (R$)', brl(sobraVal), '#16a34a')
+    + _relKpiChip('Ajuste líquido', brl(liquido), liquido < 0 ? '#dc3545' : '#16a34a')
+    : '';
+  const cont = document.getElementById('acu-contador');
+  if (cont) cont.textContent = linhas.length ? `${contagens} contagem(ns) · ${linhas.length} divergência(s)` : '';
+
+  if (!linhas.length) {
+    if (thead) thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Sem divergências de contagem no período. 🎯</td></tr>';
+    if (tfoot) tfoot.innerHTML = '';
+    _acuExport = [];
+    return;
+  }
+
+  if (_acuDim === 'produto') {
+    // reincidência por produto
+    const g = {};
+    linhas.forEach(l => {
+      const P = (g[l.produto_id] ||= { produto: l.produto, unidade: l.unidade, datas: new Set(), liquido: 0, valor: 0 });
+      P.datas.add(l.data + '||' + l.local);
+      P.liquido += l.delta;
+      P.valor += l.valor;
+    });
+    const rows = Object.values(g).map(P => ({ ...P, vezes: P.datas.size })).sort((a, b) => b.valor - a.valor);
+    _acuExport = rows;
+    if (thead) thead.innerHTML = `<tr>
+      <th>Produto</th>
+      <th class="text-end">Vezes que Divergiu</th>
+      <th class="text-end">Ajuste Líquido</th>
+      <th class="text-end">Divergência (R$)</th></tr>`;
+    tbody.innerHTML = rows.map(r => `<tr>
+      <td>${esc(r.produto)}</td>
+      <td class="text-end">${r.vezes}</td>
+      <td class="text-end" style="color:${r.liquido < 0 ? '#dc3545' : '#16a34a'}">${r.liquido > 0 ? '+' : ''}${r.liquido.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span class="text-muted small">${esc(r.unidade)}</span></td>
+      <td class="text-end">${brl(r.valor)}</td></tr>`).join('');
+    const tv = rows.reduce((s, r) => s + r.valor, 0);
+    if (tfoot) tfoot.innerHTML = `<tr class="fw-bold border-top"><td colspan="3" class="text-end">TOTAL</td><td class="text-end">${brl(tv)}</td></tr>`;
+  } else {
+    // por contagem (data + setor)
+    const g = {};
+    linhas.forEach(l => {
+      const k = l.data + '||' + l.local;
+      const G = (g[k] ||= { data: l.data, local: l.local, itens: 0, faltaVal: 0, sobraVal: 0 });
+      G.itens++;
+      if (l.delta < 0) G.faltaVal += l.valor; else G.sobraVal += l.valor;
+    });
+    const rows = Object.values(g).map(G => ({
+      ...G, localLabel: _perdaLocalLabel(G.local), divVal: G.faltaVal + G.sobraVal,
+    })).sort((a, b) => (b.data.localeCompare(a.data)) || (b.divVal - a.divVal));
+    _acuExport = rows;
+    if (thead) thead.innerHTML = `<tr>
+      <th>Data</th><th>Setor</th>
+      <th class="text-end">Itens c/ Divergência</th>
+      <th class="text-end">Falta</th>
+      <th class="text-end">Sobra</th>
+      <th class="text-end">Divergência</th></tr>`;
+    tbody.innerHTML = rows.map(r => `<tr>
+      <td class="text-nowrap">${_dataBR(r.data)}</td>
+      <td>${esc(r.localLabel)}</td>
+      <td class="text-end">${r.itens}</td>
+      <td class="text-end" style="color:#dc3545">${r.faltaVal ? brl(r.faltaVal) : '—'}</td>
+      <td class="text-end" style="color:#16a34a">${r.sobraVal ? brl(r.sobraVal) : '—'}</td>
+      <td class="text-end fw-bold">${brl(r.divVal)}</td></tr>`).join('');
+    const tv = rows.reduce((s, r) => s + r.divVal, 0);
+    if (tfoot) tfoot.innerHTML = `<tr class="fw-bold border-top"><td colspan="5" class="text-end">DIVERGÊNCIA TOTAL</td><td class="text-end">${brl(tv)}</td></tr>`;
+  }
+}
+
+function exportarAcuracidade() {
+  const rows = _acuExport || [];
+  if (!rows.length) { toast('Nada para exportar.', 'erro'); return; }
+  const periodoLabel = `${document.getElementById('acu-ini')?.value || ''} a ${document.getElementById('acu-fim')?.value || ''}`;
+  if (_acuDim === 'produto') {
+    exportarRelExcel({
+      titulo: 'Acuracidade — por Produto', periodoLabel,
+      colunas: [
+        { header: 'Produto', key: 'produto', tipo: 'texto', wch: 34 },
+        { header: 'Unidade', key: 'unidade', tipo: 'texto', wch: 10 },
+        { header: 'Vezes que Divergiu', key: 'vezes', tipo: 'int', wch: 16 },
+        { header: 'Ajuste Líquido', key: 'liquido', tipo: 'qtd', wch: 14 },
+        { header: 'Divergência (R$)', key: 'valor', tipo: 'moeda', wch: 16 },
+      ],
+      linhas: rows.map(r => ({ produto: r.produto, unidade: r.unidade, vezes: r.vezes, liquido: r.liquido, valor: r.valor })),
+      nomeArq: 'acuracidade-produto.xlsx',
+    });
+  } else {
+    exportarRelExcel({
+      titulo: 'Acuracidade — por Contagem', periodoLabel,
+      colunas: [
+        { header: 'Data', key: 'data', tipo: 'texto', wch: 12 },
+        { header: 'Setor', key: 'setor', tipo: 'texto', wch: 18 },
+        { header: 'Itens c/ Divergência', key: 'itens', tipo: 'int', wch: 18 },
+        { header: 'Falta (R$)', key: 'falta', tipo: 'moeda', wch: 14 },
+        { header: 'Sobra (R$)', key: 'sobra', tipo: 'moeda', wch: 14 },
+        { header: 'Divergência (R$)', key: 'div', tipo: 'moeda', wch: 16 },
+      ],
+      linhas: rows.map(r => ({ data: _dataBR(r.data), setor: r.localLabel, itens: r.itens, falta: r.faltaVal, sobra: r.sobraVal, div: r.divVal })),
+      nomeArq: 'acuracidade-contagem.xlsx',
+    });
+  }
 }
 
 // ═══════════════ RELATÓRIO: COMPRA POR FORNECEDOR × PRODUTO (D1) ═══════════════
