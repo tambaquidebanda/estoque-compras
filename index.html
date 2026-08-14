@@ -175,6 +175,7 @@
       </div>
       <div class="nav-submenu" id="nav-submenu-config">
         <a href="#" onclick="ir('usuarios',this)"><i class="bi bi-people-fill"></i> Usuários</a>
+        <a href="#" onclick="ir('pdv-map',this)"><i class="bi bi-diagram-3-fill"></i> Mapeamento PDV</a>
         <a href="#" onclick="ir('backup',this)"><i class="bi bi-hdd-fill"></i> Backup</a>
       </div>
     </nav>
@@ -2545,6 +2546,56 @@
           </small>
         </div>
       </div>
+    </section>
+
+    <!-- ═══════════ MAPEAMENTO PDV → ESTOQUE (baixa automática iComanda) ═══════════ -->
+    <section id="pg-pdv-map" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-diagram-3-fill"></i> Mapeamento PDV → Estoque</h1>
+        <span class="text-muted small" id="pdv-contador"></span>
+      </div>
+      <p class="text-muted small mb-3">Liga cada produto vendido no iComanda ao produto/ficha do estoque (ou marca como <b>ignorar</b>). É a base da baixa automática: só baixa o que estiver <b>Mapeado</b> e cujo produto tenha <b>ficha técnica</b>.</p>
+
+      <div class="d-flex flex-wrap gap-2 mb-3" id="pdv-kpis"></div>
+
+      <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+        <button class="btn btn-sm btn-primary" id="pdv-btn-sync" onclick="sincronizarPdv()"><i class="bi bi-arrow-repeat"></i> Sincronizar iComanda</button>
+        <button class="btn btn-sm btn-outline-primary" onclick="autoSemearPdv()"><i class="bi bi-magic"></i> Auto-semear</button>
+        <span class="text-muted small" id="pdv-sync-status"></span>
+        <div class="flex-grow-1"></div>
+        <div class="btn-group btn-group-sm" id="pdv-filtros" role="group">
+          <button class="btn btn-outline-secondary" data-f="pendente" onclick="pdvFiltrar('pendente')">Pendentes</button>
+          <button class="btn btn-outline-secondary" data-f="mapeado" onclick="pdvFiltrar('mapeado')">Mapeados</button>
+          <button class="btn btn-outline-secondary" data-f="ignorar" onclick="pdvFiltrar('ignorar')">Ignorados</button>
+          <button class="btn btn-outline-secondary" data-f="todos" onclick="pdvFiltrar('todos')">Todos</button>
+        </div>
+        <div class="form-check ms-1">
+          <input class="form-check-input" type="checkbox" id="pdv-semficha" onchange="pdvToggleSemFicha(this)">
+          <label class="form-check-label small" for="pdv-semficha">só sem ficha</label>
+        </div>
+        <input type="search" class="form-control form-control-sm" style="width:200px" placeholder="Buscar produto ou #..." oninput="_pdvBusca=this.value;_pintarPdvMap()">
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Produto no PDV (iComanda)</th>
+                <th class="text-end">Vendas 30d</th>
+                <th>Status</th>
+                <th>Produto no estoque</th>
+                <th>Ficha</th>
+                <th>Fator</th>
+              </tr>
+            </thead>
+            <tbody id="pdv-tbody">
+              <tr><td colspan="6" class="text-center text-muted py-4">Clique em “Sincronizar iComanda” para carregar os produtos vendidos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <datalist id="pdv-dl-produtos"></datalist>
     </section>
 
     <!-- ═══════════ COMPARATIVO DE PREÇO (D7) ═══════════ -->

@@ -210,7 +210,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
-  if (['usuarios','backup'].includes(nome)) {
+  if (['usuarios','backup','pdv-map'].includes(nome)) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
@@ -235,6 +235,7 @@ function ir(nome, el) {
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
+  if (nome === 'pdv-map')       carregarPdvMap();
   if (nome === 'custo-produto') carregarCustoProduto();
   if (nome === 'rel-fornecedor') carregarRelForn();
   if (nome === 'rel-divergencia') carregarRelDiv();
@@ -11418,4 +11419,226 @@ async function removerGrupoUnidade() {
   document.getElementById('inv-tabela-section')?.classList.add('d-none');
   selecionarSetorInv(_invSetor);
   toast(`Grupo ${grupo} removido.`, 'ok');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// MAPEAMENTO PDV (iComanda) → PRODUTO/FICHA  — base da baixa automática
+// ═══════════════════════════════════════════════════════════════
+const ICOMANDA_URL = 'https://cloud.icomanda.com/tdb/apidashboard/';
+const ICOMANDA_KEY = 'apidash_249_aB3xY7zQ9Wm2KpV5';
+
+let _pdvRows      = [];          // linhas de pdv_map
+let _fichaProdSet = new Set();   // est_produtos.id que têm ficha ativa
+let _pdvProdIndex = {};          // norm(nome) -> produto (prefere o que tem ficha)
+let _pdvProdById  = {};          // id -> produto
+let _pdvFiltro    = 'pendente';
+let _pdvSemFicha  = false;
+let _pdvBusca     = '';
+
+function _pdvNorm(s) { return norm(s).replace(/\s+/g, ' ').trim(); }
+function _ymd(dt) { return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'); }
+
+// Modificadores / marcadores do PDV que NÃO baixam estoque.
+// BRA/EST/MAO = origem do cliente (turista BR / estrangeiro / cliente local).
+function pdvEhModificador(nome) {
+  const n = _pdvNorm(nome).toUpperCase();
+  if (['BRA', 'EST', 'MAO', 'GUIA', 'BANHEIRO'].includes(n)) return true;
+  if (/TALHER|DESCARTAVEL|COUVERT/.test(n)) return true;
+  if (/^(SIM|NAO),/.test(n)) return true;
+  if (/^(COM|SEM) GELO$/.test(n)) return true;
+  if (n.length <= 3) return true;
+  return false;
+}
+
+async function carregarPdvMap() {
+  await carregarProdutosFT();
+  const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'produto_id,ativo', q => q.eq('ativo', true));
+  _fichaProdSet = new Set((fichas || []).map(f => f.produto_id));
+
+  _pdvProdIndex = {};
+  _pdvProdById  = {};
+  for (const p of cProdutosFT) {
+    _pdvProdById[p.id] = p;
+    const k = _pdvNorm(p.nome);
+    const cur = _pdvProdIndex[k];
+    if (!cur || (_fichaProdSet.has(p.id) && !_fichaProdSet.has(cur.id))) _pdvProdIndex[k] = p;
+  }
+
+  _pdvRows = await _fetchAllPaged('pdv_map', 'id,icomanda_produto_id,icomanda_nome,produto_id,status,fator,qtd_30d,obs');
+
+  const dl = document.getElementById('pdv-dl-produtos');
+  if (dl && !dl.dataset.pronto) {
+    dl.innerHTML = cProdutosFT.map(p => `<option value="${esc(p.nome)}">`).join('');
+    dl.dataset.pronto = '1';
+  }
+  renderPdvMap();
+}
+
+// Puxa os produtos vendidos nos últimos 30 dias (dia a dia, respeitando o limite
+// de 2000 comandas/chamada) e insere os novos como 'pendente' (preserva os já mapeados).
+async function sincronizarPdv() {
+  const btn = document.getElementById('pdv-btn-sync');
+  const lbl = document.getElementById('pdv-sync-status');
+  if (btn) btn.disabled = true;
+
+  const agg = {};   // pid -> { nome, qty }
+  const hoje = new Date();
+  let erros = 0;
+  for (let i = 30; i >= 1; i--) {
+    const dt = new Date(hoje); dt.setDate(hoje.getDate() - i);
+    const ds = _ymd(dt);
+    if (lbl) lbl.textContent = `Puxando ${ds}… (${31 - i}/30)`;
+    try {
+      const resp = await fetch(`${ICOMANDA_URL}?api_key=${ICOMANDA_KEY}&data_ini=${ds}&data_fim=${ds}`);
+      const j = await resp.json();
+      for (const cx of (j.caixas || [])) {
+        for (const cm of (cx.comandas || [])) {
+          if (cm.cancelada) continue;
+          for (const it of (cm.itens || [])) {
+            if (it.status !== 'ativo') continue;
+            const pid = it.produto_id;
+            if (!(pid in agg)) agg[pid] = { nome: it.produto_nome, qty: 0 };
+            agg[pid].qty += (it.quantidade || 0);
+          }
+        }
+      }
+    } catch (e) { erros++; }
+  }
+
+  const pids = Object.keys(agg);
+  if (!pids.length) {
+    toast('Nada retornado do iComanda' + (erros ? ` (${erros} dias com erro)` : ''), 'erro');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  // upsert só dos campos essenciais → preserva status/produto_id/fator existentes
+  const linhas = pids.map(pid => ({
+    icomanda_produto_id: +pid,
+    icomanda_nome:       agg[pid].nome,
+    qtd_30d:             Math.round(agg[pid].qty),
+  }));
+  for (let k = 0; k < linhas.length; k += 500) {
+    const { error } = await sb.from('pdv_map').upsert(linhas.slice(k, k + 500), { onConflict: 'icomanda_produto_id' });
+    if (error) { toast('Erro ao gravar mapa: ' + error.message, 'erro'); if (btn) btn.disabled = false; return; }
+  }
+  if (lbl) lbl.textContent = `${pids.length} produtos sincronizados${erros ? ` · ${erros} dias com erro` : ''}`;
+  toast(`Sincronizado: ${pids.length} produtos do iComanda.`, 'ok');
+  if (btn) btn.disabled = false;
+  await carregarPdvMap();
+}
+
+// Casa pendentes por nome com produtos que têm ficha (→ mapeado) e marca modificadores como ignorar.
+async function autoSemearPdv() {
+  const changes = [];
+  for (const r of _pdvRows) {
+    if (r.status !== 'pendente') continue;
+    let mudou = false;
+    if (pdvEhModificador(r.icomanda_nome)) {
+      r.status = 'ignorar'; r.produto_id = null; mudou = true;
+    } else {
+      if (!r.produto_id) {
+        const p = _pdvProdIndex[_pdvNorm(r.icomanda_nome)];
+        if (p) { r.produto_id = p.id; mudou = true; }
+      }
+      if (r.produto_id && _fichaProdSet.has(r.produto_id)) { r.status = 'mapeado'; mudou = true; }
+    }
+    if (mudou) changes.push({ id: r.id, status: r.status, produto_id: r.produto_id });
+  }
+  if (!changes.length) { toast('Nada novo para semear.', ''); return; }
+  for (let k = 0; k < changes.length; k += 500) {
+    const { error } = await sb.from('pdv_map').upsert(changes.slice(k, k + 500));
+    if (error) { toast('Erro ao semear: ' + error.message, 'erro'); return; }
+  }
+  toast(`Auto-semeado: ${changes.length} itens atualizados.`, 'ok');
+  renderPdvMap();
+}
+
+async function setPdvStatus(id, val) {
+  const r = _pdvRows.find(x => x.id === id); if (!r) return;
+  r.status = val;
+  const { error } = await sb.from('pdv_map').update({ status: val, atualizado_em: new Date().toISOString() }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  renderPdvMap();
+}
+
+async function setPdvProduto(id, nomeDigitado) {
+  const r = _pdvRows.find(x => x.id === id); if (!r) return;
+  const p = _pdvProdIndex[_pdvNorm(nomeDigitado)];
+  r.produto_id = p ? p.id : null;
+  const patch = { produto_id: r.produto_id, atualizado_em: new Date().toISOString() };
+  if (r.produto_id && _fichaProdSet.has(r.produto_id) && r.status === 'pendente') { r.status = 'mapeado'; patch.status = 'mapeado'; }
+  const { error } = await sb.from('pdv_map').update(patch).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  if (!p && nomeDigitado.trim()) toast('Produto não encontrado pelo nome exato — escolha da lista.', 'erro');
+  renderPdvMap();
+}
+
+async function setPdvFator(id, val) {
+  const r = _pdvRows.find(x => x.id === id); if (!r) return;
+  const f = parseFloat(String(val).replace(',', '.')) || 1;
+  r.fator = f;
+  await sb.from('pdv_map').update({ fator: f, atualizado_em: new Date().toISOString() }).eq('id', id);
+}
+
+function pdvFiltrar(f) { _pdvFiltro = f; renderPdvMap(); }
+function pdvToggleSemFicha(el) { _pdvSemFicha = el.checked; _pintarPdvMap(); }
+
+function renderPdvMap() {
+  const R = _pdvRows;
+  const baixaOK = R.filter(r => r.status === 'mapeado' && r.produto_id && _fichaProdSet.has(r.produto_id)).length;
+  const pend    = R.filter(r => r.status === 'pendente').length;
+  const ign     = R.filter(r => r.status === 'ignorar').length;
+  const semF    = R.filter(r => r.status !== 'ignorar' && r.produto_id && !_fichaProdSet.has(r.produto_id)).length;
+
+  const kpis = document.getElementById('pdv-kpis');
+  if (kpis) kpis.innerHTML =
+    _relKpiChip('Baixa OK', baixaOK, '#2EC4B6') +
+    _relKpiChip('Pendentes', pend, '#FF6B35') +
+    _relKpiChip('Sem ficha (trava)', semF, '#E0A800') +
+    _relKpiChip('Ignorados', ign, '#8896a0');
+
+  const cont = document.getElementById('pdv-contador');
+  if (cont) cont.textContent = `${R.length} produtos do PDV`;
+
+  document.querySelectorAll('#pdv-filtros .btn').forEach(b => b.classList.toggle('active', b.dataset.f === _pdvFiltro));
+  _pintarPdvMap();
+}
+
+function _pintarPdvMap() {
+  let rows = _pdvRows.slice();
+  if (_pdvFiltro !== 'todos') rows = rows.filter(r => r.status === _pdvFiltro);
+  if (_pdvSemFicha) rows = rows.filter(r => r.status !== 'ignorar' && r.produto_id && !_fichaProdSet.has(r.produto_id));
+  if (_pdvBusca) {
+    const q = _pdvNorm(_pdvBusca);
+    rows = rows.filter(r => _pdvNorm(r.icomanda_nome).includes(q) || String(r.icomanda_produto_id).includes(q));
+  }
+  rows.sort((a, b) => (b.qtd_30d || 0) - (a.qtd_30d || 0));
+
+  const tb = document.getElementById('pdv-tbody');
+  if (!tb) return;
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Nenhum item neste filtro.</td></tr>';
+    return;
+  }
+  const opt = (v, txt, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${txt}</option>`;
+  tb.innerHTML = rows.map(r => {
+    const p = _pdvProdById[r.produto_id];
+    const prodNome = p ? esc(p.nome) : '';
+    let ficha;
+    if (r.status === 'ignorar')                  ficha = '<span class="text-muted">—</span>';
+    else if (!r.produto_id)                      ficha = '<span class="badge bg-light text-muted border">sem produto</span>';
+    else if (_fichaProdSet.has(r.produto_id))    ficha = '<span class="badge bg-success">com ficha</span>';
+    else                                         ficha = '<span class="badge bg-warning text-dark">sem ficha</span>';
+    return `<tr>
+      <td><div class="fw-semibold">${esc(r.icomanda_nome || '')}</div><small class="text-muted">#${r.icomanda_produto_id}</small></td>
+      <td class="text-end">${r.qtd_30d || 0}</td>
+      <td><select class="form-select form-select-sm" style="width:112px" onchange="setPdvStatus('${r.id}',this.value)">
+        ${opt('mapeado', 'Mapeado', r.status)}${opt('pendente', 'Pendente', r.status)}${opt('ignorar', 'Ignorar', r.status)}
+      </select></td>
+      <td><input list="pdv-dl-produtos" class="form-control form-control-sm" value="${prodNome}" placeholder="— produto —" onchange="setPdvProduto('${r.id}',this.value)"></td>
+      <td>${ficha}</td>
+      <td><input type="number" step="0.01" min="0" value="${r.fator ?? 1}" class="form-control form-control-sm" style="width:74px" onchange="setPdvFator('${r.id}',this.value)"></td>
+    </tr>`;
+  }).join('');
 }
