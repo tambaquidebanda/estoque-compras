@@ -131,9 +131,9 @@ def custo_efetivo(p):
 def carregar():
     # mapa: só mapeados com produto
     mapa = {}
-    for m in sb_get_all('pdv_map?select=icomanda_produto_id,produto_id,status,fator&status=eq.mapeado'):
+    for m in sb_get_all('pdv_map?select=icomanda_produto_id,produto_id,status,fator,setor&status=eq.mapeado'):
         if m.get('produto_id'):
-            mapa[m['icomanda_produto_id']] = {'produto_id': m['produto_id'], 'fator': m.get('fator') or 1}
+            mapa[m['icomanda_produto_id']] = {'produto_id': m['produto_id'], 'fator': m.get('fator') or 1, 'setor': m.get('setor')}
 
     # fichas ativas (uma por produto — a mais recente vence se houver duplicidade)
     ficha_por_prod = {}
@@ -200,6 +200,7 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=Non
         if not ficha:
             continue
         rend = ficha['rendimento'] or 1
+        setor = m.get('setor') or None
         base_mult = qtd * (m['fator'] or 1) / rend
         # explode cada ingrediente do prato até as folhas (contado/MP crua)
         for ing_id, quant in ings_por_ficha.get(ficha['ficha_id'], []):
@@ -212,8 +213,9 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=Non
                 c = base * fq
                 if c <= 0:
                     continue
-                consumo[folha] = consumo.get(folha, 0) + c
-                fontes.setdefault(folha, set()).add(pid)
+                chave = (folha, setor)   # baixa é por INSUMO + SETOR do prato
+                consumo[chave] = consumo.get(chave, 0) + c
+                fontes.setdefault(chave, set()).add(pid)
         itens_venda += qtd
     return consumo, fontes, itens_venda
 
@@ -252,65 +254,84 @@ def main():
             print(f'   {data}: já processado (ok) — pulando.')
             continue
 
+        # consumo: {(insumo_id, setor) -> qtd}
         consumo, fontes, itens_venda = consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo)
-        linhas = []
-        valor_dia = 0.0
-        for ing_id, qtd in consumo.items():
-            p = prod_info.get(ing_id, {})
-            cu = custo_efetivo(p)
+
+        # agrega por INSUMO (para a preview / total) e guarda o detalhe por (insumo,setor) p/ apply
+        por_insumo = {}
+        sem_setor_val = 0.0
+        for (ing_id, setor), qtd in consumo.items():
+            cu = custo_efetivo(prod_info.get(ing_id, {}))
             val = qtd * cu
-            valor_dia += val
-            linhas.append({
-                'ingrediente_id': ing_id,
-                'ingrediente_nome': p.get('nome'),
-                'quantidade': round(qtd, 4),
-                'custo_unit': round(cu, 4),
-                'valor': round(val, 2),
-                'fontes': len(fontes.get(ing_id, ())),
-            })
+            d = por_insumo.setdefault(ing_id, {'qtd': 0.0, 'cu': cu, 'setores': set()})
+            d['qtd'] += qtd
+            if setor:
+                d['setores'].add(setor)
+            else:
+                sem_setor_val += val
+        valor_dia = sum(d['qtd'] * d['cu'] for d in por_insumo.values())
         total_valor += valor_dia
-        print(f'   {data}: {itens_venda} itens vendidos → {len(linhas)} insumos, R$ {valor_dia:,.2f}')
+        aviso = f'  ⚠ R$ {sem_setor_val:,.2f} sem setor' if sem_setor_val > 0.005 else ''
+        print(f'   {data}: {itens_venda} itens → {len(por_insumo)} insumos, R$ {valor_dia:,.2f}{aviso}')
 
         if MODE == 'dry':
-            # regrava a preview do dia (idempotente)
             sb_delete(f'pdv_baixa_preview?data=eq.{data}')
+            linhas = [{
+                'data': data, 'ingrediente_id': ing, 'ingrediente_nome': prod_info.get(ing, {}).get('nome'),
+                'quantidade': round(d['qtd'], 4), 'custo_unit': round(d['cu'], 4),
+                'valor': round(d['qtd'] * d['cu'], 2), 'fontes': len(d['setores']),
+            } for ing, d in por_insumo.items()]
             if linhas:
-                sb_insert('pdv_baixa_preview', [{**l, 'data': data} for l in linhas])
+                for i in range(0, len(linhas), 500):
+                    sb_insert('pdv_baixa_preview', linhas[i:i + 500])
             sb_upsert('pdv_baixa_ctrl', [{
                 'data': data, 'modo': 'dry', 'status': 'ok',
                 'itens_venda': itens_venda, 'insumos': len(linhas), 'valor': round(valor_dia, 2),
                 'detalhe': 'dry-run: nada baixado', 'processado_em': datetime.now(timezone.utc).isoformat(),
             }], 'data')
 
-        else:  # apply
-            # 1) razão (append) — tipo venda_pensera, quantidade negativa
-            movs = [{
-                'produto_id': l['ingrediente_id'], 'local': LOCAL, 'tipo': 'venda_pensera',
-                'quantidade': -l['quantidade'], 'custo_unit': l['custo_unit'],
-                'origem': 'pdv_icomanda', 'motivo': f'Baixa venda PDV {data}',
-                'ref_tabela': 'pdv', 'ref_id': data, 'data': data,
-            } for l in linhas]
+        else:  # apply — baixa por (insumo, setor). Venda SEM setor NÃO baixa (trava de segurança).
+            movs, alvos = [], []   # alvos = [(ing_id, setor, qtd)]
+            for (ing_id, setor), qtd in consumo.items():
+                if not setor:
+                    continue   # sem setor definido → não baixa; fica pra curadoria
+                cu = custo_efetivo(prod_info.get(ing_id, {}))
+                movs.append({
+                    'produto_id': ing_id, 'local': setor, 'tipo': 'venda_pensera',
+                    'quantidade': -round(qtd, 4), 'custo_unit': round(cu, 4),
+                    'origem': 'pdv_icomanda', 'motivo': f'Baixa venda PDV {data}',
+                    'ref_tabela': 'pdv', 'ref_id': data, 'data': data,
+                })
+                alvos.append((ing_id, setor, qtd))
             if movs:
-                sb_insert('est_movimentacoes', movs)
-            # 2) saldo — lê atual do LOCAL e desconta
-            ids = [l['ingrediente_id'] for l in linhas]
-            atual = {}
-            for i in range(0, len(ids), 200):
-                lote = ids[i:i + 200]
-                inlist = ','.join(lote)
-                for s in sb_get_all(f'est_saldo_local?select=produto_id,saldo&local=eq.{urllib.parse.quote(LOCAL)}&produto_id=in.({inlist})'):
-                    atual[s['produto_id']] = float(s.get('saldo') or 0)
-            saldo_rows = [{
-                'produto_id': l['ingrediente_id'], 'local': LOCAL,
-                'saldo': round(atual.get(l['ingrediente_id'], 0) - l['quantidade'], 4),
-                'updated_at': datetime.now(timezone.utc).isoformat(),
-            } for l in linhas]
+                for i in range(0, len(movs), 500):
+                    sb_insert('est_movimentacoes', movs[i:i + 500])
+            # saldo: lê atual de cada (produto,setor) e desconta
+            por_setor = {}
+            for ing_id, setor, qtd in alvos:
+                por_setor.setdefault(setor, {})[ing_id] = por_setor.setdefault(setor, {}).get(ing_id, 0) + qtd
+            saldo_rows = []
+            for setor, mapa_ing in por_setor.items():
+                ids = list(mapa_ing.keys())
+                atual = {}
+                for i in range(0, len(ids), 150):
+                    inlist = ','.join(ids[i:i + 150])
+                    for s in sb_get_all(f'est_saldo_local?select=produto_id,saldo&local=eq.{urllib.parse.quote(setor)}&produto_id=in.({inlist})'):
+                        atual[s['produto_id']] = float(s.get('saldo') or 0)
+                for ing_id, qtd in mapa_ing.items():
+                    saldo_rows.append({
+                        'produto_id': ing_id, 'local': setor,
+                        'saldo': round(atual.get(ing_id, 0) - qtd, 4),
+                        'updated_at': datetime.now(timezone.utc).isoformat(),
+                    })
             if saldo_rows:
-                sb_upsert('est_saldo_local', saldo_rows, 'produto_id,local')
+                for i in range(0, len(saldo_rows), 500):
+                    sb_upsert('est_saldo_local', saldo_rows[i:i + 500], 'produto_id,local')
             sb_upsert('pdv_baixa_ctrl', [{
                 'data': data, 'modo': 'apply', 'status': 'ok',
-                'itens_venda': itens_venda, 'insumos': len(linhas), 'valor': round(valor_dia, 2),
-                'detalhe': f'baixado em {LOCAL}', 'processado_em': datetime.now(timezone.utc).isoformat(),
+                'itens_venda': itens_venda, 'insumos': len(por_insumo), 'valor': round(valor_dia, 2),
+                'detalhe': f'baixado por setor; sem-setor R$ {sem_setor_val:,.2f}',
+                'processado_em': datetime.now(timezone.utc).isoformat(),
             }], 'data')
 
     print(f'== Fim == total R$ {total_valor:,.2f}  (modo {MODE})')

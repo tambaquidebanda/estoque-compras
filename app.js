@@ -11427,6 +11427,22 @@ async function removerGrupoUnidade() {
 // ═══════════════════════════════════════════════════════════════
 const ICOMANDA_URL = 'https://cloud.icomanda.com/tdb/apidashboard/';
 const ICOMANDA_KEY = 'apidash_249_aB3xY7zQ9Wm2KpV5';
+const SETORES_BAIXA = ['COZINHA', 'BAR', 'DELIVERY', 'SALAO', 'CHURRASQUEIRA', 'ASG'];
+
+// Infere o setor de baixa a partir da categoria do produto (+ nome do PDV).
+// Retorna '' quando ambíguo (fica pra curadoria manual).
+function inferSetorPdv(categoria, icomandaNome) {
+  const c = norm(categoria || '');
+  const n = norm(icomandaNome || '');
+  if (/delivery|ifood|\bdl\b/.test(n) || c === 'ifood') return 'DELIVERY';
+  if (/\bcozinha\b/.test(c)) return 'COZINHA';
+  if (/\bbar\b/.test(c)) return 'BAR';
+  // Bebidas / bar
+  if (/chopp|cerveja|caipi|drink|dose|soda|suco|bebida|happy hour|sunset|boi (caprichoso|garantido)|refri|\bbar\b/.test(c)) return 'BAR';
+  // Comida / cozinha
+  if (/prato|assado|entrada|acompanhamento|guarnic|guarni|salada|massa|carne|frango|sobremesa|pastel|bolinho|sardinha|moqueca|peixe|kids|marmita|pp[cbp]\b/.test(c)) return 'COZINHA';
+  return '';
+}
 
 let _pdvRows      = [];          // linhas de pdv_map
 let _fichaProdSet = new Set();   // est_produtos.id que têm ficha ativa
@@ -11465,7 +11481,7 @@ async function carregarPdvMap() {
     if (!cur || (_fichaProdSet.has(p.id) && !_fichaProdSet.has(cur.id))) _pdvProdIndex[k] = p;
   }
 
-  _pdvRows = await _fetchAllPaged('pdv_map', 'id,icomanda_produto_id,icomanda_nome,produto_id,status,fator,qtd_30d,obs');
+  _pdvRows = await _fetchAllPaged('pdv_map', 'id,icomanda_produto_id,icomanda_nome,produto_id,status,fator,qtd_30d,obs,setor');
 
   const dl = document.getElementById('pdv-dl-produtos');
   if (dl && !dl.dataset.pronto) {
@@ -11533,24 +11549,32 @@ async function autoSemearPdv() {
   // Calcula o alvo SEM mutar _pdvRows — só aplica na memória depois de gravar com sucesso.
   const changes = [];
   for (const r of _pdvRows) {
-    if (r.status !== 'pendente') continue;
     let novoStatus  = r.status;
     let novoProduto = r.produto_id;
-    if (pdvEhModificador(r.icomanda_nome)) {
-      novoStatus = 'ignorar'; novoProduto = null;
-    } else {
-      if (!novoProduto) {
-        const p = _pdvProdIndex[_pdvNorm(r.icomanda_nome)];
-        if (p) novoProduto = p.id;
+    let novoSetor   = r.setor || null;
+    if (r.status === 'pendente') {
+      if (pdvEhModificador(r.icomanda_nome)) {
+        novoStatus = 'ignorar'; novoProduto = null;
+      } else {
+        if (!novoProduto) {
+          const p = _pdvProdIndex[_pdvNorm(r.icomanda_nome)];
+          if (p) novoProduto = p.id;
+        }
+        if (novoProduto && _fichaProdSet.has(novoProduto)) novoStatus = 'mapeado';
       }
-      if (novoProduto && _fichaProdSet.has(novoProduto)) novoStatus = 'mapeado';
     }
-    if (novoStatus !== r.status || novoProduto !== r.produto_id) {
+    // Setor: preenche quando vai ficar mapeado, tem produto e ainda não tem setor
+    if (novoStatus === 'mapeado' && novoProduto && !novoSetor) {
+      const p = _pdvProdById[novoProduto];
+      novoSetor = inferSetorPdv(p && p.categoria, r.icomanda_nome) || null;
+    }
+    if (novoStatus !== r.status || novoProduto !== r.produto_id || novoSetor !== (r.setor || null)) {
       changes.push({
         id:                  r.id,
         icomanda_produto_id: r.icomanda_produto_id,  // obrigatório: sem ele o upsert viola NOT NULL
         status:              novoStatus,
         produto_id:          novoProduto,
+        setor:               novoSetor,
       });
     }
   }
@@ -11590,12 +11614,22 @@ async function setPdvFator(id, val) {
   await sb.from('pdv_map').update({ fator: f, atualizado_em: new Date().toISOString() }).eq('id', id);
 }
 
+async function setPdvSetor(id, val) {
+  const r = _pdvRows.find(x => x.id === id); if (!r) return;
+  r.setor = val || null;
+  const { error } = await sb.from('pdv_map').update({ setor: r.setor, atualizado_em: new Date().toISOString() }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  renderPdvMap();
+}
+
 function pdvFiltrar(f) { _pdvFiltro = f; renderPdvMap(); }
 function pdvToggleSemFicha(el) { _pdvSemFicha = el.checked; _pintarPdvMap(); }
 
 function renderPdvMap() {
   const R = _pdvRows;
-  const baixaOK = R.filter(r => r.status === 'mapeado' && r.produto_id && _fichaProdSet.has(r.produto_id)).length;
+  const comFicha = R.filter(r => r.status === 'mapeado' && r.produto_id && _fichaProdSet.has(r.produto_id));
+  const baixaOK = comFicha.filter(r => r.setor).length;
+  const semSetor = comFicha.filter(r => !r.setor).length;
   const pend    = R.filter(r => r.status === 'pendente').length;
   const ign     = R.filter(r => r.status === 'ignorar').length;
   const semF    = R.filter(r => r.status !== 'ignorar' && r.produto_id && !_fichaProdSet.has(r.produto_id)).length;
@@ -11603,6 +11637,7 @@ function renderPdvMap() {
   const kpis = document.getElementById('pdv-kpis');
   if (kpis) kpis.innerHTML =
     _relKpiChip('Baixa OK', baixaOK, '#2EC4B6') +
+    _relKpiChip('Sem setor (trava)', semSetor, '#6f42c1') +
     _relKpiChip('Pendentes', pend, '#FF6B35') +
     _relKpiChip('Sem ficha (trava)', semF, '#E0A800') +
     _relKpiChip('Ignorados', ign, '#8896a0');
@@ -11627,10 +11662,12 @@ function _pintarPdvMap() {
   const tb = document.getElementById('pdv-tbody');
   if (!tb) return;
   if (!rows.length) {
-    tb.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Nenhum item neste filtro.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum item neste filtro.</td></tr>';
     return;
   }
   const opt = (v, txt, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${txt}</option>`;
+  const optSetor = (cur) => `<option value="">—</option>` +
+    SETORES_BAIXA.map(s => `<option value="${s}"${s === cur ? ' selected' : ''}>${s}</option>`).join('');
   tb.innerHTML = rows.map(r => {
     const p = _pdvProdById[r.produto_id];
     const prodNome = p ? esc(p.nome) : '';
@@ -11639,6 +11676,10 @@ function _pintarPdvMap() {
     else if (!r.produto_id)                      ficha = '<span class="badge bg-light text-muted border">sem produto</span>';
     else if (_fichaProdSet.has(r.produto_id))    ficha = '<span class="badge bg-success">com ficha</span>';
     else                                         ficha = '<span class="badge bg-warning text-dark">sem ficha</span>';
+    // Setor só interessa quando vai baixar (mapeado). Nos demais, mostra travinha discreta.
+    const setorCel = (r.status === 'ignorar')
+      ? '<span class="text-muted">—</span>'
+      : `<select class="form-select form-select-sm ${r.setor ? '' : 'border-danger'}" style="width:130px" onchange="setPdvSetor('${r.id}',this.value)">${optSetor(r.setor || '')}</select>`;
     return `<tr>
       <td><div class="fw-semibold">${esc(r.icomanda_nome || '')}</div><small class="text-muted">#${r.icomanda_produto_id}</small></td>
       <td class="text-end">${r.qtd_30d || 0}</td>
@@ -11647,6 +11688,7 @@ function _pintarPdvMap() {
       </select></td>
       <td><input list="pdv-dl-produtos" class="form-control form-control-sm" value="${prodNome}" placeholder="— produto —" onchange="setPdvProduto('${r.id}',this.value)"></td>
       <td>${ficha}</td>
+      <td>${setorCel}</td>
       <td><input type="number" step="0.01" min="0" value="${r.fator ?? 1}" class="form-control form-control-sm" style="width:74px" onchange="setPdvFator('${r.id}',this.value)"></td>
     </tr>`;
   }).join('');
