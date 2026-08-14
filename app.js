@@ -11530,28 +11530,37 @@ async function sincronizarPdv() {
 
 // Casa pendentes por nome com produtos que têm ficha (→ mapeado) e marca modificadores como ignorar.
 async function autoSemearPdv() {
+  // Calcula o alvo SEM mutar _pdvRows — só aplica na memória depois de gravar com sucesso.
   const changes = [];
   for (const r of _pdvRows) {
     if (r.status !== 'pendente') continue;
-    let mudou = false;
+    let novoStatus  = r.status;
+    let novoProduto = r.produto_id;
     if (pdvEhModificador(r.icomanda_nome)) {
-      r.status = 'ignorar'; r.produto_id = null; mudou = true;
+      novoStatus = 'ignorar'; novoProduto = null;
     } else {
-      if (!r.produto_id) {
+      if (!novoProduto) {
         const p = _pdvProdIndex[_pdvNorm(r.icomanda_nome)];
-        if (p) { r.produto_id = p.id; mudou = true; }
+        if (p) novoProduto = p.id;
       }
-      if (r.produto_id && _fichaProdSet.has(r.produto_id)) { r.status = 'mapeado'; mudou = true; }
+      if (novoProduto && _fichaProdSet.has(novoProduto)) novoStatus = 'mapeado';
     }
-    if (mudou) changes.push({ id: r.id, status: r.status, produto_id: r.produto_id });
+    if (novoStatus !== r.status || novoProduto !== r.produto_id) {
+      changes.push({
+        id:                  r.id,
+        icomanda_produto_id: r.icomanda_produto_id,  // obrigatório: sem ele o upsert viola NOT NULL
+        status:              novoStatus,
+        produto_id:          novoProduto,
+      });
+    }
   }
   if (!changes.length) { toast('Nada novo para semear.', ''); return; }
   for (let k = 0; k < changes.length; k += 500) {
-    const { error } = await sb.from('pdv_map').upsert(changes.slice(k, k + 500));
+    const { error } = await sb.from('pdv_map').upsert(changes.slice(k, k + 500), { onConflict: 'id' });
     if (error) { toast('Erro ao semear: ' + error.message, 'erro'); return; }
   }
   toast(`Auto-semeado: ${changes.length} itens atualizados.`, 'ok');
-  renderPdvMap();
+  await carregarPdvMap();   // recarrega do banco → tela sempre reflete o que foi salvo
 }
 
 async function setPdvStatus(id, val) {
