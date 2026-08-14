@@ -1,0 +1,44 @@
+name: Robô Baixa de Estoque (iComanda)
+
+# DESLIGADO por enquanto: só roda quando você clica "Run workflow" (manual).
+# Quando o mapeamento estiver curado e o dry-run validado, é só descomentar o
+# bloco `schedule` abaixo para ligar o automático 2x/dia.
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'dry (só calcula) ou apply (baixa de verdade)'
+        required: true
+        default: 'dry'
+        type: choice
+        options: [dry, apply]
+      days_back:
+        description: 'Quantos dias retroativos processar'
+        required: false
+        default: '1'
+  # schedule:
+  #   - cron: '30 12 * * *'   # 08:30 Manaus — dia anterior já fechado
+  #   - cron: '30 15 * * *'   # 11:30 Manaus — segunda tentativa
+
+concurrency:
+  group: baixa-estoque-pdv
+  cancel-in-progress: false
+
+jobs:
+  baixa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Rodar robô de baixa
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BAIXA_MODE: ${{ github.event.inputs.modo || 'dry' }}
+          BAIXA_DAYS_BACK: ${{ github.event.inputs.days_back || '1' }}
+          BAIXA_LOCAL: ${{ secrets.BAIXA_LOCAL }}
+          BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE }}
+        run: python scripts/baixa_estoque_pdv.py
