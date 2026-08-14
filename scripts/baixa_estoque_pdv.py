@@ -150,10 +150,45 @@ def carregar():
     for p in sb_get_all('est_produtos?select=id,nome,custo_comp,custo_uso,fator_conversao,perda'):
         prod_info[p['id']] = p
 
-    return mapa, ficha_por_prod, ings_por_ficha, prod_info
+    # CONTADOS = produtos que têm saldo cadastrado (inventário controla). A recursão para neles.
+    contado = set()
+    for s in sb_get_all('est_saldo_local?select=produto_id'):
+        if s.get('produto_id'):
+            contado.add(s['produto_id'])
+
+    return mapa, ficha_por_prod, ings_por_ficha, prod_info, contado
 
 
-def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha):
+def _bom(pid, ficha_por_prod, ings_por_ficha, contado, memo, stack):
+    """BOM achatado: quanto de cada item FOLHA (contado ou matéria-prima crua) resulta
+    de 1 unidade de `pid`. Regra híbrida: para em item CONTADO (tem saldo) ou sem ficha;
+    o que NÃO é contado é explodido pela própria ficha. Guarda contra ciclos."""
+    if pid in memo:
+        return memo[pid]
+    # folha: é contado (baixa ele mesmo) OU não tem ficha (matéria-prima crua)
+    if pid in contado or pid not in ficha_por_prod or pid in stack:
+        memo[pid] = {pid: 1.0}
+        return memo[pid]
+    f = ficha_por_prod[pid]
+    rend = f['rendimento'] or 1
+    stack.add(pid)
+    out = {}
+    for ing_id, quant in ings_por_ficha.get(f['ficha_id'], []):
+        if not ing_id:
+            continue
+        fator = (quant or 0) / rend
+        if fator <= 0:
+            continue
+        for folha, fq in _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, stack).items():
+            out[folha] = out.get(folha, 0) + fq * fator
+    stack.discard(pid)
+    memo[pid] = out
+    return out
+
+
+def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=None):
+    if memo is None:
+        memo = {}
     vendas = vendas_do_dia(data)
     consumo, fontes = {}, {}
     itens_venda = 0
@@ -165,12 +200,20 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha):
         if not ficha:
             continue
         rend = ficha['rendimento'] or 1
+        base_mult = qtd * (m['fator'] or 1) / rend
+        # explode cada ingrediente do prato até as folhas (contado/MP crua)
         for ing_id, quant in ings_por_ficha.get(ficha['ficha_id'], []):
-            c = quant * qtd * (m['fator'] or 1) / rend
-            if c <= 0:
+            if not ing_id:
                 continue
-            consumo[ing_id] = consumo.get(ing_id, 0) + c
-            fontes.setdefault(ing_id, set()).add(pid)
+            base = (quant or 0) * base_mult
+            if base <= 0:
+                continue
+            for folha, fq in _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, set()).items():
+                c = base * fq
+                if c <= 0:
+                    continue
+                consumo[folha] = consumo.get(folha, 0) + c
+                fontes.setdefault(folha, set()).add(pid)
         itens_venda += qtd
     return consumo, fontes, itens_venda
 
@@ -197,10 +240,11 @@ def ctrl_dias_ok():
 # ───────────────────────── main ─────────────────────────
 def main():
     print(f'== Robô baixa PDV == modo={MODE} local={LOCAL} start={START_DATE} days_back={DAYS_BACK}')
-    mapa, ficha_por_prod, ings_por_ficha, prod_info = carregar()
-    print(f'   mapeados={len(mapa)}  fichas={len(ficha_por_prod)}  produtos={len(prod_info)}')
+    mapa, ficha_por_prod, ings_por_ficha, prod_info, contado = carregar()
+    print(f'   mapeados={len(mapa)}  fichas={len(ficha_por_prod)}  produtos={len(prod_info)}  contados={len(contado)}')
 
     ja_ok = ctrl_dias_ok() if MODE == 'apply' else set()
+    memo = {}
     total_valor = 0.0
 
     for data in dias_alvo():
@@ -208,7 +252,7 @@ def main():
             print(f'   {data}: já processado (ok) — pulando.')
             continue
 
-        consumo, fontes, itens_venda = consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha)
+        consumo, fontes, itens_venda = consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo)
         linhas = []
         valor_dia = 0.0
         for ing_id, qtd in consumo.items():
