@@ -2197,6 +2197,18 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
   await carregarProdutosFT();
   ftIngredientes = [];
 
+  // Abriram "nova ficha" para um produto que JÁ tem ficha ativa? Edita a existente em vez
+  // de criar outra. Sem isso o produto acumulava várias fichas ativas — invisíveis na tela
+  // (a lista indexa por produto, a aba pega fichas[0]) e sorteadas pelo robô de baixa.
+  let _fichaExistente = null;
+  if (prodId && !fichaId) {
+    const { data } = await sb.from('est_fichas_tecnicas')
+      .select('id,rendimento,unidade_rendimento')
+      .eq('produto_id', prodId).eq('ativo', true)
+      .order('criado_em', { ascending: true }).limit(1);
+    if (data && data.length) { _fichaExistente = data[0]; fichaId = data[0].id; }
+  }
+
   document.getElementById('ft-ficha-id').value       = fichaId;
   document.getElementById('ft-produto-id').value     = prodId;
   document.getElementById('ft-produto-nome').value   = '';
@@ -2255,7 +2267,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
       }
     }
 
-    const ficha = ftFichasCache.find(f => f.id === fichaId);
+    const ficha = ftFichasCache.find(f => f.id === fichaId) || _fichaExistente;
     if (ficha) {
       document.getElementById('ft-rendimento').value     = ficha.rendimento;
       _setUnidadeRend(ficha.unidade_rendimento);
@@ -2475,6 +2487,13 @@ async function salvarFicha() {
   if (!prodId) { toast('Selecione o produto da ficha.', 'erro'); return; }
   if (!ftIngredientes.length) { toast('Adicione pelo menos 1 ingrediente.', 'erro'); return; }
 
+  // Trava o botão durante a gravação: o segundo clique antes de o modal fechar criava uma
+  // SEGUNDA ficha (o ramo de INSERT roda sempre que ft-ficha-id está vazio).
+  const _btnSalvar = document.getElementById('btn-salvar-ficha');
+  if (_btnSalvar && _btnSalvar.disabled) return;
+  if (_btnSalvar) _btnSalvar.disabled = true;
+  const _liberar = () => { if (_btnSalvar) _btnSalvar.disabled = false; };
+
   // Recalcula o custo com o preço ATUAL dos ingredientes (fresco do banco), não com o
   // snapshot de quando foram adicionados. Sem isso, se o cache estava desatualizado, gravava
   // custo 0 no produto mesmo a ficha aparecendo com valor — só voltava ao certo após F5.
@@ -2508,8 +2527,10 @@ async function salvarFicha() {
       custo_por_porcao: custoPorcao, ativo: true,
     }]).select().single();
 
-    if (error) { toast('Erro ao salvar ficha: ' + error.message, 'erro'); return; }
+    if (error) { toast('Erro ao salvar ficha: ' + error.message, 'erro'); _liberar(); return; }
     targetFichaId = data.id;
+    // Devolve o id ao campo: sem isso um novo clique em Salvar cairia de novo no INSERT.
+    document.getElementById('ft-ficha-id').value = targetFichaId;
   }
 
   // Insert ingredients
@@ -2521,7 +2542,7 @@ async function salvarFicha() {
   }));
 
   const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
-  if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); return; }
+  if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); _liberar(); return; }
 
   // Atualiza custo_comp do produto com o custo/porção calculado pela ficha
   await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', prodId);
@@ -2539,6 +2560,7 @@ async function salvarFicha() {
   try { await recalcularFichasDoIngrediente(prodId, null, true); } catch (e) { console.error('Propagação de custo falhou:', e); }
 
   toast('Ficha técnica salva!', 'ok');
+  _liberar();
   ftFichasCache = [];
 
   const _depoisDeFechar = () => {
