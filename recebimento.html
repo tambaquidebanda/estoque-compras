@@ -284,6 +284,7 @@
       <span style="font-size:.85rem;font-weight:700">
         Total: <span id="rec-total" style="color:var(--verde);font-size:1.05rem">R$ 0,00</span>
       </span>
+      <span id="rec-total-bonif" style="display:none;font-size:.72rem;color:var(--txt2);width:100%;text-align:right"></span>
     </div>
     <button class="btn-confirmar" id="btn-confirmar" onclick="confirmarRecebimento()">
       ✅ Confirmar Recebimento
@@ -674,7 +675,7 @@ function esc(s) {
 async function abrirPedido(pedido_num) {
   const { data: itens, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo')
+    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo,bonificado')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('id');
@@ -757,6 +758,14 @@ async function abrirPedido(pedido_num) {
           </div>
         </div>
         <div class="tog-row">
+          <span class="tog-lbl">🎁 Bonificado (não gera conta a pagar)</span>
+          <label class="toggle">
+            <input type="checkbox" id="bn-${sid}" ${it.bonificado ? 'checked' : ''}
+              onchange="atualizarTotal('${sid}',${it.quantidade||0})">
+            <span class="tog-track"></span>
+          </label>
+        </div>
+        <div class="tog-row">
           <span class="tog-lbl warn">⚠️ Divergência de quantidade</span>
           <label class="toggle">
             <input type="checkbox" id="dt-${sid}" onchange="togObs('${sid}')">
@@ -813,7 +822,7 @@ function togObs(id) {
 
 function atualizarTotalGeral() {
   if (!_pedidoAtual) return;
-  let soma = 0;
+  let soma = 0, bonif = 0;
   _pedidoAtual.itens.forEach(it => {
     const sid   = String(it.id);
     const chk   = document.getElementById(`inc-${sid}`);
@@ -821,11 +830,18 @@ function atualizarTotalGeral() {
     const qtd      = parseFloat(document.getElementById(`qr-${sid}`)?.value) || 0;
     const preco    = parseMoeda(`pu-${sid}`);
     const desconto = parseMoeda(`dc-${sid}`);
-    soma += Math.max(0, qtd * preco - desconto);
+    const v = Math.max(0, qtd * preco - desconto);
+    // Bonificado entra no estoque, mas fora do total a pagar.
+    if (document.getElementById(`bn-${sid}`)?.checked) bonif += v; else soma += v;
   });
   const acr = parseMoeda('rec-acrescimo');
   const el  = document.getElementById('rec-total');
   if (el) el.textContent = brl(soma + acr);
+  const elB = document.getElementById('rec-total-bonif');
+  if (elB) {
+    elB.style.display = bonif > 0 ? '' : 'none';
+    elB.textContent   = bonif > 0 ? `🎁 Bonificado (não gera conta): ${brl(bonif)}` : '';
+  }
 }
 
 // ── CONFIRMAR ────────────────────────────────────────────────────
@@ -862,18 +878,30 @@ async function confirmarRecebimento() {
     // valor_unitario efetivo = total_com_desconto / qtd
     const vlrEfetivo = qtdRec > 0 ? totalItem / qtdRec : preco;
     const diverg = document.getElementById(`dt-${it.id}`)?.checked || false;
+    const bonif  = document.getElementById(`bn-${it.id}`)?.checked || false;
     const obs    = document.getElementById(`ob-${it.id}`)?.value || '';
     return {
       compra_id: it.id, produto: it.produto, produto_id: it.produto_id || null,
       categoria: it.categoria || '',
       unidade: it.unidade_med || '', qtd_pedida: it.quantidade || 0,
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
-      total_recebido: totalItem,
+      total_recebido: totalItem, bonificado: bonif,
       divergencia: diverg, obs_divergencia: obs,
     };
   });
 
-  const totalItens    = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  // Trava: item sem valor e sem marca de bonificado é quase sempre esquecimento.
+  const _semValor = itensReceb.filter(i => !i.bonificado && i.qtd_recebida > 0 && i.valor_unitario < 0.01);
+  if (_semValor.length) {
+    const nomes = _semValor.map(i => `• ${i.produto}`).join('\n');
+    if (!confirm(
+      `Estes itens estão com valor zero e NÃO foram marcados como bonificados:\n\n${nomes}\n\n` +
+      `Se for bonificação, cancele e marque "Bonificado".\n\nContinuar mesmo assim?`
+    )) { btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento'; return; }
+  }
+
+  // Bonificado fica FORA do total que vira conta a pagar (item segue no estoque com valor real).
+  const totalItens    = itensReceb.reduce((s, i) => s + (i.bonificado ? 0 : i.total_recebido), 0);
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
@@ -952,12 +980,14 @@ async function confirmarRecebimento() {
         quantidade: qtdRecTotal,
         status_receb: 'recebido',
         custo_unit: ir.valor_unitario,
+        bonificado: !!ir.bonificado,
       }).eq('id', ir.compra_id);
     } else {
       await sb.from('cmp_compras').update({
         quantidade: Math.max(restante, 0),
         status_receb: 'pendente',
         custo_unit: ir.valor_unitario,
+        bonificado: !!ir.bonificado,
       }).eq('id', ir.compra_id);
     }
   }

@@ -1181,6 +1181,7 @@ function adicionarItemPedido(e) {
     prod, produtoId: prodCad.id, cat, planoConta, un, custo, qtd,
     uso: usoNome, unidadeId: usoId,
     total: custo * qtd,
+    bonificado: false,
   });
 
   // Limpa apenas os campos de item
@@ -1230,6 +1231,11 @@ function _renderItensPedido() {
       <td class="text-center">${esc(it.un)}</td>
       <td class="text-end">${brl(it.custo)}</td>
       <td class="text-end fw-bold">${brl(it.total)}</td>
+      <td class="text-center">
+        <input class="form-check-input" type="checkbox" ${it.bonificado ? 'checked' : ''}
+          onchange="_pedidoItens[${idx}].bonificado = this.checked; _renderItensPedido();"
+          title="Bonificado: entra no estoque com custo real, mas não gera conta a pagar">
+      </td>
       <td class="text-center" style="white-space:nowrap">
         <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1 me-1" onclick="editarItemPedido(${idx})" title="Editar">
           <i class="bi bi-pencil-fill"></i>
@@ -1241,25 +1247,32 @@ function _renderItensPedido() {
     </tr>`).join('');
 
   // Subtotais por plano de contas
+  // Bonificado não entra nos subtotais nem no total: ele vira estoque, não vira conta a pagar.
   const grupos = {};
   _pedidoItens.forEach(it => {
+    if (it.bonificado) return;
     const k = it.planoConta || it.cat || '—';
     grupos[k] = (grupos[k] || 0) + it.total;
   });
-  const totalItens  = _pedidoItens.reduce((s, it) => s + it.total, 0);
+  const totalItens  = _pedidoItens.reduce((s, it) => s + (it.bonificado ? 0 : it.total), 0);
+  const totalBonif  = _pedidoItens.reduce((s, it) => s + (it.bonificado ? it.total : 0), 0);
   const acrescimo   = parseMoeda('c-acrescimo');
   const totalGeral  = totalItens + acrescimo;
 
   const linhasGrupo = Object.entries(grupos).map(([k, v]) =>
-    `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td></td></tr>`
+    `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td colspan="2"></td></tr>`
   ).join('');
 
   const linhaAcr = acrescimo > 0
-    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Acréscimo (frete/taxa)</td><td class="text-end fw-semibold" style="color:#FF6B35">${brl(acrescimo)}</td><td></td></tr>`
+    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Acréscimo (frete/taxa)</td><td class="text-end fw-semibold" style="color:#FF6B35">${brl(acrescimo)}</td><td colspan="2"></td></tr>`
     : '';
 
-  tfoot.innerHTML = linhasGrupo + linhaAcr +
-    `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total do Pedido</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td></td></tr>`;
+  const linhaBonif = totalBonif > 0
+    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">🎁 Bonificado (entra no estoque, não gera conta)</td><td class="text-end fw-semibold text-muted">${brl(totalBonif)}</td><td colspan="2"></td></tr>`
+    : '';
+
+  tfoot.innerHTML = linhasGrupo + linhaAcr + linhaBonif +
+    `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total a pagar</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td colspan="2"></td></tr>`;
 }
 
 function removerItemPedido(idx) {
@@ -1360,6 +1373,7 @@ async function finalizarPedido() {
     acrescimo,
     setor,
     forma_pagamento,
+    bonificado:      !!it.bonificado,
     status_receb:    'pendente',
     criado_por:      user.id,
   }));
@@ -5537,7 +5551,7 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso')
+    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso,bonificado')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
@@ -5577,6 +5591,13 @@ async function abrirModalReceber(pedido_num) {
       <td class="text-center">
         <button type="button" class="btn-check-receber" id="inc-rec-${x.id}"
           onclick="togIncluirReceb('${x.id}')">✓</button>
+      </td>
+      <td class="text-center">
+        <div class="form-check form-switch d-flex justify-content-center">
+          <input class="form-check-input" type="checkbox" id="bon-rec-${x.id}"
+            ${x.bonificado ? 'checked' : ''} onchange="calcTotalReceb()"
+            title="Entra no estoque com o custo real, mas não gera conta a pagar">
+        </div>
       </td>
       <td class="text-center">
         <div class="form-check form-switch d-flex justify-content-center">
@@ -5620,17 +5641,24 @@ function marcarDiverg(id) {
 }
 
 function calcTotalReceb() {
-  let total = 0;
+  let total = 0, bonif = 0;
   document.querySelectorAll('[id^="qtd-rec-"]').forEach(el => {
     const id  = el.id.replace('qtd-rec-', '');
     const inc = document.getElementById(`inc-rec-${id}`);
     if (!inc?.classList.contains('checked')) return;
     const txt = (document.getElementById(`tot-rec-${id}`)?.textContent || '0').replace(/[R$\s.]/g,'').replace(',','.');
-    total += parseFloat(txt) || 0;
+    const v = parseFloat(txt) || 0;
+    // Bonificado entra no estoque com o custo real, mas fora da conta a pagar.
+    if (document.getElementById(`bon-rec-${id}`)?.checked) bonif += v; else total += v;
   });
   const acrescimo = parseMoeda('receb-acrescimo');
   const el = document.getElementById('receb-total-modal');
   if (el) el.textContent = brl(total + acrescimo);
+  const elB = document.getElementById('receb-total-bonif');
+  if (elB) {
+    elB.style.display = bonif > 0 ? '' : 'none';
+    elB.textContent   = bonif > 0 ? `· Bonificado (não gera conta): ${brl(bonif)}` : '';
+  }
 }
 
 async function confirmarRecebimento() {
@@ -5663,18 +5691,34 @@ async function confirmarRecebimento() {
     // valor_unitario efetivo = total_com_desconto / qtd (para custo por unidade correto)
     const vlrEfetivo = qtdRec > 0 ? totalItem / qtdRec : vlr;
     const diverg = document.getElementById(`div-rec-${x.id}`)?.checked || false;
+    const bonif  = document.getElementById(`bon-rec-${x.id}`)?.checked || false;
     const obs    = document.getElementById(`obs-rec-${x.id}`)?.value || '';
     return {
       compra_id: x.id, produto: x.produto, produto_id: x.produto_id || null,
       categoria: x.categoria || '',
       unidade: x.unidade_med || '', qtd_pedida: x.quantidade || 0,
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
-      total_recebido: totalItem,
+      total_recebido: totalItem, bonificado: bonif,
       divergencia: diverg, obs_divergencia: obs,
     };
   });
 
-  const totalItens    = itensReceb.reduce((s, i) => s + i.total_recebido, 0);
+  // Trava: item entrando sem valor e sem estar marcado como bonificado é quase sempre
+  // esquecimento. Foi assim que o barril de chopp entrou a 0,0001 e zerou 38 fichas.
+  const _semValor = itensReceb.filter(i => !i.bonificado && i.qtd_recebida > 0 && i.valor_unitario < 0.01);
+  if (_semValor.length) {
+    const nomes = _semValor.map(i => `• ${i.produto}`).join('\n');
+    if (!confirm(
+      `Estes itens estão entrando com valor zero e NÃO foram marcados como bonificados:\n\n${nomes}\n\n` +
+      `Se for bonificação, cancele e marque a coluna "Bonificado" — assim o produto mantém o custo real ` +
+      `e não gera conta a pagar.\n\nContinuar mesmo assim?`
+    )) return;
+  }
+
+  // Bonificado fica FORA do total: é o número que vira cmp_contas_pagar.valor e o
+  // lançamento no financeiro. O item continua em cmp_recebimento_itens com valor real,
+  // então estoque e custo do produto seguem normais.
+  const totalItens    = itensReceb.reduce((s, i) => s + (i.bonificado ? 0 : i.total_recebido), 0);
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
@@ -5791,9 +5835,9 @@ async function confirmarRecebimento() {
         const soma = (somaRec || []).reduce((s, r) => s + Number(r.qtd_recebida || 0), 0);
         if (soma > 0) qtdRecTotal = soma;
       } catch (_) {}
-      await sb.from('cmp_compras').update({ quantidade: qtdRecTotal, status_receb: 'recebido', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
+      await sb.from('cmp_compras').update({ quantidade: qtdRecTotal, status_receb: 'recebido', custo_unit: ir.valor_unitario, bonificado: !!ir.bonificado }).eq('id', ir.compra_id);
     } else {
-      await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente', custo_unit: ir.valor_unitario }).eq('id', ir.compra_id);
+      await sb.from('cmp_compras').update({ quantidade: Math.max(restante, 0), status_receb: 'pendente', custo_unit: ir.valor_unitario, bonificado: !!ir.bonificado }).eq('id', ir.compra_id);
     }
   }
   // Persiste acréscimo atualizado
@@ -6951,7 +6995,7 @@ async function reabrirPedido(pedido_num) {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento')
+    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,bonificado')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -6980,6 +7024,7 @@ async function editarPedido(pedido_num) {
       unidadeId:  uniObj?.id || null,
       setor:          it.setor || '',
       formaPagamento: it.forma_pagamento || '',
+      bonificado:     !!it.bonificado,
       total:          (it.custo_unit || 0) * (it.quantidade || 0),
     };
   });

@@ -553,6 +553,7 @@
                     <th class="text-center">Un</th>
                     <th class="text-end">Unit.</th>
                     <th class="text-end">Total</th>
+                    <th class="text-center" title="Bonificação: entra no estoque com custo real, mas não gera conta a pagar">🎁</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -3187,6 +3188,7 @@
                 <th class="text-center" style="min-width:100px">Desconto</th>
                 <th class="text-center">Total</th>
                 <th class="text-center" style="width:70px">Receber</th>
+                <th class="text-center" title="Item de bonificação: entra no estoque com custo real, mas não gera conta a pagar">Bonificado</th>
                 <th class="text-center">Divergência</th><th style="min-width:160px">Observação</th>
               </tr>
             </thead>
@@ -3198,7 +3200,9 @@
         </div>
       </div>
       <div class="modal-footer">
-        <div class="me-auto fw-bold">Total a pagar: <span id="receb-total-modal" class="text-success">R$ 0,00</span></div>
+        <div class="me-auto fw-bold">Total a pagar: <span id="receb-total-modal" class="text-success">R$ 0,00</span>
+          <span id="receb-total-bonif" class="text-muted fw-normal ms-3" style="display:none"></span>
+        </div>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-success" onclick="confirmarRecebimento()">✅ Confirmar Recebimento e Gerar Conta</button>
       </div>
