@@ -7207,10 +7207,28 @@ async function salvarDadosProduto() {
     .select('id').eq('produto_id', id).eq('ativo', true).limit(1);
   if (fichaDoProd?.length) delete dados.custo_comp;
 
-  const nomeAntigo = _prodAtual.nome;
+  const nomeAntigo  = _prodAtual.nome;
+  const unUsoAntigo = _prodAtual.unidade_uso;
 
   const { error } = await sb.from('est_produtos').update(dados).eq('id', id);
   if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
+
+  // A unidade gravada em cada linha de ficha e uma copia da unidade de uso do produto, feita
+  // na hora em que o ingrediente foi adicionado. Trocar a unidade no cadastro nao mexia nessas
+  // copias: a ficha continuava exibindo a unidade velha e so voltava ao certo se a pessoa
+  // apagasse o ingrediente e adicionasse de novo. Agora a troca desce para as fichas.
+  let _linhasFicha = 0;
+  if (unUsoAntigo && dados.unidade_uso && unUsoAntigo !== dados.unidade_uso) {
+    const { data: _ajustadas } = await sb.from('est_ficha_ingredientes')
+      .update({ unidade: dados.unidade_uso })
+      .eq('ingrediente_id', id)
+      .select('id');
+    _linhasFicha = _ajustadas?.length || 0;
+    ftFichasCache = [];
+  }
+  const _sufFicha = _linhasFicha
+    ? ` ${_linhasFicha} ingrediente(s) em fichas passaram para ${dados.unidade_uso}.`
+    : '';
 
   // Atualiza cache local
   const idx = cProdutosFT.findIndex(p => p.id === id);
@@ -7221,11 +7239,11 @@ async function salvarDadosProduto() {
   // Se o nome mudou, propaga para estrutura de contagem e mapeamentos
   if (nomeAntigo && dados.nome && nomeAntigo !== dados.nome) {
     const sincronizou = await _renomearProdutoNaEstrutura(nomeAntigo, dados.nome);
-    toast(sincronizou
+    toast((sincronizou
       ? '✅ Produto atualizado e estrutura de contagem sincronizada!'
-      : '✅ Produto atualizado! (não estava na estrutura de contagem)', 'ok');
+      : '✅ Produto atualizado! (não estava na estrutura de contagem)') + _sufFicha, 'ok');
   } else {
-    toast('✅ Produto atualizado com sucesso!', 'ok');
+    toast('✅ Produto atualizado com sucesso!' + _sufFicha, 'ok');
   }
 
   // Recalcula todas as fichas que usam este produto como ingrediente
