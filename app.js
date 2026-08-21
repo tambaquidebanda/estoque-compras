@@ -2385,9 +2385,11 @@ function acIngrediente(val) {
   const lista = document.getElementById('ac-ft-ing');
   if (!val) { lista.classList.remove('aberta'); return; }
 
-  // Ingredients can be MP, SA, PPB, PPC, PPP (not VENDA, not MC)
+  // Ingrediente pode ser MP, MC, SA, PPB, PPC, PPP - nao VENDA.
+  // MC entrou na lista: os acessorios de drink (copo, canudo) sao custo real da ficha e ja
+  // apareciam em fichas antigas, mas a busca nao deixava adicionar novos.
   const hits = cProdutosFT.filter(p =>
-    ['MP','SA','PPB','PPC','PPP'].includes(p.tipo) &&
+    ['MP','MC','SA','PPB','PPC','PPP'].includes(p.tipo) &&
     norm(p.nome).includes(norm(val))
   ).slice(0, 10);
 
