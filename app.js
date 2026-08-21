@@ -2105,6 +2105,34 @@ async function carregarProdutosFT(forcar = false) {
     }
   }
   cProdutosFT = todos;
+  await carregarProdutosInativosFT(forcar);
+}
+
+// cProdutosFT carrega SO produtos ativos. Um produto inativo que ainda e ingrediente de uma
+// ficha ativa simplesmente nao era encontrado: o calculo de custo pulava a linha e gravava a
+// ficha mais barata do que ela e (e o modal nem exibia o ingrediente, que se perdia ao salvar).
+// Esta lista paralela guarda os inativos so para consulta de custo/exibicao - nao entra em
+// autocomplete nem na lista de produtos.
+let cProdutosInat = [];
+async function carregarProdutosInativosFT(forcar = false) {
+  if (cProdutosInat.length && !forcar) return;
+  const PAGE = 1000;
+  let todos = [], from = 0, continua = true;
+  while (continua) {
+    const { data } = await sb.from('est_produtos')
+      .select('id,nome,tipo,categoria,plano_cat,unidade_comp,unidade_uso,custo_comp,custo_uso,preco_venda,estoque_min,ativo,fator_conversao,perda')
+      .eq('ativo', false)
+      .order('nome')
+      .range(from, from + PAGE - 1);
+    if (data && data.length) { todos = todos.concat(data); continua = data.length === PAGE; from += PAGE; }
+    else continua = false;
+  }
+  cProdutosInat = todos;
+}
+
+// Procura um produto pelo id para CUSTO/EXIBICAO, ativo ou nao.
+function prodFT(id) {
+  return cProdutosFT.find(p => p.id === id) || cProdutosInat.find(p => p.id === id) || null;
 }
 
 // Busca TODAS as linhas de uma tabela, paginando de 1000 em 1000 (o Supabase/PostgREST
@@ -2207,8 +2235,18 @@ function _setUnidadeRend(valor) {
   sel.value = opt.value;
 }
 
+let _ftAberturaSeq = 0;
+
 async function abrirModalFicha(prodId = '', fichaId = '') {
+  // Duplo clique no botao disparava DUAS aberturas em paralelo: as duas zeravam
+  // ftIngredientes e depois as duas empilhavam os ingredientes vindos do banco, deixando a
+  // ficha com tudo em dobro na tela (e gravaria em dobro se salvasse). Cada abertura leva um
+  // numero; a que ficou para tras desiste no proximo await.
+  const _seq = ++_ftAberturaSeq;
+  const _obsoleta = () => _seq !== _ftAberturaSeq;
+
   await carregarProdutosFT();
+  if (_obsoleta()) return;
   ftIngredientes = [];
 
   // Abriram "nova ficha" para um produto que JÁ tem ficha ativa? Edita a existente em vez
@@ -2221,6 +2259,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
       .eq('produto_id', prodId).eq('ativo', true)
       .order('criado_em', { ascending: true }).limit(1);
     if (data && data.length) { _fichaExistente = data[0]; fichaId = data[0].id; }
+    if (_obsoleta()) return;
   }
 
   document.getElementById('ft-ficha-id').value       = fichaId;
@@ -2258,17 +2297,21 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
     const { data: ings } = await sb.from('est_ficha_ingredientes')
       .select('id,ingrediente_id,quantidade,unidade')
       .eq('ficha_id', fichaId);
+    if (_obsoleta()) return;
 
+    // Monta numa lista local e so publica no fim: assim uma abertura nunca empilha
+    // ingredientes por cima do que outra ja tinha colocado.
+    const _lista = [];
     if (ings) {
       for (const ing of ings) {
-        const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
+        const prod = prodFT(ing.ingrediente_id);
         if (prod) {
           const fator      = prod.fator_conversao || 1;
           const perda      = prod.perda || 0;
           const rendimento = 1 - (perda / 100);
           const custoBase  = prod.custo_comp || prod.custo_uso || 0;
           const custoEfetivo = rendimento > 0 ? (custoBase / fator) / rendimento : 0;
-          ftIngredientes.push({
+          _lista.push({
             id:         ing.id,
             prod_id:    ing.ingrediente_id,
             nome:       prod.nome,
@@ -2280,6 +2323,8 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
         }
       }
     }
+
+    ftIngredientes = _lista;
 
     const ficha = ftFichasCache.find(f => f.id === fichaId) || _fichaExistente;
     if (ficha) {
@@ -2394,6 +2439,13 @@ function addIngrediente() {
 
   const prod = cProdutosFT.find(x => x.id === id);
   if (!prod) return;
+
+  // Ficha nao pode ter ela mesma como ingrediente: o custo entra em laco e vai a zero a cada
+  // recalculo, levando junto todos os pratos que usam o item (foi o caso do VINAGRETE).
+  if (document.getElementById('ft-produto-id').value === id) {
+    toast('Uma ficha nao pode ter o proprio produto como ingrediente.', 'erro');
+    return;
+  }
 
   const fator      = prod.fator_conversao || 1;
   const perda      = prod.perda || 0;
@@ -2513,13 +2565,16 @@ async function salvarFicha() {
   // custo 0 no produto mesmo a ficha aparecendo com valor — só voltava ao certo após F5.
   await carregarProdutosFT(true);
   const _custoEfetIng = (pid) => {
-    const p = cProdutosFT.find(x => x.id === pid);
+    const p = prodFT(pid);
     if (!p) return 0;
     const fator = p.fator_conversao || 1;
     const r = 1 - ((p.perda || 0) / 100);
     return r > 0 ? (p.custo_comp || p.custo_uso || 0) / fator / r : 0;
   };
-  const custoTotal  = ftIngredientes.reduce((s, i) => s + (i.quantidade * _custoEfetIng(i.prod_id)), 0);
+  // Rede de seguranca: o mesmo ingrediente nunca vai duas vezes para a mesma ficha. A tela
+  // ja substitui ao adicionar repetido; isto cobre qualquer duplicacao vinda da memoria.
+  const _unicos = [...new Map(ftIngredientes.map(i => [i.prod_id, i])).values()];
+  const custoTotal  = _unicos.reduce((s, i) => s + (i.quantidade * _custoEfetIng(i.prod_id)), 0);
   const custoPorcao = custoTotal / rend;
 
   let targetFichaId = fichaId;
@@ -2548,7 +2603,7 @@ async function salvarFicha() {
   }
 
   // Insert ingredients
-  const ings = ftIngredientes.map(i => ({
+  const ings = _unicos.map(i => ({
     ficha_id:       targetFichaId,
     ingrediente_id: i.prod_id,
     quantidade:     i.quantidade,
@@ -7258,8 +7313,8 @@ async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _
 
     let custoTotal = 0;
     for (const ing of (ings || [])) {
-      const prod = cProdutosFT.find(p => p.id === ing.ingrediente_id);
-      if (!prod) continue;
+      const prod = prodFT(ing.ingrediente_id);
+      if (!prod) { console.warn('Ingrediente sem cadastro, pulado no custo:', ing.ingrediente_id); continue; }
       const fator = prod.fator_conversao || 1;
       const perda = prod.perda || 0;
       const rend  = 1 - (perda / 100);
@@ -7312,8 +7367,8 @@ async function _resyncFichasCore() {
   const calcTotal = (fichaId) => {
     let custoTotal = 0;
     for (const ing of (ingsPorFicha[fichaId] || [])) {
-      const prod = cProdutosFT.find(p => p.id === ing.ingrediente_id);
-      if (!prod) continue;
+      const prod = prodFT(ing.ingrediente_id);
+      if (!prod) { console.warn('Ingrediente sem cadastro, pulado no custo:', ing.ingrediente_id); continue; }
       const fator = prod.fator_conversao || 1;
       const perda = prod.perda || 0;
       const rend  = 1 - (perda / 100);
@@ -7612,7 +7667,7 @@ async function carregarFichaProduto() {
 
     let custoTotalCalc = 0;
     const ingHtml = await Promise.all((ings || []).map(async ing => {
-      const prod = cProdutosFT.find(x => x.id === ing.ingrediente_id);
+      const prod = prodFT(ing.ingrediente_id);
       const fator      = prod?.fator_conversao || 1;
       const perda      = prod?.perda || 0;
       const rendimento = 1 - (perda / 100);
