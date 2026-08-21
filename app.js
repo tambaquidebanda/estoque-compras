@@ -2326,7 +2326,18 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
 
     ftIngredientes = _lista;
 
-    const ficha = ftFichasCache.find(f => f.id === fichaId) || _fichaExistente;
+    // ftFichasCache so e preenchido pela TELA de fichas tecnicas. Abrindo a ficha pela aba do
+    // produto o cache esta vazio, e o modal mostrava rendimento 1 com a unidade de uso do
+    // produto em vez do que estava salvo - e salvar por cima gravava esse 1, apagando o
+    // rendimento real. Quando nao houver cache, le o cabecalho direto do banco.
+    let ficha = ftFichasCache.find(f => f.id === fichaId) || _fichaExistente;
+    if (!ficha) {
+      const { data: _fh } = await sb.from('est_fichas_tecnicas')
+        .select('id,rendimento,unidade_rendimento')
+        .eq('id', fichaId).maybeSingle();
+      if (_obsoleta()) return;
+      ficha = _fh || null;
+    }
     if (ficha) {
       document.getElementById('ft-rendimento').value     = ficha.rendimento;
       _setUnidadeRend(ficha.unidade_rendimento);
@@ -7205,7 +7216,14 @@ async function salvarDadosProduto() {
   // zeraria o custo calculado. Então, se há ficha, NÃO sobrescreve o custo_comp.
   const { data: fichaDoProd } = await sb.from('est_fichas_tecnicas')
     .select('id').eq('produto_id', id).eq('ativo', true).limit(1);
-  if (fichaDoProd?.length) delete dados.custo_comp;
+  let _custoIgnorado = false;
+  if (fichaDoProd?.length) {
+    // Silenciosamente descartar o campo fazia o valor "voltar sozinho" depois de salvar, sem
+    // explicacao nenhuma na tela. Continua sendo descartado (quem manda e a ficha), mas agora
+    // o usuario e avisado de onde mexer.
+    _custoIgnorado = (dados.custo_comp || 0) !== (_prodAtual.custo_comp || 0);
+    delete dados.custo_comp;
+  }
 
   const nomeAntigo  = _prodAtual.nome;
   const unUsoAntigo = _prodAtual.unidade_uso;
@@ -7229,6 +7247,12 @@ async function salvarDadosProduto() {
   const _sufFicha = _linhasFicha
     ? ` ${_linhasFicha} ingrediente(s) em fichas passaram para ${dados.unidade_uso}.`
     : '';
+
+  if (_custoIgnorado) {
+    setMoeda('prod-custo-comp', _prodAtual.custo_comp);
+    toast('O custo deste produto vem da ficha tecnica, entao o valor digitado nao foi gravado. '
+        + 'Para mudar o custo, altere o preco do ingrediente dentro da ficha.', 'erro');
+  }
 
   // Atualiza cache local
   const idx = cProdutosFT.findIndex(p => p.id === id);
