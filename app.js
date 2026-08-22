@@ -2654,12 +2654,21 @@ async function _salvarFichaCore() {
     if (typeof atualizarCustoEfetivo === 'function') atualizarCustoEfetivo();
   }
 
-  // Propaga o novo custo para as fichas que usam ESTE produto como ingrediente
-  // (aninhamento: ex. PPC PASTA DE ALHO → PPC PASTA VERDE). Silencioso.
-  try { await recalcularFichasDoIngrediente(prodId, null, true); } catch (e) { console.error('Propagação de custo falhou:', e); }
-
   toast('Ficha técnica salva!', 'ok');
   ftFichasCache = [];
+
+  // Propaga o novo custo para as fichas que usam ESTE produto como ingrediente
+  // (aninhamento: ex. PPC PASTA DE ALHO → PPC PASTA VERDE).
+  //
+  // Duas mudanças em relação a antes, porque salvar a pasta de alho travava a tela por quase
+  // um minuto: (1) usa o motor em lote, que busca tudo de uma vez e grava só o que mudou, no
+  // lugar da recursão que fazia ~900 idas ao banco, uma de cada vez; (2) roda DEPOIS de fechar
+  // o modal, sem prender o usuário. Se falhar, o recálculo automático da aba Produtos corrige.
+  const _propagar = () => {
+    _resyncFichasCore()
+      .then(n => { if (n > 1) { ftFichasCache = []; toast(`Custo propagado para ${n} ficha(s).`, 'ok'); } })
+      .catch(e => console.error('Propagação de custo falhou:', e));
+  };
 
   const _depoisDeFechar = () => {
     // Se estava na tela do produto, mostra a ficha direto na aba
@@ -2668,6 +2677,7 @@ async function _salvarFichaCore() {
     } else {
       carregarFichas();
     }
+    _propagar();
   };
 
   // Fecha o modal e só navega DEPOIS que ele terminou de fechar. Navegar durante a
@@ -5980,8 +5990,12 @@ async function confirmarRecebimento() {
       if (idx >= 0) cProdutosFT[idx].custo_comp = preco;
       alterados.push(id);
     }
-    // Cascata silenciosa (depois de todos os custos base atualizados) → propaga p/ PPC/VENDA
-    for (const id of alterados) await recalcularFichasDoIngrediente(id, null, true);
+    // Cascata silenciosa (depois de todos os custos base atualizados) → propaga p/ PPC/VENDA.
+    // Uma passada em lote resolve todos os produtos alterados de uma vez; antes era uma cascata
+    // recursiva por produto, que num recebimento grande somava milhares de requisicoes.
+    if (alterados.length) {
+      try { await _resyncFichasCore(); } catch (e) { console.error('Propagação de custo falhou:', e); }
+    }
   }
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
@@ -7286,8 +7300,12 @@ async function salvarDadosProduto() {
     toast('✅ Produto atualizado com sucesso!' + _sufFicha, 'ok');
   }
 
-  // Recalcula todas as fichas que usam este produto como ingrediente
-  await recalcularFichasDoIngrediente(id);
+  // Recalcula as fichas que usam este produto como ingrediente. Motor em lote e sem prender a
+  // tela: a versao recursiva fazia uma requisicao por ficha visitada - mexer no MP LIMAO, por
+  // exemplo, disparava mais de 700 idas ao banco, uma de cada vez.
+  _resyncFichasCore()
+    .then(n => { if (n) { ftFichasCache = []; toast(`Custo propagado para ${n} ficha(s).`, 'ok'); } })
+    .catch(e => console.error('Propagação de custo falhou:', e));
 }
 
 async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
