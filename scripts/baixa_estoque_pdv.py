@@ -128,8 +128,74 @@ def custo_efetivo(p):
     return (bruto / fator) / rend if rend > 0 else 0
 
 
+UNIDADE_CONTAGEM = env('BAIXA_UNIDADE', 'Centro')
+
+
+def _norm(s):
+    import unicodedata
+    s = unicodedata.normalize('NFD', str(s or ''))
+    return ''.join(c for c in s if unicodedata.category(c) != 'Mn').lower().strip()
+
+
+def setor_por_insumo(produtos):
+    """De onde cada insumo sai, segundo a TELA DE CONTAGEM.
+
+    O setor e propriedade do INSUMO, nao do prato. Um mesmo prato puxa peixe da
+    churrasqueira e tomate da cozinha; perguntar "de que setor e este prato?" nao
+    tem resposta certa. A contagem, que ja e por setor, e quem sabe onde cada coisa
+    mora — e e ela que corrige o saldo todo dia.
+
+    Retorna (setor_de, ambiguos, sem_setor):
+      setor_de  {produto_id -> setor}   resolvido, pode baixar
+      ambiguos  {produto_id -> [setores]}  contado em mais de um e sem desempate
+      sem_setor set(produto_id)            nenhum setor conta — nao baixa
+
+    Desempate dos ambiguos: chave 'baixa_setor_principal' em inv_configuracoes,
+    no formato {"NOME DO PRODUTO": "SETOR"}. Sem entrada la, o insumo NAO baixa.
+    """
+    cfg = {r['chave']: r['valor'] for r in sb_get_all('inv_configuracoes?select=chave,valor')}
+    estrutura   = (cfg.get('estrutura') or {}).get(UNIDADE_CONTAGEM) or {}
+    mapeamentos = cfg.get('mapeamentos') or {}
+    excluidos   = set(cfg.get('excluidos') or [])
+    adicoes     = cfg.get('adicoes') or {}
+    principal   = cfg.get('baixa_setor_principal') or {}
+
+    por_nome = {_norm(p['nome']): p['id'] for p in produtos.values()}
+    onde = {}
+    for setor, grupos in estrutura.items():
+        for grupo, nomes in (grupos or {}).items():
+            lista  = [n for n in (nomes or []) if n not in excluidos]
+            lista += [n for n in (adicoes.get(f'{setor}|{grupo}') or []) if n]
+            for n in lista:
+                pid = por_nome.get(_norm(mapeamentos.get(n, n)))
+                if pid:
+                    onde.setdefault(pid, set()).add(setor)
+
+    # desempate por nome do produto (mais legivel de manter que uuid)
+    escolhido = {}
+    for nome, setor in principal.items():
+        pid = por_nome.get(_norm(nome))
+        if pid:
+            escolhido[pid] = setor
+
+    setor_de, ambiguos, sem_setor = {}, {}, set()
+    for pid, setores in onde.items():
+        if len(setores) == 1:
+            setor_de[pid] = next(iter(setores))
+        elif pid in escolhido and escolhido[pid] in setores:
+            setor_de[pid] = escolhido[pid]
+        else:
+            ambiguos[pid] = sorted(setores)
+    for pid in produtos:
+        if pid not in onde:
+            sem_setor.add(pid)
+    return setor_de, ambiguos, sem_setor
+
+
 def carregar():
     # mapa: só mapeados com produto
+    # `setor` continua sendo lido porque e informacao curada util, mas NAO decide mais a
+    # baixa: quem decide e o setor do INSUMO, vindo da tela de contagem (setor_por_insumo).
     mapa = {}
     for m in sb_get_all('pdv_map?select=icomanda_produto_id,produto_id,status,fator,setor&status=eq.mapeado'):
         if m.get('produto_id'):
@@ -156,7 +222,9 @@ def carregar():
         if s.get('produto_id'):
             contado.add(s['produto_id'])
 
-    return mapa, ficha_por_prod, ings_por_ficha, prod_info, contado
+    setor_de, ambiguos, sem_setor = setor_por_insumo(prod_info)
+
+    return mapa, ficha_por_prod, ings_por_ficha, prod_info, contado, setor_de, ambiguos, sem_setor
 
 
 def _bom(pid, ficha_por_prod, ings_por_ficha, contado, memo, stack):
@@ -186,7 +254,7 @@ def _bom(pid, ficha_por_prod, ings_por_ficha, contado, memo, stack):
     return out
 
 
-def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=None):
+def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo=None):
     if memo is None:
         memo = {}
     vendas = vendas_do_dia(data)
@@ -200,7 +268,6 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=Non
         if not ficha:
             continue
         rend = ficha['rendimento'] or 1
-        setor = m.get('setor') or None
         base_mult = qtd * (m['fator'] or 1) / rend
         # explode cada ingrediente do prato até as folhas (contado/MP crua)
         for ing_id, quant in ings_por_ficha.get(ficha['ficha_id'], []):
@@ -213,7 +280,9 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo=Non
                 c = base * fq
                 if c <= 0:
                     continue
-                chave = (folha, setor)   # baixa é por INSUMO + SETOR do prato
+                # O setor vem do INSUMO (onde a contagem diz que ele fica), NAO do prato:
+                # um mesmo prato puxa peixe da churrasqueira e tomate da cozinha.
+                chave = (folha, setor_de.get(folha))
                 consumo[chave] = consumo.get(chave, 0) + c
                 fontes.setdefault(chave, set()).add(pid)
         itens_venda += qtd
@@ -258,8 +327,11 @@ def ja_tem_movimento(data):
 # ───────────────────────── main ─────────────────────────
 def main():
     print(f'== Robô baixa PDV == modo={MODE} local={LOCAL} start={START_DATE} days_back={DAYS_BACK}')
-    mapa, ficha_por_prod, ings_por_ficha, prod_info, contado = carregar()
+    (mapa, ficha_por_prod, ings_por_ficha, prod_info, contado,
+     setor_de, ambiguos, sem_setor) = carregar()
     print(f'   mapeados={len(mapa)}  fichas={len(ficha_por_prod)}  produtos={len(prod_info)}  contados={len(contado)}')
+    print(f'   setor do insumo pela contagem ({UNIDADE_CONTAGEM}): {len(setor_de)} resolvidos, '
+          f'{len(ambiguos)} em mais de um setor sem desempate')
 
     ja_ok = ctrl_dias_ok() if MODE == 'apply' else set()
     memo = {}
@@ -276,7 +348,8 @@ def main():
             continue
 
         # consumo: {(insumo_id, setor) -> qtd}
-        consumo, fontes, itens_venda = consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, memo)
+        consumo, fontes, itens_venda = consumo_do_dia(
+            data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo)
 
         # agrega por INSUMO (para a preview / total) e guarda o detalhe por (insumo,setor) p/ apply
         por_insumo = {}
@@ -292,7 +365,12 @@ def main():
                 sem_setor_val += val
         valor_dia = sum(d['qtd'] * d['cu'] for d in por_insumo.values())
         total_valor += valor_dia
-        aviso = f'  ⚠ R$ {sem_setor_val:,.2f} sem setor' if sem_setor_val > 0.005 else ''
+        # sem_setor_val junta os dois casos que NAO baixam: insumo que nenhum setor conta
+        # e insumo contado em varios sem desempate em 'baixa_setor_principal'.
+        amb_val = sum(d['qtd'] * d['cu'] for ing, d in por_insumo.items() if ing in ambiguos)
+        aviso = f'  ⚠ R$ {sem_setor_val:,.2f} não baixa (sem setor definido)' if sem_setor_val > 0.005 else ''
+        if amb_val > 0.005:
+            aviso += f' — dos quais R$ {amb_val:,.2f} são de insumo contado em mais de um setor'
         print(f'   {data}: {itens_venda} itens → {len(por_insumo)} insumos, R$ {valor_dia:,.2f}{aviso}')
 
         if MODE == 'dry':
