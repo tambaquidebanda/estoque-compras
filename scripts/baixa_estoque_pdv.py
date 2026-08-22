@@ -233,10 +233,26 @@ def dias_alvo():
 
 
 def ctrl_dias_ok():
+    """Dias que o APPLY ja processou. Filtrar por modo='apply' e essencial: o dry-run
+    tambem grava status='ok', e sem esse filtro o apply pulava calado todo dia que ja
+    tinha preview — terminava verde, com total R$ 0,00, sem baixar nada."""
     try:
-        return {r['data'] for r in sb_get_all('pdv_baixa_ctrl?select=data,status&status=eq.ok')}
+        return {r['data'] for r in
+                sb_get_all('pdv_baixa_ctrl?select=data,status,modo&status=eq.ok&modo=eq.apply')}
     except Exception:
         return set()
+
+
+def ja_tem_movimento(data):
+    """Trava contra baixa dupla. Se o apply caiu no meio (razao gravado, saldo nao), o
+    ctrl do dia nao foi escrito e uma segunda rodada baixaria tudo de novo por cima. O
+    proprio razao e a evidencia: se ja existe lancamento do dia, para e pede conferencia."""
+    try:
+        r = sb_get_all(f'est_movimentacoes?select=id&tipo=eq.venda_pensera'
+                       f'&origem=eq.pdv_icomanda&data=eq.{data}&limit=1')
+        return len(r) > 0
+    except Exception:
+        return False
 
 
 # ───────────────────────── main ─────────────────────────
@@ -251,7 +267,12 @@ def main():
 
     for data in dias_alvo():
         if MODE == 'apply' and data in ja_ok:
-            print(f'   {data}: já processado (ok) — pulando.')
+            print(f'   {data}: já baixado (apply ok) — pulando.')
+            continue
+        if MODE == 'apply' and ja_tem_movimento(data):
+            print(f'   {data}: ⛔ JÁ EXISTE lançamento venda_pensera no razão, mas sem registro '
+                  f'de apply concluído. Rodada anterior provavelmente caiu no meio. NÃO vou '
+                  f'baixar de novo — confira e, se preciso, rode o SQL_ROLLBACK_BAIXA_PDV.sql.')
             continue
 
         # consumo: {(insumo_id, setor) -> qtd}
@@ -300,7 +321,10 @@ def main():
                     'produto_id': ing_id, 'local': setor, 'tipo': 'venda_pensera',
                     'quantidade': -round(qtd, 4), 'custo_unit': round(cu, 4),
                     'origem': 'pdv_icomanda', 'motivo': f'Baixa venda PDV {data}',
-                    'ref_tabela': 'pdv', 'ref_id': data, 'data': data,
+                    # ref_id NAO recebe a data: a coluna e uuid e o insert quebrava com
+                    # 22P02 invalid input syntax for type uuid. O dia ja esta em `data`,
+                    # que e o campo por onde a conferencia e o rollback casam a rodada.
+                    'ref_tabela': 'pdv', 'data': data,
                 })
                 alvos.append((ing_id, setor, qtd))
             if movs:
