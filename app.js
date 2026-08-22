@@ -2290,6 +2290,9 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
   }
 
   document.getElementById('btn-del-ficha').style.display = fichaId ? '' : 'none';
+  // Rede extra: se o botao ficou travado por um erro anterior, abrir o modal o destrava.
+  const _btnS = document.getElementById('btn-salvar-ficha');
+  if (_btnS) _btnS.disabled = false;
 
   if (fichaId) {
     document.getElementById('modal-ficha-titulo').textContent = 'Editar Ficha Técnica';
@@ -2557,7 +2560,24 @@ function recalcularCustoFicha() {
     `${brl(custoPorcao)} / ${unRend}`;
 }
 
+// Casca do salvamento: garante que o botao SEMPRE volte a funcionar. Antes, se qualquer await
+// la dentro estourasse, a funcao saia sem reabilitar o botao - e a partir dai todo clique caia
+// no "return" da trava, sem salvar e sem mensagem nenhuma. O botao ficava azul para sempre.
 async function salvarFicha() {
+  const _btn = document.getElementById('btn-salvar-ficha');
+  if (_btn && _btn.disabled) return;
+  if (_btn) _btn.disabled = true;
+  try {
+    await _salvarFichaCore();
+  } catch (e) {
+    console.error('salvarFicha falhou:', e);
+    toast('Erro ao salvar a ficha: ' + (e && e.message ? e.message : e), 'erro');
+  } finally {
+    if (_btn) _btn.disabled = false;
+  }
+}
+
+async function _salvarFichaCore() {
   const prodId  = document.getElementById('ft-produto-id').value;
   const fichaId = document.getElementById('ft-ficha-id').value;
   const rend    = parseFloat(document.getElementById('ft-rendimento').value) || 1;
@@ -2565,13 +2585,6 @@ async function salvarFicha() {
 
   if (!prodId) { toast('Selecione o produto da ficha.', 'erro'); return; }
   if (!ftIngredientes.length) { toast('Adicione pelo menos 1 ingrediente.', 'erro'); return; }
-
-  // Trava o botão durante a gravação: o segundo clique antes de o modal fechar criava uma
-  // SEGUNDA ficha (o ramo de INSERT roda sempre que ft-ficha-id está vazio).
-  const _btnSalvar = document.getElementById('btn-salvar-ficha');
-  if (_btnSalvar && _btnSalvar.disabled) return;
-  if (_btnSalvar) _btnSalvar.disabled = true;
-  const _liberar = () => { if (_btnSalvar) _btnSalvar.disabled = false; };
 
   // Recalcula o custo com o preço ATUAL dos ingredientes (fresco do banco), não com o
   // snapshot de quando foram adicionados. Sem isso, se o cache estava desatualizado, gravava
@@ -2594,13 +2607,17 @@ async function salvarFicha() {
 
   if (fichaId) {
     // Update ficha header
-    await sb.from('est_fichas_tecnicas').update({
+    const { error: errFicha } = await sb.from('est_fichas_tecnicas').update({
       rendimento: rend, unidade_rendimento: unRend,
       custo_total: custoTotal, custo_por_porcao: custoPorcao,
     }).eq('id', fichaId);
+    // Sem esta checagem, uma falha aqui seguia adiante e o usuario via "Ficha salva!" mesmo
+    // com nada gravado.
+    if (errFicha) { toast('Erro ao salvar a ficha: ' + errFicha.message, 'erro'); return; }
 
     // Delete existing ingredients and re-insert
-    await sb.from('est_ficha_ingredientes').delete().eq('ficha_id', fichaId);
+    const { error: errDel } = await sb.from('est_ficha_ingredientes').delete().eq('ficha_id', fichaId);
+    if (errDel) { toast('Erro ao regravar os ingredientes: ' + errDel.message, 'erro'); return; }
   } else {
     // Create new ficha
     const { data, error } = await sb.from('est_fichas_tecnicas').insert([{
@@ -2609,7 +2626,7 @@ async function salvarFicha() {
       custo_por_porcao: custoPorcao, ativo: true,
     }]).select().single();
 
-    if (error) { toast('Erro ao salvar ficha: ' + error.message, 'erro'); _liberar(); return; }
+    if (error) { toast('Erro ao salvar ficha: ' + error.message, 'erro'); return; }
     targetFichaId = data.id;
     // Devolve o id ao campo: sem isso um novo clique em Salvar cairia de novo no INSERT.
     document.getElementById('ft-ficha-id').value = targetFichaId;
@@ -2624,7 +2641,7 @@ async function salvarFicha() {
   }));
 
   const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
-  if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); _liberar(); return; }
+  if (errIng) { toast('Erro ao salvar ingredientes: ' + errIng.message, 'erro'); return; }
 
   // Atualiza custo_comp do produto com o custo/porção calculado pela ficha
   await sb.from('est_produtos').update({ custo_comp: custoPorcao }).eq('id', prodId);
@@ -2642,7 +2659,6 @@ async function salvarFicha() {
   try { await recalcularFichasDoIngrediente(prodId, null, true); } catch (e) { console.error('Propagação de custo falhou:', e); }
 
   toast('Ficha técnica salva!', 'ok');
-  _liberar();
   ftFichasCache = [];
 
   const _depoisDeFechar = () => {
