@@ -4250,6 +4250,19 @@ async function movimentar(mov) {
   }
 }
 
+// COMPRA → USO. A nota (recebimento, devolução, estorno) vem na unidade de COMPRA — 20
+// pacotes de 50 espetos — mas o estoque e o consumo vivem na unidade de USO (espeto). Sem
+// converter, o saldo subia 20 e descia 1.000.
+// quantidade e custo_unit mudam JUNTOS: est_movimentacoes.valor_total é calculado pelo banco
+// como quantidade × custo_unit, então multiplicar um e dividir o outro converte só a unidade
+// e deixa o valor financeiro exatamente igual.
+async function _emUnidadeDeUso(produto_id, quantidade, valor_unitario) {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const fator = prodFT(produto_id)?.fator_conversao || 1;
+  const vlr   = Number(valor_unitario) || 0;
+  return { quantidade: Number(quantidade) * fator, custo_unit: vlr ? vlr / fator : null };
+}
+
 // Custo unitário efetivo (por unidade de USO) — mesma fórmula da valorização
 // do Saldo: custo_comp ÷ conversão ÷ (1 − perda%).
 function _custoUsoProd(p) {
@@ -5964,7 +5977,8 @@ async function confirmarRecebimento() {
     const pid = it.produto_id
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) return;
-    await movimentar({ produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: +it.qtd_recebida, custo_unit: Number(it.valor_unitario) || null, origem: 'recebimento', motivo: `Recebimento ${pedido_num}` });
+    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
+    await movimentar({ produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}` });
   }));
 
   // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
@@ -9424,10 +9438,13 @@ async function salvarDevolucao() {
   // 3) baixa o estoque via razão (best-effort no razão; snapshot sempre atualiza)
   for (const row of (itensSalvos || [])) {
     if (!row.produto_id) continue;
+    // cmp_devolucao_itens guarda a quantidade na unidade de COMPRA (copiada do recebimento);
+    // o saldo vive na unidade de USO. Devolver 5 pacotes tem de baixar 250 espetos.
+    const _uso = await _emUnidadeDeUso(row.produto_id, Math.abs(Number(row.quantidade)), row.valor_unitario);
     await movimentar({
       produto_id: row.produto_id, local: row.local, tipo: 'devolucao',
-      quantidade: -Math.abs(Number(row.quantidade)),
-      custo_unit: Number(row.valor_unitario) || 0,
+      quantidade: -_uso.quantidade,
+      custo_unit: _uso.custo_unit || 0,
       motivo: `Devolução ${forn} — ${motivo}`, origem: 'devolucao',
       ref_tabela: 'cmp_devolucao_itens', ref_id: row.id, responsavel: resp || null, data,
     });
@@ -9529,9 +9546,10 @@ async function marcarSubstituido(id) {
     const hoje = new Date().toISOString().slice(0, 10);
     for (const it of (d.itens || [])) {
       if (!it.produto_id) continue;
+      const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario);
       await movimentar({
         produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
-        quantidade: Math.abs(Number(it.quantidade)), custo_unit: Number(it.valor_unitario) || 0,
+        quantidade: _uso.quantidade, custo_unit: _uso.custo_unit || 0,
         motivo: 'Reentrada por substituição de devolução', origem: 'devolucao',
         ref_tabela: 'cmp_devolucao_itens', ref_id: it.id, data: hoje,
       });
@@ -9549,9 +9567,10 @@ async function cancelarDevolucao(id) {
   const hoje = new Date().toISOString().slice(0, 10);
   for (const it of (d.itens || [])) {
     if (!it.produto_id) continue;
+    const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario);
     await movimentar({
       produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
-      quantidade: Math.abs(Number(it.quantidade)), custo_unit: Number(it.valor_unitario) || 0,
+      quantidade: _uso.quantidade, custo_unit: _uso.custo_unit || 0,
       motivo: 'Estorno de devolução cancelada', origem: 'devolucao',
       ref_tabela: 'cmp_devolucao_itens', ref_id: it.id, data: hoje,
     });

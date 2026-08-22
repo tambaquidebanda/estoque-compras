@@ -1190,9 +1190,13 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
     // além da 1ª página ficam de fora (bug real observado nos pedidos 810/811).
     const precisaNome = itensReceb.some(it => it.qtd_recebida && !it.produto_id);
     const idPorNome = {};
+    const fatorPorId = {};
     if (precisaNome) {
-      const prods = await _fetchAllPagedReceb('est_produtos', 'id,nome');
-      (prods || []).forEach(p => { idPorNome[_normNome(p.nome)] = p.id; });
+      const prods = await _fetchAllPagedReceb('est_produtos', 'id,nome,fator_conversao');
+      (prods || []).forEach(p => {
+        idPorNome[_normNome(p.nome)] = p.id;
+        fatorPorId[p.id] = Number(p.fator_conversao) || 1;
+      });
     }
 
     // Casa por produto_id (vínculo por código); nome só como fallback.
@@ -1207,6 +1211,24 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
     }
     const ids = Object.keys(deltaPorId);
     if (!ids.length) return;
+
+    // CONVERSÃO COMPRA → USO. A nota vem na unidade de compra (ex.: 20 pacotes de 50 espetos)
+    // mas o estoque e o consumo vivem na unidade de uso (espeto). Sem isto o saldo subia 20 e
+    // descia 1.000. Quantidade e custo_unit mudam JUNTOS: est_movimentacoes.valor_total é
+    // calculado pelo banco como quantidade x custo_unit, então multiplicar um e dividir o outro
+    // mantém o valor financeiro idêntico e converte só a unidade.
+    const faltaFator = ids.filter(pid => fatorPorId[pid] == null);
+    if (faltaFator.length) {
+      const { data: fats } = await sb.from('est_produtos')
+        .select('id,fator_conversao').in('id', faltaFator);
+      (fats || []).forEach(p => { fatorPorId[p.id] = Number(p.fator_conversao) || 1; });
+    }
+    ids.forEach(pid => {
+      const f = fatorPorId[pid] || 1;
+      if (f === 1) return;
+      deltaPorId[pid] = deltaPorId[pid] * f;
+      if (custoPorId[pid] != null) custoPorId[pid] = custoPorId[pid] / f;
+    });
 
     const { data: saldos } = await sb.from('est_saldo_local')
       .select('produto_id,saldo').eq('local', 'ESTOQUE_LOJA').in('produto_id', ids);
