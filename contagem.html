@@ -660,7 +660,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="fecharModal('modal-emerg')">Cancelar</button>
-      <button class="btn-confirm red" onclick="enviarEmergencia()">🚨 Enviar</button>
+      <button class="btn-confirm red" id="emerg-btn-enviar" onclick="enviarEmergencia()">🚨 Enviar</button>
     </div>
   </div>
 </div>
@@ -1190,6 +1190,7 @@ async function selecionarGrupo(grupo) {
     return;
   }
 
+  _liberarTela('pedido-interno');   // outro grupo = outro pedido
   _grupo = grupo;
   renderGrupos();
   const nomes = INVENTARIO_ESTRUTURA[_setor]?.[grupo] || [];
@@ -1319,8 +1320,47 @@ async function salvarSaldoInicialSetorMob() {
   if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
 }
 
+// ─── Trava de reentrada dos envios ───────────────────────────────
+// Dois toques no mesmo botão viravam DOIS pedidos idênticos no banco. São duas brechas
+// diferentes e as duas precisam ser tampadas:
+//   1) enquanto a requisição está no ar (o envio faz duas idas ao servidor: ler o último
+//      número, depois inserir) o botão continuava clicável — daí a trava de voo;
+//   2) o toque que chega DEPOIS do envio terminar encontrava a tela ainda montada e
+//      mandava tudo de novo — daí o bilhete: cada tela vale um envio, e só reabrir a
+//      tela (ou trocar de grupo) emite outro bilhete.
+// A trava tem de ser a PRIMEIRA linha da função, ANTES de qualquer await: desabilitar o
+// botão depois do primeiro await deixa justamente a janela do problema aberta.
+// Rastro do bug: 107 pedidos e 40 contagens duplicados entre jun e ago/2026 — 34 desses
+// pedidos chegaram a ser recebidos, movimentando o saldo duas vezes.
+const _enviosEmVoo   = new Set();
+const _telaJaEnviada = new Set();
+
+function _liberarTela(chave) { _telaJaEnviada.delete(chave); }   // tela reaberta = bilhete novo
+
+function _travarEnvio(chave, btnId, aviso) {
+  if (_enviosEmVoo.has(chave)) return null;                      // já tem um envio no ar
+  if (_telaJaEnviada.has(chave)) { aviso && aviso(); return null; }
+  _enviosEmVoo.add(chave);
+  const btn = btnId ? document.getElementById(btnId) : null;
+  const antes = btn ? { html: btn.innerHTML, off: btn.disabled } : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  return (gravou) => {
+    _enviosEmVoo.delete(chave);
+    if (gravou) _telaJaEnviada.add(chave);                       // bilhete consumido
+    if (btn) { btn.innerHTML = antes.html; btn.disabled = antes.off; }
+  };
+}
+
 // ─── ENVIAR PEDIDO ───────────────────────────────────────────────
 async function enviarPedido() {
+  const _solta = _travarEnvio('pedido-interno', 'btn-enviar',
+    () => toast('Esta contagem já foi enviada. Troque de grupo para fazer outro pedido.', 'err'));
+  if (!_solta) return;
+  let _ok = false;
+  try { _ok = await _enviarPedido(); } finally { _solta(_ok); }
+}
+
+async function _enviarPedido() {
   if (!_setor || !_grupo) { toast('Selecione setor e grupo.', 'err'); return; }
   const data = document.getElementById('data-inv').value;
   if (!data) { toast('Selecione a data.', 'err'); return; }
@@ -1333,10 +1373,6 @@ async function enviarPedido() {
   }
 
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  const btn  = document.getElementById('btn-enviar');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
-
   const itensCont = _grupoProds.map((p, i) => {
     const estoque       = parseQtd(document.getElementById(`est-${i}`)?.value);
     const pedido_padrao = getPadrao(p.nome) ?? 0;
@@ -1355,7 +1391,7 @@ async function enviarPedido() {
     num_inv, data, local:_local, responsavel:resp, setor:_setor, grupo:_grupo, total_geral:totalPedido,
   }]).select().single();
 
-  if (eInv) { toast('Erro: '+eInv.message,'err'); btn.disabled=false; btn.textContent='📤 Enviar Pedido'; return; }
+  if (eInv) { toast('Erro: '+eInv.message,'err'); return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({...it, inventario_id:inv.id})));
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
@@ -1372,7 +1408,7 @@ async function enviarPedido() {
 
   if (!itensPed.length) {
     toast(`${num_inv} salvo! Nenhum item a pedir.`, 'ok');
-    limparCampos(); btn.disabled=false; btn.textContent='📤 Enviar Pedido'; return;
+    limparCampos(); return true;
   }
 
   const { data: ultPeds } = await sb.from('pedidos_internos').select('num_pedido').order('criado_em',{ascending:false}).limit(1);
@@ -1386,7 +1422,8 @@ async function enviarPedido() {
   if (!ePed) await sb.from('pedidos_internos_itens').insert(itensPed.map(it => ({...it, pedido_id:ped.id})));
 
   toast(`${num_inv} salvo + ${num_pedido} enviado (${itensPed.length} item(s))! ✅`, 'ok');
-  limparCampos(); btn.disabled=false; btn.textContent='📤 Enviar Pedido';
+  limparCampos();
+  return true;
 }
 
 function limparCampos() {
@@ -1680,6 +1717,7 @@ function removerItemEmergMob(idx) {
 }
 
 function abrirEmergencia() {
+  _liberarTela('emergencia');   // abrir o modal emite um bilhete novo
   if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
   _emergIdxMob = 0;
   _buildProdutosEmerg();
@@ -1734,6 +1772,14 @@ function _selProdEmergMob(idx, id, nome) {
 }
 
 async function enviarEmergencia() {
+  const _solta = _travarEnvio('emergencia', 'emerg-btn-enviar',
+    () => toast('Esta emergência já foi enviada.', 'err'));
+  if (!_solta) return;
+  let _ok = false;
+  try { _ok = await _enviarEmergencia(); } finally { _solta(_ok); }
+}
+
+async function _enviarEmergencia() {
   const obs  = (document.getElementById('emerg-obs')?.value || '').trim();
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
 
@@ -1766,6 +1812,7 @@ async function enviarEmergencia() {
   await sb.from('pedidos_internos_itens').insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
   fecharModal('modal-emerg');
   toast(`${num_pedido} (emergência) enviado com ${itens.length} item(s)! ✅`, 'ok');
+  return true;
 }
 </script>
 </body>

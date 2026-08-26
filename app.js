@@ -2988,6 +2988,7 @@ async function selecionarSetorInv(setor) {
 }
 
 async function selecionarGrupoInv(grupo) {
+  _liberarTela('pedido-interno');   // outro grupo = outro pedido
   const _hoje = new Date().toISOString().split('T')[0];
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo)
@@ -3739,6 +3740,37 @@ const _STATUS_PED = {
   cancelado: '<span class="badge bg-danger">Cancelado</span>',
 };
 
+// ─── Trava de reentrada dos envios ───────────────────────────────
+// Dois toques no mesmo botão viravam DOIS pedidos idênticos no banco. São duas brechas
+// diferentes e as duas precisam ser tampadas:
+//   1) enquanto a requisição está no ar (o envio faz duas idas ao servidor: ler o último
+//      número, depois inserir) o botão continuava clicável — daí a trava de voo;
+//   2) o toque que chega DEPOIS do envio terminar encontrava a tela ainda montada e
+//      mandava tudo de novo — daí o bilhete: cada tela vale um envio, e só reabrir a
+//      tela (ou trocar de grupo) emite outro bilhete.
+// A trava tem de ser a PRIMEIRA linha da função, ANTES de qualquer await: desabilitar o
+// botão depois do primeiro await deixa justamente a janela do problema aberta.
+// Rastro do bug: 107 pedidos e 40 contagens duplicados entre jun e ago/2026 — 34 desses
+// pedidos chegaram a ser recebidos, movimentando o saldo duas vezes.
+const _enviosEmVoo   = new Set();
+const _telaJaEnviada = new Set();
+
+function _liberarTela(chave) { _telaJaEnviada.delete(chave); }   // tela reaberta = bilhete novo
+
+function _travarEnvio(chave, btnId, aviso) {
+  if (_enviosEmVoo.has(chave)) return null;                      // já tem um envio no ar
+  if (_telaJaEnviada.has(chave)) { aviso && aviso(); return null; }
+  _enviosEmVoo.add(chave);
+  const btn = btnId ? document.getElementById(btnId) : null;
+  const antes = btn ? { html: btn.innerHTML, off: btn.disabled } : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando...'; }
+  return (gravou) => {
+    _enviosEmVoo.delete(chave);
+    if (gravou) _telaJaEnviada.add(chave);                       // bilhete consumido
+    if (btn) { btn.innerHTML = antes.html; btn.disabled = antes.off; }
+  };
+}
+
 async function _proximoNumPedido() {
   const { data } = await sb.from('pedidos_internos')
     .select('num_pedido').order('criado_em', { ascending: false }).limit(1);
@@ -3761,6 +3793,14 @@ function _dedupSaldoRows(rows) {
 }
 
 async function enviarPedidoInterno() {
+  const _solta = _travarEnvio('pedido-interno', 'inv-btn-enviar',
+    () => toast('Esta contagem já foi enviada. Troque de grupo para fazer outro pedido.', 'warn'));
+  if (!_solta) return;
+  let _ok = false;
+  try { _ok = await _enviarPedidoInterno(); } finally { _solta(_ok); }
+}
+
+async function _enviarPedidoInterno() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
   const data = document.getElementById('inv-data').value;
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
@@ -3812,7 +3852,7 @@ async function enviarPedidoInterno() {
     toast(`${num_inv} salvo! Todos os produtos estão no padrão — nenhum pedido gerado.`, 'ok');
     carregarHistoricoInv();
     _limparCamposEstoque();
-    return;
+    return true;
   }
 
   const numPed = await _proximoNumPedido();
@@ -3830,6 +3870,7 @@ async function enviarPedidoInterno() {
   toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅`, 'ok');
   carregarHistoricoInv();
   _limparCamposEstoque();
+  return true;
 }
 
 async function salvarSaldoContagemDesktop() {
@@ -4645,6 +4686,7 @@ function removerItemEmerg(idx) {
 }
 
 function abrirEmergencia() {
+  _liberarTela('emergencia');   // abrir o modal emite um bilhete novo
   _emergIdx = 0;
   const sel = document.getElementById('emerg-setor');
   if (sel && _invSetor) sel.value = _invSetor;
@@ -4694,6 +4736,14 @@ function selecionarProdEmerg(idx, id, nome) {
 }
 
 async function enviarEmergencia() {
+  const _solta = _travarEnvio('emergencia', 'emerg-btn-enviar',
+    () => toast('Esta emergência já foi enviada.', 'warn'));
+  if (!_solta) return;
+  let _ok = false;
+  try { _ok = await _enviarEmergencia(); } finally { _solta(_ok); }
+}
+
+async function _enviarEmergencia() {
   const setor = document.getElementById('emerg-setor')?.value?.trim();
   const resp  = (document.getElementById('emerg-resp')?.value || '').trim();
   const obs   = (document.getElementById('emerg-obs')?.value  || '').trim();
@@ -4731,6 +4781,7 @@ async function enviarEmergencia() {
 
   bootstrap.Modal.getInstance(document.getElementById('modal-emergencia'))?.hide();
   toast(`${numPed} (emergência) enviado com ${itens.length} item(s)! ✅`, 'ok');
+  return true;
 }
 
 // ─── PINs Mobile ─────────────────────────────────────────────────
