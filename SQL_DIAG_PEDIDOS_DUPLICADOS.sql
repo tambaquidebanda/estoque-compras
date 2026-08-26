@@ -62,21 +62,24 @@ SELECT status, count(*) AS linhas_extras FROM extras GROUP BY status ORDER BY 2 
 -- liberado: nenhum desses movimentou estoque, entao sumir com a linha nao deixa
 -- rastro torto. As de status 'recebido' ficam de proposito.
 --
--- Tire o comentario das duas ultimas linhas para executar.
+-- Os itens somem junto sozinhos: pedidos_internos_itens.pedido_id tem
+-- ON DELETE CASCADE. Por isso e um comando so.
 --
--- WITH extras AS (
---   SELECT p.id FROM pedidos_internos p
---   WHERE p.status IN ('cancelado','pendente','liberado')
---     AND EXISTS (
---       SELECT 1 FROM pedidos_internos a
---       WHERE a.setor = p.setor AND a.data = p.data
---         AND a.tipo  = p.tipo  AND COALESCE(a.obs,'') = COALESCE(p.obs,'')
---         AND a.criado_em < p.criado_em
---         AND p.criado_em - a.criado_em <= interval '3 seconds'
---     )
--- )
--- DELETE FROM pedidos_internos_itens WHERE pedido_id IN (SELECT id FROM extras);
--- DELETE FROM pedidos_internos       WHERE id       IN (SELECT id FROM extras);
+-- O RETURNING no fim mostra na tela exatamente quais linhas sairam - guarde esse
+-- resultado antes de fechar a aba, e a unica copia do que foi apagado.
+--
+-- Para executar: selecione da linha "DELETE FROM" ate o ";" e rode.
+--
+-- DELETE FROM pedidos_internos p
+-- WHERE p.status IN ('cancelado','pendente','liberado')
+--   AND EXISTS (
+--     SELECT 1 FROM pedidos_internos a
+--     WHERE a.setor = p.setor AND a.data = p.data
+--       AND a.tipo  = p.tipo  AND COALESCE(a.obs,'') = COALESCE(p.obs,'')
+--       AND a.criado_em < p.criado_em
+--       AND p.criado_em - a.criado_em <= interval '3 seconds'
+--   )
+-- RETURNING p.criado_em, p.num_pedido, p.setor, p.data, p.tipo, p.obs, p.status;
 
 
 -- -- PASSO 4 (leitura): as contagens duplicadas na mesma rajada --------------
