@@ -3328,9 +3328,7 @@ async function salvarInventario() {
 
   const totalPedido = itens.reduce((s, it) => s + it.pedido, 0);
 
-  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em', { ascending: false }).limit(1);
-  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
-  const num_inv = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
+  const num_inv = await _proximoNumInv();
 
   const { data: inv, error } = await sb.from('est_inventarios').insert([{
     num_inv, data, local: _invLocal, responsavel: resp,
@@ -3771,12 +3769,25 @@ function _travarEnvio(chave, btnId, aviso) {
   };
 }
 
-async function _proximoNumPedido() {
-  const { data } = await sb.from('pedidos_internos')
-    .select('num_pedido').order('criado_em', { ascending: false }).limit(1);
-  const n = data?.[0]?.num_pedido ? parseInt(data[0].num_pedido.replace(/\D/g, '')) || 0 : 0;
-  return 'PED-' + String(n + 1).padStart(4, '0');
+// ─── Numeracao: quem da o numero e o banco ───────────────────────
+// Antes o numero saia do aparelho: le o maior num_pedido, soma 1. Dois envios ao
+// mesmo tempo (dois setores, dois celulares) liam o mesmo maior e nasciam com o
+// MESMO numero — 61 PED e 26 INV repetidos no historico. A trava de toque duplo
+// nao cobre esse caso: sao aparelhos diferentes, cada um com a sua trava.
+// Agora o numero vem de uma sequence do Postgres via RPC; nextval e atomico.
+// O fallback mantem o jeito antigo se SQL_NUMERACAO_ATOMICA.sql ainda nao tiver
+// sido rodado — melhor um numero possivelmente repetido do que pedido sem numero.
+async function _proximoNum(rpc, tabela, coluna, prefixo) {
+  const { data, error } = await sb.rpc(rpc);
+  if (!error && data) return data;
+  console.warn(`${rpc}() indisponivel, numerando no cliente:`, error?.message || 'sem retorno');
+  const { data: ult } = await sb.from(tabela).select(coluna)
+    .order('criado_em', { ascending: false }).limit(1);
+  const n = ult?.[0]?.[coluna] ? parseInt(String(ult[0][coluna]).replace(/\D/g, '')) || 0 : 0;
+  return prefixo + '-' + String(n + 1).padStart(4, '0');
 }
+function _proximoNumPedido() { return _proximoNum('proximo_num_pedido', 'pedidos_internos', 'num_pedido', 'PED'); }
+function _proximoNumInv()    { return _proximoNum('proximo_num_inv',    'est_inventarios',  'num_inv',    'INV'); }
 
 // Junta linhas com o mesmo produto_id+local (dois nomes da estrutura -> mesmo produto do
 // cadastro). Sem isso, o upsert com onConflict 'produto_id,local' quebra o batch INTEIRO
@@ -3825,9 +3836,7 @@ async function _enviarPedidoInterno() {
   });
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
-  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em', { ascending: false }).limit(1);
-  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g, '')) || 0 : 0;
-  const num_inv   = 'INV-' + String(ultimoNum + 1).padStart(4, '0');
+  const num_inv   = await _proximoNumInv();
 
   const { data: inv, error: eInv } = await sb.from('est_inventarios').insert([{
     num_inv, data, local: _invLocal, responsavel: resp,
@@ -3890,9 +3899,7 @@ async function salvarSaldoContagemDesktop() {
   }));
 
   // Registra em est_inventarios para histórico
-  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
-  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
-  const num_inv   = 'INV-' + String(ultimoNum+1).padStart(4,'0');
+  const num_inv   = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
     num_inv, data, local: _invLocal, responsavel: resp,
     setor: 'ESTOQUE DA LOJA', grupo: _invGrupo, total_geral: 0,
@@ -3931,9 +3938,7 @@ async function salvarSaldoInicialSetor() {
   }));
 
   // Histórico em est_inventarios
-  const { data: ultInvs } = await sb.from('est_inventarios').select('num_inv').order('criado_em',{ascending:false}).limit(1);
-  const ultimoNum = ultInvs?.[0]?.num_inv ? parseInt(ultInvs[0].num_inv.replace(/\D/g,''))||0 : 0;
-  const num_inv   = 'INV-' + String(ultimoNum+1).padStart(4,'0');
+  const num_inv   = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
     num_inv, data, local: _invLocal, responsavel: resp,
     setor: _invSetor, grupo: _invGrupo, total_geral: 0,
