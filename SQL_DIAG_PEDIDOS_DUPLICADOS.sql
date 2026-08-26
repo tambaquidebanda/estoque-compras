@@ -5,88 +5,176 @@
 -- o envio estava no ar, e continuava clicavel depois que ele terminava. Cada toque
 -- extra gravava um pedido inteiro de novo.
 --
--- "Extra" aqui = linha que tem OUTRA linha anterior do mesmo setor / mesma data /
--- mesmo tipo / mesmo grupo criada ha menos de 3 segundos. Tres segundos e' longe
--- demais para ser um segundo pedido de verdade e perto demais para ser outra coisa
--- que nao o mesmo dedo no mesmo botao.
+-- "Rajada" = duas ou mais linhas do mesmo setor / mesma data / mesmo tipo / mesmo
+-- grupo gravadas com menos de 3 segundos entre uma e a seguinte. Tres segundos e'
+-- longe demais para ser um segundo pedido de verdade e perto demais para ser
+-- outra coisa que nao o mesmo dedo no mesmo botao.
 --
--- PASSO 1 e 2 sao SO LEITURA. O PASSO 3 apaga - leia o aviso antes.
+-- QUAL DAS LINHAS DA RAJADA FICA
+-- Nao e' a primeira. O time olhou a tela, escolheu uma das copias e trabalhou nela
+-- - as outras foram canceladas. Entao a linha que fica e' a que ANDOU MAIS no
+-- fluxo:
+--       recebido  >  liberado  >  pendente  >  cancelado
+-- e, em caso de empate, a mais antiga. Toda linha 'recebido' fica sempre, mesmo
+-- que a rajada tenha mais de uma: apagar nao desfaz a movimentacao de saldo que
+-- ela ja causou, so esconderia o rastro.
+--
+-- PASSO 1 e 2 sao SO LEITURA e usam exatamente a mesma regra do PASSO 3 - o que
+-- aparecer marcado APAGA no PASSO 1 e' exatamente o que o PASSO 3 apaga.
 -- ============================================================================
 
 
--- -- PASSO 1 (leitura): as rajadas de pedido, com os itens de cada linha ------
-WITH extras AS (
+-- ---------------------------------------------------------------------------
+-- PASSO 1 (leitura): cada linha de cada rajada, com o veredito e os itens
+--
+-- Confira duas coisas:
+--   1. os itens das linhas da mesma rajada sao iguais (e o mesmo pedido repetido,
+--      nao dois pedidos parecidos);
+--   2. a linha marcada FICA e' a que o time realmente usou.
+-- ---------------------------------------------------------------------------
+WITH ilhas AS (
   SELECT p.*,
-         EXISTS (
-           SELECT 1 FROM pedidos_internos a
-           WHERE a.setor = p.setor AND a.data = p.data
-             AND a.tipo  = p.tipo  AND COALESCE(a.obs,'') = COALESCE(p.obs,'')
-             AND a.criado_em < p.criado_em
-             AND p.criado_em - a.criado_em <= interval '3 seconds'
-         ) AS eh_extra
+         CASE WHEN p.criado_em - lag(p.criado_em) OVER (
+                    PARTITION BY p.setor, p.data, p.tipo, COALESCE(p.obs, '')
+                    ORDER BY p.criado_em) <= interval '3 seconds'
+              THEN 0 ELSE 1 END AS abre_rajada
   FROM pedidos_internos p
+),
+rajadas AS (
+  SELECT i.*,
+         sum(i.abre_rajada) OVER (
+           PARTITION BY i.setor, i.data, i.tipo, COALESCE(i.obs, '')
+           ORDER BY i.criado_em ROWS UNBOUNDED PRECEDING) AS rajada
+  FROM ilhas i
+),
+julgado AS (
+  SELECT r.*,
+         count(*) OVER j AS n_rajada,
+         row_number() OVER (
+           PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada
+           ORDER BY CASE r.status WHEN 'recebido'  THEN 1
+                                  WHEN 'liberado'  THEN 2
+                                  WHEN 'pendente'  THEN 3
+                                  ELSE 4 END,
+                    r.criado_em) AS posto
+  FROM rajadas r
+  WINDOW j AS (PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada)
 )
-SELECT e.criado_em, e.num_pedido, e.setor, e.data, e.tipo, e.obs, e.status,
-       CASE WHEN e.eh_extra THEN '>> EXTRA' ELSE 'primeira' END AS papel,
+SELECT j.criado_em, j.num_pedido, j.setor, j.data, j.tipo, j.obs, j.status,
+       CASE WHEN j.posto = 1 OR j.status = 'recebido' THEN 'FICA' ELSE 'APAGA' END AS veredito,
        (SELECT string_agg(i.nome || ' x' || i.qtd_pedida, ', ' ORDER BY i.nome)
-          FROM pedidos_internos_itens i WHERE i.pedido_id = e.id) AS itens
-FROM extras e
-WHERE EXISTS (SELECT 1 FROM extras x
-              WHERE x.setor = e.setor AND x.data = e.data AND x.tipo = e.tipo
-                AND COALESCE(x.obs,'') = COALESCE(e.obs,'') AND x.eh_extra
-                AND abs(EXTRACT(epoch FROM x.criado_em - e.criado_em)) <= 3)
-ORDER BY e.criado_em DESC;
+          FROM pedidos_internos_itens i WHERE i.pedido_id = j.id) AS itens
+FROM julgado j
+WHERE j.n_rajada > 1
+ORDER BY j.criado_em DESC, j.posto;
 
 
--- -- PASSO 2 (leitura): resumo por status ------------------------------------
--- 'recebido' e' o unico status que mexeu no saldo (baixou ESTOQUE_LOJA e subiu o
--- setor, duas vezes). Essas NAO devem ser apagadas aqui: apagar a linha nao desfaz
--- a movimentacao. O saldo se corrige sozinho na proxima contagem do setor e do
--- ESTOQUE_LOJA; o que fica torto e' o historico de consumo no est_movimentacoes.
-WITH extras AS (
-  SELECT p.id, p.status
+-- ---------------------------------------------------------------------------
+-- PASSO 2 (leitura): o placar, para conferir o numero antes de apagar
+--
+-- Em 26/08/2026 este passo dava:
+--     APAGA  cancelado  60
+--     APAGA  liberado   27      -> 87 linhas a apagar
+--     FICA   recebido   53
+--     FICA   cancelado  22
+--     FICA   liberado   18
+--     FICA   pendente    1
+--
+-- Nenhuma linha 'recebido' aparece em APAGA. Se aparecer, PARE: a regra mudou e
+-- algo esta errado.
+-- ---------------------------------------------------------------------------
+WITH ilhas AS (
+  SELECT p.*,
+         CASE WHEN p.criado_em - lag(p.criado_em) OVER (
+                    PARTITION BY p.setor, p.data, p.tipo, COALESCE(p.obs, '')
+                    ORDER BY p.criado_em) <= interval '3 seconds'
+              THEN 0 ELSE 1 END AS abre_rajada
   FROM pedidos_internos p
-  WHERE EXISTS (
-    SELECT 1 FROM pedidos_internos a
-    WHERE a.setor = p.setor AND a.data = p.data
-      AND a.tipo  = p.tipo  AND COALESCE(a.obs,'') = COALESCE(p.obs,'')
-      AND a.criado_em < p.criado_em
-      AND p.criado_em - a.criado_em <= interval '3 seconds'
-  )
+),
+rajadas AS (
+  SELECT i.*,
+         sum(i.abre_rajada) OVER (
+           PARTITION BY i.setor, i.data, i.tipo, COALESCE(i.obs, '')
+           ORDER BY i.criado_em ROWS UNBOUNDED PRECEDING) AS rajada
+  FROM ilhas i
+),
+julgado AS (
+  SELECT r.*,
+         count(*) OVER j AS n_rajada,
+         row_number() OVER (
+           PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada
+           ORDER BY CASE r.status WHEN 'recebido'  THEN 1
+                                  WHEN 'liberado'  THEN 2
+                                  WHEN 'pendente'  THEN 3
+                                  ELSE 4 END,
+                    r.criado_em) AS posto
+  FROM rajadas r
+  WINDOW j AS (PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada)
 )
-SELECT status, count(*) AS linhas_extras FROM extras GROUP BY status ORDER BY 2 DESC;
+SELECT CASE WHEN j.posto = 1 OR j.status = 'recebido' THEN 'FICA' ELSE 'APAGA' END AS veredito,
+       j.status, count(*) AS linhas
+FROM julgado j
+WHERE j.n_rajada > 1
+GROUP BY 1, 2
+ORDER BY 1, 3 DESC;
 
 
--- -- PASSO 3 (APAGA): so as extras que nunca mexeram no saldo ----------------
--- Rode SO depois de conferir o PASSO 1. Apaga apenas status cancelado / pendente /
--- liberado: nenhum desses movimentou estoque, entao sumir com a linha nao deixa
--- rastro torto. As de status 'recebido' ficam de proposito.
+-- ---------------------------------------------------------------------------
+-- PASSO 3 (APAGA): so depois de conferir o PASSO 1 e o PASSO 2
 --
 -- Os itens somem junto sozinhos: pedidos_internos_itens.pedido_id tem
--- ON DELETE CASCADE. Por isso e um comando so.
+-- ON DELETE CASCADE. Por isso e' um comando so.
 --
--- O RETURNING no fim mostra na tela exatamente quais linhas sairam - guarde esse
--- resultado antes de fechar a aba, e a unica copia do que foi apagado.
+-- O RETURNING mostra na tela exatamente quais linhas sairam - guarde esse
+-- resultado antes de fechar a aba, e' a unica copia do que foi apagado.
 --
--- Para executar: selecione da linha "DELETE FROM" ate o ";" e rode.
---
+-- Para executar: tire o "-- " do inicio de cada linha do bloco abaixo.
+-- ---------------------------------------------------------------------------
+-- WITH ilhas AS (
+--   SELECT p.*,
+--          CASE WHEN p.criado_em - lag(p.criado_em) OVER (
+--                     PARTITION BY p.setor, p.data, p.tipo, COALESCE(p.obs, '')
+--                     ORDER BY p.criado_em) <= interval '3 seconds'
+--               THEN 0 ELSE 1 END AS abre_rajada
+--   FROM pedidos_internos p
+-- ),
+-- rajadas AS (
+--   SELECT i.*,
+--          sum(i.abre_rajada) OVER (
+--            PARTITION BY i.setor, i.data, i.tipo, COALESCE(i.obs, '')
+--            ORDER BY i.criado_em ROWS UNBOUNDED PRECEDING) AS rajada
+--   FROM ilhas i
+-- ),
+-- julgado AS (
+--   SELECT r.*,
+--          count(*) OVER j AS n_rajada,
+--          row_number() OVER (
+--            PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada
+--            ORDER BY CASE r.status WHEN 'recebido'  THEN 1
+--                                   WHEN 'liberado'  THEN 2
+--                                   WHEN 'pendente'  THEN 3
+--                                   ELSE 4 END,
+--                     r.criado_em) AS posto
+--   FROM rajadas r
+--   WINDOW j AS (PARTITION BY r.setor, r.data, r.tipo, COALESCE(r.obs, ''), r.rajada)
+-- )
 -- DELETE FROM pedidos_internos p
--- WHERE p.status IN ('cancelado','pendente','liberado')
---   AND EXISTS (
---     SELECT 1 FROM pedidos_internos a
---     WHERE a.setor = p.setor AND a.data = p.data
---       AND a.tipo  = p.tipo  AND COALESCE(a.obs,'') = COALESCE(p.obs,'')
---       AND a.criado_em < p.criado_em
---       AND p.criado_em - a.criado_em <= interval '3 seconds'
---   )
+-- USING julgado j
+-- WHERE p.id = j.id
+--   AND j.n_rajada > 1
+--   AND j.posto > 1
+--   AND j.status <> 'recebido'
 -- RETURNING p.criado_em, p.num_pedido, p.setor, p.data, p.tipo, p.obs, p.status;
 
 
--- -- PASSO 4 (leitura): as contagens duplicadas na mesma rajada --------------
+-- ---------------------------------------------------------------------------
+-- PASSO 4 (leitura): as contagens duplicadas na mesma rajada
+--
 -- Mesmo botao, mesmo dedo: o envio grava a contagem ANTES do pedido, entao o
--- est_inventarios duplicou junto. A contagem grava saldo absoluto (nao soma),
--- logo a segunda linha gravou o mesmo numero por cima - o saldo esta certo, o que
--- sobra e' a linha repetida no historico.
+-- est_inventarios duplicou junto. Aqui nao ha o que decidir: a contagem grava
+-- saldo absoluto (nao soma), logo a segunda linha gravou o mesmo numero por cima.
+-- O saldo esta certo - o que sobra e' a linha repetida no historico.
+-- ---------------------------------------------------------------------------
 SELECT i.criado_em, i.num_inv, i.setor, i.grupo, i.data, i.total_geral
 FROM est_inventarios i
 WHERE EXISTS (
