@@ -7146,15 +7146,40 @@ async function reabrirPedido(pedido_num) {
     : `Reabrir pedido ${pedido_num}?\n\nO recebimento será desfeito e o pedido voltará para pendente, liberando a edição.`;
   if (!confirm(aviso)) return;
 
-  // Volta todos os itens para pendente e restaura quantidades originais via recebimento_itens
-  const { data: recebimentos } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  // ORDEM IMPORTA: cmp_contas_pagar.recebimento_id e' chave estrangeira para
+  // cmp_recebimentos.id. Apagar o recebimento com a conta ainda apontando para ele
+  // e' recusado pelo banco. Antes esta funcao apagava nessa ordem errada e nao
+  // conferia erro nenhum: o cabecalho do recebimento sobrevivia sem itens, a conta
+  // era apagada e o pedido voltava para pendente — o pedido reaparecia na fila de
+  // recebimento como se nunca tivesse entrado, ja pago no financeiro. Foram 28
+  // cabecalhos orfaos em 19 pedidos entre julho e agosto de 2026.
+  //
+  // Agora cada passo confere o erro e PARA no primeiro que falhar, para nao deixar
+  // o pedido pela metade. Se parar no meio, o estado continua consistente: o que ja
+  // saiu, saiu; o que nao saiu, continua la; e o pedido segue como estava.
+  const falha = (etapa, err) => {
+    toast(`Nao foi possivel reabrir ${pedido_num}: falhou ao ${etapa} (${err.message}). Nada foi alterado pela metade — tente de novo ou chame o suporte.`, 'erro');
+    carregarCompras();
+  };
+
+  // 1. a conta a pagar sai primeiro: e' ela que prende o recebimento
+  const { error: errConta } = await sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num);
+  if (errConta) return falha('remover a conta a pagar', errConta);
+
+  // 2. itens e cabecalho do recebimento
+  const { data: recebimentos, error: errBusca } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  if (errBusca) return falha('buscar os recebimentos', errBusca);
   if (recebimentos?.length) {
     const ids = recebimentos.map(r => r.id);
-    await sb.from('cmp_recebimento_itens').delete().in('recebimento_id', ids);
-    await sb.from('cmp_recebimentos').delete().in('id', ids);
+    const { error: errItens } = await sb.from('cmp_recebimento_itens').delete().in('recebimento_id', ids);
+    if (errItens) return falha('remover os itens do recebimento', errItens);
+    const { error: errReceb } = await sb.from('cmp_recebimentos').delete().in('id', ids);
+    if (errReceb) return falha('remover o recebimento', errReceb);
   }
-  await sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num);
-  await sb.from('cmp_compras').update({ status_receb: 'pendente' }).eq('pedido_num', pedido_num);
+
+  // 3. so agora os itens voltam para pendente
+  const { error: errCompras } = await sb.from('cmp_compras').update({ status_receb: 'pendente' }).eq('pedido_num', pedido_num);
+  if (errCompras) return falha('voltar os itens para pendente', errCompras);
 
   toast(`Pedido ${pedido_num} reaberto. Edite e receba novamente.`, 'ok');
   carregarCompras();
