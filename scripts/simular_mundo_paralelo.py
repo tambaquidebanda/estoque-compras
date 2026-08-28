@@ -33,8 +33,6 @@ INICIO = os.environ.get('SIM_INICIO', '2026-08-07')
 NDIAS  = int(os.environ.get('SIM_DIAS', '21'))
 UNIDADE = os.environ.get('SIM_UNIDADE', 'Centro')   # est_inventarios.local
 SETORES_IGNORAR = {'ESTOQUE_LOJA', 'ESTOQUE DA LOJA'}
-# a partir deste dia o app grava a entrada ja em unidade de uso (commit 6084219)
-CORTE_UNIDADE = os.environ.get('SIM_CORTE_UNIDADE', '2026-08-28')
 
 spec = importlib.util.spec_from_file_location('bx', os.path.join(AQUI, 'baixa_estoque_pdv.py'))
 bx = importlib.util.module_from_spec(spec)
@@ -57,24 +55,39 @@ def em_lotes(ids, n=60):
         yield urllib.parse.quote('(' + ','.join('"%s"' % x for x in ids[i:i + n]) + ')')
 
 
-def fatores():
-    """{produto_id: fator_conversao} - quantas unidades de USO cabem em 1 de COMPRA."""
+def produtos_fator():
+    """{produto_id: fator_conversao} - so para MARCAR quem tem fator != 1.
+
+    NAO e usado para converter nada. Ver o bloco UNIDADE em contagens().
+    """
     return {p['id']: float(p.get('fator_conversao') or 1) or 1
             for p in G('est_produtos?select=id,fator_conversao')}
 
 
-def contagens(desde, fator):
-    """{(setor, produto, dia): quantidade contada, EM UNIDADE DE USO} - ultima do dia vence.
+def contagens(desde):
+    """{(setor, produto, dia): quantidade contada, COMO FOI DIGITADA} - ultima do dia vence.
 
-    CONVERTE PARA UNIDADE DE USO. `est_inventario_itens.total` guarda o numero cru
-    que a pessoa digitou, e a tela de contagem mostra a unidade de COMPRA de
-    proposito (garrafa e contavel, mililitro nao). Ja as entradas do razao e o
-    consumo da ficha estao em unidade de USO. Sem converter, os dois lados da conta
-    ficam em unidades diferentes: a laranja e contada em pacote (1 PC = 100 UN) e
-    comparada com laranja consumida em unidade - 100x de diferenca inventada.
-    Sao 85 produtos ativos com fator != 1, e eles respondiam por R$ 17 mil do erro
-    bruto medido na primeira rodada. Esse pedaco do erro era do instrumento, nao
-    do estoque.
+    UNIDADE: nao converte, e isso e uma decisao, nao um esquecimento.
+
+    A tentacao e obvia: `est_inventario_itens.total` guarda o numero cru digitado,
+    a tela mostra unidade_comp, e a ficha trabalha em unidade de uso — logo era so
+    multiplicar pelo fator_conversao. Testei os tres jeitos em 10-27/08/2026:
+
+        sem converter nada                    erro bruto R$ 148 mil
+        convertendo so a contagem             erro bruto R$ 154 mil
+        convertendo contagem e entrada        erro bruto R$ 272 mil
+
+    O terceiro da 275 kg de farinha por dia e 24.500 bandejas em 18 dias, que sao
+    numeros fisicamente impossiveis. A conferencia de 28/08 nos 85 produtos com
+    fator != 1 explicou por que: na maioria o time JA CONTA na unidade de uso e
+    ignora o rotulo da tela (digitam 7 querendo dizer 7 kg de farinha, nao 7
+    fardos), e numa minoria — garrafa, fator < 1 — contam na unidade de compra
+    mesmo. A unidade da contagem esta no habito de quem conta, item a item, e nao
+    no cadastro. Por isso a conversao tambem foi desligada no app (commit
+    77390f0): so volta depois que os 85 forem curados um a um.
+
+    Enquanto nao houver curadoria, o numero cru e a leitura menos errada — e o
+    erro que sobra nesses produtos e conhecido, nao invisivel.
 
     FILTRA POR UNIDADE. `est_inventarios.local` guarda a unidade (Centro, Estoque
     Central, Producao, Delivery P10) e `setor` guarda o setor (BAR, COZINHA...).
@@ -97,30 +110,22 @@ def contagens(desde, fator):
         k = (h['setor'], x['produto_id'], h['data'])
         if k not in quando or h['criado_em'] > quando[k]:
             quando[k] = h['criado_em']
-            out[k] = (x['total'] or 0) * fator.get(x['produto_id'], 1)
+            out[k] = x['total'] or 0
     return out
 
 
-def entradas(fator):
-    """{(setor, produto, dia): quantidade que ENTROU, EM UNIDADE DE USO}.
+def entradas():
+    """{(setor, produto, dia): quantidade que ENTROU} - so movimento oficial.
 
-    Duas eras, e a conta muda entre elas. Ate 27/08/2026 o app gravava a entrada
-    do pedido interno com o numero cru da tela, que esta em unidade de COMPRA
-    (a laranja entra como '1' pacote, a bandeja como '20' pacotes). O commit
-    6084219, de 27/08, passou a converter na gravacao. Entao movimento anterior
-    ao corte precisa do fator; movimento posterior ja vem em unidade de uso.
-
-    Sem esta divisao a conta fica pior do que sem correcao nenhuma: converter so
-    a contagem e deixar a entrada crua desalinha os dois lados da subtracao.
+    Tambem sem conversao, e pelo mesmo motivo da contagem: a entrada do pedido
+    interno e gravada com o numero da tela do setor, entao ela esta na mesma
+    unidade em que aquele item e contado. Somar contagem e entrada crua mantem
+    os dois lados da subtracao coerentes entre si.
     """
     out = collections.defaultdict(float)
     for m in G('est_movimentacoes?select=produto_id,local,data,tipo,quantidade'):
-        if m['tipo'] not in ('pedido_interno_entrada', 'recebimento', 'devolucao'):
-            continue
-        q = m['quantidade'] or 0
-        if (m['data'] or '') < CORTE_UNIDADE:
-            q *= fator.get(m['produto_id'], 1)
-        out[(m['local'], m['produto_id'], m['data'])] += q
+        if m['tipo'] in ('pedido_interno_entrada', 'recebimento', 'devolucao'):
+            out[(m['local'], m['produto_id'], m['data'])] += m['quantidade'] or 0
     return out
 
 
@@ -130,9 +135,9 @@ def main():
     print(f'Mundo paralelo: {UNIDADE}, {dias[0]} a {dias[-1]} ({NDIAS} dias). Leitura pura.\n', flush=True)
 
     mapa, ficha, ings, prod, contado, setor_de, ambiguos, sem_setor = bx.carregar()
-    fator = fatores()
-    cont = contagens(dias[0], fator)
-    ent  = entradas(fator)
+    fator = produtos_fator()          # so para marcar quem tem fator != 1 no relatorio
+    cont = contagens(dias[0])
+    ent  = entradas()
 
     consumo, memo = collections.defaultdict(float), {}
     for d in dias:
@@ -167,6 +172,9 @@ def main():
             'real': round(real, 2), 'modelo': round(mod, 2),
             'razao': round(mod / real, 3) if real > 0.5 else None,
             'gap_reais': round((mod - real) * bx.custo_efetivo(prod.get(p, {})), 2),
+            # fator != 1: unidade da contagem ainda nao curada, o gap deste insumo
+            # pode ser so unidade trocada. Nao confie na linha antes de curar.
+            'fator': fator.get(p, 1),
         })
     linhas.sort(key=lambda x: -abs(x['gap_reais']))
 
@@ -189,6 +197,9 @@ def main():
     print(f'erro liquido               : R$ {sum(x["gap_reais"] for x in linhas):,.2f}'
           '   <- os erros se cancelam; nao leia so este numero')
     print(f'{n80} insumos explicam 80% do erro bruto')
+    naocur = [x for x in linhas if x['fator'] != 1]
+    print(f'{len(naocur)} linhas sao de insumo com fator != 1 (unidade da contagem nao curada), '
+          f'R$ {sum(abs(x["gap_reais"]) for x in naocur):,.2f} do erro bruto')
 
     saida = os.path.join(AQUI, '..', 'mundo_paralelo_resultado.json')
     json.dump({'inicio': dias[0], 'fim': dias[-1], 'linhas': linhas}, open(saida, 'w'),
