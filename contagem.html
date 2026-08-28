@@ -795,6 +795,72 @@ async function movimentar(mov) {
 }
 
 // Contagem: snapshot absoluto (igual hoje) + razão com delta = contado − esperado.
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAVA DO ERRO DE MIL VEZES
+//
+// Contagem de produto pesado na balanca chega em GRAMAS num campo que e' KG.
+// Medido em 28/08/2026 varrendo julho e agosto: 35 produtos, em COZINHA, BAR e
+// SALAO. Todo pico e' multiplo de 5 (leitura de balanca) e em 25 deles o mesmo
+// numero dividido por mil aparece em outro dia — alho 575 num dia, 0,575 no
+// seguinte. Cada erro desses cria uma entrada fantasma no razao num dia e uma
+// saida fantasma no dia seguinte. Chegou a R$ 39,6 mil de alface num setor.
+//
+// A trava so PERGUNTA — nunca bloqueia. Quem conta pode confirmar e seguir, que
+// e' o certo quando a compra grande realmente aconteceu.
+// ─────────────────────────────────────────────────────────────────────────────
+async function _conferirContagemFora(itens, setor, local) {
+  try {
+    const ids = [...new Set(itens.filter(i => i.produto_id && (i.total || 0) >= 50).map(i => i.produto_id))];
+    if (!ids.length) return true;                       // ninguem digitou numero grande
+
+    const desde = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+    let q = sb.from('est_inventarios').select('id').eq('setor', setor).gte('data', desde);
+    if (local) q = q.eq('local', local);
+    const { data: invs } = await q;
+    if (!invs?.length) return true;                     // sem historico, nao ha o que comparar
+
+    const hist = {};
+    const invIds = invs.map(i => i.id);
+    for (let i = 0; i < invIds.length; i += 200) {
+      const { data: linhas } = await sb.from('est_inventario_itens')
+        .select('produto_id,total').in('inventario_id', invIds.slice(i, i + 200)).in('produto_id', ids);
+      (linhas || []).forEach(l => {
+        const v = Number(l.total) || 0;
+        if (v > 0) (hist[l.produto_id] = hist[l.produto_id] || []).push(v);
+      });
+    }
+
+    const suspeitos = [];
+    itens.forEach(it => {
+      const v = Number(it.total) || 0;
+      const h = hist[it.produto_id];
+      if (v < 50 || !h || h.length < 3) return;
+      h.sort((a, b) => a - b);
+      const mediana = h[Math.floor(h.length / 2)];
+      if (mediana <= 0 || v < 50 * mediana) return;
+      const emKg = v / 1000;
+      const pareceGrama = emKg >= mediana / 5 && emKg <= mediana * 5;
+      suspeitos.push({ nome: it.nome, v, mediana, emKg, pareceGrama });
+    });
+    if (!suspeitos.length) return true;
+
+    const fmt = n => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+    const linhas = suspeitos.map(s =>
+      `• ${s.nome}: você digitou ${fmt(s.v)} — o normal aqui é ${fmt(s.mediana)}` +
+      (s.pareceGrama ? `\n   (${fmt(s.v)} gramas seria ${fmt(s.emKg)})` : '')
+    ).join('\n');
+
+    return confirm(
+      `Confira estes valores antes de salvar:\n\n${linhas}\n\n` +
+      `Se a quantidade é essa mesmo, pode continuar.\n` +
+      `Salvar assim?`
+    );
+  } catch (e) {
+    console.error('_conferirContagemFora falhou (contagem segue):', e);
+    return true;                                        // a trava nunca pode impedir de contar
+  }
+}
+
 async function registrarContagem(rows, opts) {
   const o = opts || {};
   const dedup = {};
@@ -1138,6 +1204,8 @@ async function salvarSaldoContagem() {
     unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
   }));
 
+  if (!await _conferirContagemFora(itensCont, 'ESTOQUE DA LOJA', _local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
+
   // Registra em est_inventarios para histórico auditável
   const num_inv = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
@@ -1397,6 +1465,8 @@ async function _enviarPedido() {
              cozinha_bar:0, outros:0, total:estoque, unidade:'UN', valor_unitario:0, soma_total:0 };
   });
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
+
+  if (!await _conferirContagemFora(itensCont, _setor, _local)) return;
 
   // Salvar contagem
   const num_inv = await _proximoNumInv();
