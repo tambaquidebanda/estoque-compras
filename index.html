@@ -167,6 +167,9 @@
         <a href="#" onclick="ir('acuracidade',this)">
           <i class="bi bi-clipboard2-check"></i> Acuracidade Inventário
         </a>
+        <a href="#" onclick="ir('paralelo',this)">
+          <i class="bi bi-arrow-left-right"></i> Contagem × Venda
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2540,6 +2543,80 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>Mede a divergência <strong>contado × esperado</strong> registrada a cada contagem. <span style="color:#dc3545">Falta</span> = sistema tinha mais do que existia; <span style="color:#16a34a">Sobra</span> = existia mais do que o sistema marcava. <strong>Observação:</strong> só os itens que <em>divergiram</em> entram no razão — os que bateram exatamente não são registrados, então este relatório é o <strong>índice de divergência</strong> (quanto e onde erra), não uma taxa de acerto sobre o total contado.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ CONTAGEM × VENDA (comparativo do mundo paralelo) ═══════════ -->
+    <section id="pg-paralelo" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-arrow-left-right"></i> Contagem × Venda</h1>
+        <span class="text-muted small" id="par-contador"></span>
+      </div>
+      <p class="text-muted small mb-3" style="max-width:75ch">
+        O que a contagem disse que saiu, contra o que a venda explica pela ficha técnica.
+        É o placar do período de paralelo: cada linha divergente é uma ficha, um cadastro
+        ou uma rotina para consertar antes de desligar a contagem.
+      </p>
+
+      <div class="d-flex flex-wrap gap-2 mb-3" id="par-kpis"></div>
+
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">Dia da contagem</label>
+          <input type="date" class="form-control form-control-sm" id="par-data" onchange="carregarParalelo()">
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" onclick="parDia(-1)" title="Dia anterior">‹</button>
+          <button class="btn btn-outline-secondary" onclick="parDia(1)" title="Dia seguinte">›</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Unidade</label>
+          <select class="form-select form-select-sm" id="par-unidade" onchange="carregarParalelo()" style="width:170px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1">Setor</label>
+          <select class="form-select form-select-sm" id="par-setor" onchange="_pintarParalelo()" style="width:170px"></select>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="par-so-div" checked onchange="_pintarParalelo()">
+          <label class="form-check-label small text-muted" for="par-so-div">Só os que divergem</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="par-busca" placeholder="Buscar insumo..." oninput="_pintarParalelo()" style="width:190px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarParalelo()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Insumo</th>
+                <th>Setor</th>
+                <th class="text-center">Janela</th>
+                <th class="text-end">Contagem diz</th>
+                <th class="text-end">Venda diz</th>
+                <th class="text-end">Diferença</th>
+                <th class="text-end">Em R$</th>
+              </tr>
+            </thead>
+            <tbody id="lst-par">
+              <tr><td colspan="7" class="text-center text-muted py-4">Escolha o dia.</td></tr>
+            </tbody>
+            <tfoot id="par-tfoot"></tfoot>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Contagem diz</strong> = contagem anterior + o que o estoque liberou − contagem do dia.
+            <strong>Venda diz</strong> = o que o robô calculou pela ficha, do livro-razão.
+            A <strong>janela</strong> é o intervalo entre as duas contagens daquele insumo naquele setor —
+            nem todo item é contado todo dia. <span class="badge bg-warning text-dark">un?</span> marca insumo
+            com unidade de compra diferente da de uso: a contagem dele pode estar em outra unidade que a ficha,
+            então a diferença pode ser só isso. Sem linha nenhuma = o robô ainda não rodou em modo razão nesse dia.
           </small>
         </div>
       </div>

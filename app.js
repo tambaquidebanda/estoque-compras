@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -244,6 +244,7 @@ function ir(nome, el) {
   if (nome === 'lead-time')       carregarLeadTime();
   if (nome === 'sem-giro')        carregarSemGiro();
   if (nome === 'acuracidade')     carregarAcuracidade();
+  if (nome === 'paralelo')        carregarParalelo();
 }
 
 function irCad(tab, el) {
@@ -10271,6 +10272,237 @@ function exportarLeadTime() {
 }
 
 // Card de KPI genérico p/ os relatórios (chip lado a lado num container flex).
+// ═══════════════ RELATÓRIO: CONTAGEM × VENDA (o placar do paralelo) ═══════════════
+//
+// Põe lado a lado as duas leituras do mesmo consumo:
+//
+//   CONTAGEM DIZ = contagem anterior + entradas do razão − contagem do dia
+//                  (só conta e movimento oficial; não usa ficha nenhuma)
+//   VENDA DIZ    = o que o robô lançou no razão como venda_pensera
+//                  (explosão da venda pela ficha técnica, feita em Python)
+//
+// Os dois lados são independentes de propósito. A "venda diz" NÃO é recalculada
+// aqui: se fosse, existiriam duas implementações da explosão de ficha (Python e
+// JS) e elas divergiriam com o tempo sem ninguém perceber. Esta tela só lê o que
+// o robô gravou. Dia sem robô em modo razão aparece vazio, e isso é honesto.
+//
+// JANELA: nem todo insumo é contado todo dia. Para cada (setor, insumo) a conta
+// vai da contagem anterior até a do dia escolhido, e as entradas e a venda são
+// somadas nesse mesmo intervalo. Comparar uma contagem de 3 dias atrás com a
+// venda de 1 dia daria erro de 3x sem nada de errado no estoque.
+//
+// UNIDADE: a contagem entra crua. Ver o bloco de _fatorDe() — a unidade em que
+// cada item é contado não está no cadastro. Insumo com fator != 1 ganha o selo
+// "un?" para ninguém ler a diferença dele como furo de estoque.
+const _PAR_ENTRADAS = ['pedido_interno_entrada', 'recebimento', 'devolucao'];
+let _parLinhas = [], _parDia = null;
+
+function _parCustoEfetivo(p) {
+  const fator = Number(p?.fator_conversao) || 1;
+  const rend  = 1 - ((Number(p?.perda) || 0) / 100);
+  const bruto = Number(p?.custo_comp) || Number(p?.custo_uso) || 0;
+  return rend > 0 ? (bruto / fator) / rend : 0;
+}
+
+function parDia(passo) {
+  const el = document.getElementById('par-data');
+  const d = new Date((el.value || new Date().toISOString().slice(0, 10)) + 'T12:00:00');
+  d.setDate(d.getDate() + passo);
+  el.value = d.toISOString().slice(0, 10);
+  carregarParalelo();
+}
+
+async function carregarParalelo() {
+  const tbody = document.getElementById('lst-par');
+  const elData = document.getElementById('par-data');
+  if (!elData.value) {                                  // padrão: ontem
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    elData.value = d.toISOString().slice(0, 10);
+  }
+  const dia = _parDia = elData.value;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Carregando…</td></tr>';
+
+  // 14 dias para trás dão folga para achar a contagem anterior de item contado
+  // com pouca frequência, sem puxar meses de inventário à toa.
+  const desde = new Date(dia + 'T12:00:00');
+  desde.setDate(desde.getDate() - 14);
+  const dIni = desde.toISOString().slice(0, 10);
+
+  await carregarProdutosFT();
+  const invs = await _fetchAllPaged('est_inventarios', 'id,setor,data,criado_em,local',
+    q => q.gte('data', dIni).lte('data', dia));
+
+  // seletor de unidade: as que realmente têm contagem no período
+  const unidades = [...new Set(invs.map(i => i.local).filter(Boolean))].sort();
+  const selU = document.getElementById('par-unidade');
+  const unAtual = selU.value || (unidades.includes('Centro') ? 'Centro' : unidades[0] || '');
+  selU.innerHTML = unidades.map(u => `<option${u === unAtual ? ' selected' : ''}>${esc(u)}</option>`).join('');
+  const unidade = selU.value || unAtual;
+
+  const doGrupo = invs.filter(i => i.local === unidade);
+  if (!doGrupo.length) {
+    _parLinhas = []; _pintarParalelo();
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">Nenhuma contagem de ${esc(unidade)} até ${_dataBR(dia)}.</td></tr>`;
+    return;
+  }
+
+  const cab = Object.fromEntries(doGrupo.map(i => [i.id, i]));
+  const itens = await _fetchAllPaged('est_inventario_itens', 'inventario_id,produto_id,total',
+    q => q.in('inventario_id', Object.keys(cab)));
+
+  // última contagem de cada (setor, produto, dia) — recontagem do mesmo dia vence
+  const cont = {}, quando = {};
+  itens.forEach(x => {
+    if (!x.produto_id) return;
+    const h = cab[x.inventario_id]; if (!h) return;
+    const k = `${h.setor}|${x.produto_id}|${h.data}`;
+    if (!(k in quando) || h.criado_em > quando[k]) { quando[k] = h.criado_em; cont[k] = Number(x.total) || 0; }
+  });
+
+  // movimentos do período: entradas oficiais e a venda que o robô lançou
+  const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo,quantidade',
+    q => q.gte('data', dIni).lte('data', dia));
+  const ent = {}, venda = {};
+  movs.forEach(m => {
+    const k = `${m.local}|${m.produto_id}|${m.data}`;
+    if (_PAR_ENTRADAS.includes(m.tipo)) ent[k] = (ent[k] || 0) + (Number(m.quantidade) || 0);
+    else if (m.tipo === 'venda_pensera') venda[k] = (venda[k] || 0) + Math.abs(Number(m.quantidade) || 0);
+  });
+
+  // dias do intervalo, em ordem
+  const dias = [];
+  for (let d = new Date(dIni + 'T12:00:00'); d.toISOString().slice(0, 10) <= dia; d.setDate(d.getDate() + 1))
+    dias.push(d.toISOString().slice(0, 10));
+
+  const linhas = [];
+  Object.keys(cont).forEach(k => {
+    const [setor, pid, d] = k.split('|');
+    if (d !== dia) return;                              // só pares que fecham no dia escolhido
+    const antes = dias.filter(x => x < dia).reverse().find(x => `${setor}|${pid}|${x}` in cont);
+    if (!antes) return;                                 // sem contagem anterior não há janela
+    const janela = dias.filter(x => x > antes && x <= dia);
+    const somaEnt = janela.reduce((s, x) => s + (ent[`${setor}|${pid}|${x}`] || 0), 0);
+    const real  = cont[`${setor}|${pid}|${antes}`] + somaEnt - cont[k];
+    const model = janela.reduce((s, x) => s + (venda[`${setor}|${pid}|${x}`] || 0), 0);
+    if (Math.abs(real) < 0.01 && model < 0.01) return;   // nada saiu dos dois lados
+    const p = prodFT(pid);
+    const fator = Number(p?.fator_conversao) || 1;
+    linhas.push({
+      produto_id: pid, insumo: p?.nome || '(sem cadastro)', setor,
+      unidade: p?.unidade_uso || p?.unidade_comp || '', dias: janela.length, de: antes,
+      real, modelo: model, dif: model - real,
+      custo: _parCustoEfetivo(p),
+      valor: (model - real) * _parCustoEfetivo(p),
+      razao: real > 0.5 ? model / real : null,
+      unSuspeita: fator !== 1,
+    });
+  });
+  linhas.sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
+  _parLinhas = linhas;
+
+  const setores = [...new Set(linhas.map(l => l.setor))].sort();
+  const selS = document.getElementById('par-setor');
+  const sAtual = selS.value;
+  selS.innerHTML = '<option value="">Todos os setores</option>'
+    + setores.map(s => `<option${s === sAtual ? ' selected' : ''}>${esc(s)}</option>`).join('');
+  _pintarParalelo();
+}
+
+function _parFiltradas() {
+  const setor = document.getElementById('par-setor')?.value || '';
+  const busca = norm(document.getElementById('par-busca')?.value || '');
+  const soDiv = document.getElementById('par-so-div')?.checked;
+  return _parLinhas.filter(l =>
+    (!setor || l.setor === setor) &&
+    (!busca || norm(l.insumo).includes(busca)) &&
+    (!soDiv || l.razao === null || l.razao < 0.75 || l.razao > 1.25));
+}
+
+function _pintarParalelo() {
+  const tbody = document.getElementById('lst-par');
+  const tfoot = document.getElementById('par-tfoot');
+  const kpis  = document.getElementById('par-kpis');
+  const cont  = document.getElementById('par-contador');
+  if (!tbody) return;
+
+  // KPIs sempre sobre o conjunto TODO do dia, não sobre o filtro: o placar do
+  // paralelo não pode mudar porque alguém digitou algo na busca.
+  const todas = _parLinhas;
+  const batem = todas.filter(l => l.razao !== null && l.razao >= 0.75 && l.razao <= 1.25).length;
+  const bruto = todas.reduce((s, l) => s + Math.abs(l.valor), 0);
+  // Denominador = o consumo que a CONTAGEM diz, em R$. É o critério do plano
+  // ("erro do dia abaixo de 10% do consumo do dia") medido contra a verdade
+  // física, que durante o paralelo ainda é a contagem. Usar o consumo do modelo
+  // como base seria instável: em dia que o robô rodou pela metade o denominador
+  // encolhe e a porcentagem estoura sem que o estoque tenha piorado.
+  const consumo = todas.reduce((s, l) => s + Math.abs(l.real * l.custo), 0);
+  const pctErro = consumo > 0 ? (bruto / consumo) * 100 : null;
+  const suspeitas = todas.filter(l => l.unSuspeita).length;
+
+  kpis.innerHTML = todas.length
+    ? _relKpiChip('Insumos comparados', String(todas.length), '#0d6efd')
+    + _relKpiChip('Batem (±25%)', `${batem} de ${todas.length}`, batem / todas.length >= 0.7 ? '#16a34a' : '#b45309')
+    + _relKpiChip('Erro bruto', brl(bruto), '#dc3545')
+    + (pctErro !== null ? _relKpiChip('Erro sobre o contado', pct(pctErro), pctErro <= 10 ? '#16a34a' : '#b45309') : '')
+    + (suspeitas ? _relKpiChip('Unidade não curada', String(suspeitas), '#6b7280') : '')
+    : '';
+  if (cont) cont.textContent = todas.length ? `${_dataBR(_parDia)} · ${todas.length} insumo(s) com movimento` : '';
+
+  const linhas = _parFiltradas();
+  if (!linhas.length) {
+    tbody.innerHTML = todas.length
+      ? '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum insumo divergente com esses filtros. 🎯</td></tr>'
+      : `<tr><td colspan="7" class="text-center text-muted py-4">
+           Sem comparação para ${esc(_dataBR(_parDia))}.<br>
+           <span class="small">Ou não houve contagem nesse dia, ou o robô ainda não rodou em modo razão.</span>
+         </td></tr>`;
+    if (tfoot) tfoot.innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = linhas.map(l => {
+    const cor = l.valor < 0 ? '#dc3545' : '#16a34a';
+    const ok  = l.razao !== null && l.razao >= 0.75 && l.razao <= 1.25;
+    return `<tr>
+      <td>${esc(l.insumo)}${l.unSuspeita ? ' <span class="badge bg-warning text-dark" title="Unidade de compra diferente da de uso: a diferença pode ser só a unidade da contagem, não furo de estoque.">un?</span>' : ''}</td>
+      <td class="text-muted small">${esc(l.setor)}</td>
+      <td class="text-center text-muted small" title="De ${esc(_dataBR(l.de))} a ${esc(_dataBR(_parDia))}">${l.dias}d</td>
+      <td class="text-end">${_parNum(l.real)} <span class="text-muted small">${esc(l.unidade)}</span></td>
+      <td class="text-end">${_parNum(l.modelo)} <span class="text-muted small">${esc(l.unidade)}</span></td>
+      <td class="text-end" style="color:${cor}">${l.dif > 0 ? '+' : ''}${_parNum(l.dif)}</td>
+      <td class="text-end fw-semibold" style="color:${ok ? '#16a34a' : cor}">${brl(l.valor)}</td>
+    </tr>`;
+  }).join('');
+
+  const somaVal = linhas.reduce((s, l) => s + l.valor, 0);
+  if (tfoot) tfoot.innerHTML = `<tr class="table-light fw-semibold">
+    <td colspan="6" class="text-end">Diferença líquida das ${linhas.length} linha(s) listada(s)</td>
+    <td class="text-end" style="color:${somaVal < 0 ? '#dc3545' : '#16a34a'}">${brl(somaVal)}</td></tr>`;
+}
+
+function _parNum(v) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(v || 0);
+}
+
+function exportarParalelo() {
+  const linhas = _parFiltradas();
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  const aoa = [
+    [`Contagem x Venda - ${_dataBR(_parDia)}`],
+    ['Insumo', 'Setor', 'Janela (dias)', 'Contagem diz', 'Venda diz', 'Diferenca', 'Em R$', 'Unidade nao curada'],
+    ...linhas.map(l => [l.insumo, l.setor, l.dias, l.real, l.modelo, l.dif, l.valor, l.unSuspeita ? 'sim' : '']),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 38 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 14 }, { wch: 18 }];
+  for (let r = 2; r < aoa.length; r++) {
+    const c = ws[XLSX.utils.encode_cell({ r, c: 6 })];
+    if (c) c.z = 'R$ #,##0.00';
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Contagem x Venda');
+  XLSX.writeFile(wb, `contagem-x-venda_${_parDia}.xlsx`);
+}
+
 function _relKpiChip(label, valor, cor) {
   return `<div style="border:1px solid ${cor}55;border-left:4px solid ${cor};border-radius:.5rem;padding:.5rem .9rem;background:${cor}11;min-width:150px">
     <div class="small text-muted">${esc(label)}</div>
