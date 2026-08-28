@@ -3811,6 +3811,29 @@ async function enviarPedidoInterno() {
   try { _ok = await _enviarPedidoInterno(); } finally { _solta(_ok); }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A CONTAGEM E EM UNIDADE CONTAVEL, O SALDO E EM UNIDADE DE USO
+//
+// Quem conta olha o que da para contar: garrafa, saco, caixa. Ninguem consegue
+// dizer "0,375 litro" olhando um Aperol pela metade. Mas a ficha tecnica e a
+// baixa trabalham na unidade de USO, e o saldo tem que estar nela.
+//
+// Entao a tela continua na unidade contavel (unidade_comp) e a conversao mora
+// aqui, na fronteira com o saldo: multiplica pelo fator_conversao na hora de
+// gravar. Laranja: conta 0,5 saco -> grava 50 UN (fator 100). Azeite: conta
+// 3 garrafas -> grava 1,5 LT (fator 0,5). Onde compra e uso sao iguais o fator
+// e 1 e nada muda.
+//
+// Sao 39 produtos ativos com fator != 1 sendo contados (28/08/2026). O mesmo
+// conserto ja foi feito no recebimento de compra em 22/08 (_emUnidadeDeUso).
+// A tela mostra a unidade de compra desde 22/06 (commit d42b291), e esta certo:
+// o que faltava era converter na gravacao, nao trocar o que a tela mostra.
+// ─────────────────────────────────────────────────────────────────────────────
+function _fatorDe(produto_id) {
+  return Number(prodFT(produto_id)?.fator_conversao) || 1;
+}
+
 async function _enviarPedidoInterno() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
   const data = document.getElementById('inv-data').value;
@@ -3849,7 +3872,7 @@ async function _enviarPedidoInterno() {
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
@@ -3949,7 +3972,7 @@ async function salvarSaldoInicialSetor() {
 
   // Salva saldo absoluto do setor + registra no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
@@ -4483,12 +4506,15 @@ async function confirmarRecebimentoInv() {
     status: 'recebido', recebido_em: new Date().toISOString(),
   }).eq('id', _pedReceberId);
 
-  // Movimentar saldo: diminui ESTOQUE_LOJA, aumenta setor
+  // Movimentar saldo: diminui ESTOQUE_LOJA, aumenta setor.
+  // O pedido e digitado na unidade CONTAVEL (garrafa, saco); o saldo e em unidade
+  // de USO. Sem o fator, liberar 2 garrafas de azeite somava 2 litros no setor.
   await Promise.all(_pedReceberItens.filter(it => it.produto_id).map(async it => {
     const qtd = parseQtd(document.getElementById(`rec-qtd-${it.id}`)?.value);
     if (!qtd) return;
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -qtd, origem: 'pedido_interno', motivo: `Pedido interno${_pedReceberSetor ? ' → ' + _pedReceberSetor : ''}` });
-    if (_pedReceberSetor) await movimentar({ produto_id: it.produto_id, local: _pedReceberSetor, tipo: 'pedido_interno_entrada', quantidade: +qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
+    const uso = qtd * _fatorDe(it.produto_id);
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${_pedReceberSetor ? ' → ' + _pedReceberSetor : ''}` });
+    if (_pedReceberSetor) await movimentar({ produto_id: it.produto_id, local: _pedReceberSetor, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
@@ -7360,10 +7386,28 @@ async function abrirProduto(prodId) {
   }
 
   // Unidades
-  const uns = ['UN','KG','CX','LT','FD','PC','MT','DZ'];
+  //
+  // A lista precisa cobrir TUDO que existe no banco. Ela tinha 8 e o banco usa 17
+  // (PO porcao, PA pacote, LI litro, CA caixa, MA maco, GA galao, LA lata, SA saco,
+  // ML mililitro). Como setUnSel reconstroi o select, um produto com unidade fora
+  // da lista ficava sem opcao marcada, o navegador selecionava a primeira (UN) e
+  // salvar TROCAVA a unidade em silencio. Mais de 200 produtos estavam expostos.
+  //
+  // A guarda abaixo e o cinto de seguranca: unidade desconhecida entra na lista em
+  // vez de ser perdida. Descoberto em 28/08/2026.
+  const uns = [
+    ['UN','unidade'], ['KG','quilo'], ['LT','litro'], ['ML','mililitro'],
+    ['PO','porção'], ['PA','pacote'], ['PC','pacote/peça'], ['CX','caixa'],
+    ['FD','fardo'], ['SA','saco'], ['GA','galão'], ['LA','lata'],
+    ['CA','caixa (antigo)'], ['LI','litro (antigo)'],
+    ['MA','maço'], ['DZ','dúzia'], ['MT','metro'],
+  ];
   const setUnSel = (id, val) => {
     const sel = document.getElementById(id);
-    sel.innerHTML = uns.map(u => `<option${u === val ? ' selected' : ''}>${u}</option>`).join('');
+    if (!sel) return;
+    const lista = uns.some(([c]) => c === val) || !val ? uns : [[val, 'cadastrada antes'], ...uns];
+    sel.innerHTML = lista.map(([c, n]) =>
+      `<option value="${c}"${c === val ? ' selected' : ''}>${c} — ${n}</option>`).join('');
   };
   setUnSel('prod-un-comp', p.unidade_comp || 'UN');
   setUnSel('prod-un-uso',  p.unidade_uso  || 'UN');

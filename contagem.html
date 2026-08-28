@@ -1013,11 +1013,33 @@ function atualizarBtnsDia() {
   if (btnF) btnF.className = 'feriado-btn' + (_feriado ? ' ativo' : '');
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A CONTAGEM E EM UNIDADE CONTAVEL, O SALDO E EM UNIDADE DE USO
+//
+// Quem conta olha o que da para contar: garrafa, saco, caixa. Ninguem consegue
+// dizer "0,375 litro" olhando um Aperol pela metade. Mas a ficha tecnica e a
+// baixa trabalham na unidade de USO, e o saldo tem que estar nela.
+//
+// Entao a tela continua na unidade contavel (unidade_comp) e a conversao mora
+// aqui, na fronteira com o saldo: multiplica pelo fator_conversao na hora de
+// gravar. Laranja: conta 0,5 saco -> grava 50 UN (fator 100). Azeite: conta
+// 3 garrafas -> grava 1,5 LT (fator 0,5). Onde compra e uso sao iguais o fator
+// e 1 e nada muda.
+//
+// Sao 39 produtos ativos com fator != 1 sendo contados (28/08/2026). O mesmo
+// conserto ja foi feito no recebimento de compra em 22/08 (_emUnidadeDeUso).
+// ─────────────────────────────────────────────────────────────────────────────
+function _fatorDe(produto_id) {
+  const p = _todosProdutos.find(x => x.id === produto_id);
+  return Number(p?.fator_conversao) || 1;
+}
+
 // ─── PRODUTOS ────────────────────────────────────────────────────
 async function carregarProdutos() {
   let todos = [], pag = 0;
   while (true) {
-    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp,tipo')
+    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp,tipo,fator_conversao')
       .eq('ativo', true).range(pag * 1000, pag * 1000 + 999);
     if (!data?.length) break;
     todos = todos.concat(data);
@@ -1218,7 +1240,7 @@ async function salvarSaldoContagem() {
 
   // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
@@ -1374,7 +1396,7 @@ async function salvarSaldoInicialSetorMob() {
   );
 
   const saldoRows = itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_setor}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
@@ -1480,7 +1502,7 @@ async function _enviarPedido() {
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_setor}/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
