@@ -33,6 +33,8 @@ INICIO = os.environ.get('SIM_INICIO', '2026-08-07')
 NDIAS  = int(os.environ.get('SIM_DIAS', '21'))
 UNIDADE = os.environ.get('SIM_UNIDADE', 'Centro')   # est_inventarios.local
 SETORES_IGNORAR = {'ESTOQUE_LOJA', 'ESTOQUE DA LOJA'}
+# a partir deste dia o app grava a entrada ja em unidade de uso (commit 6084219)
+CORTE_UNIDADE = os.environ.get('SIM_CORTE_UNIDADE', '2026-08-28')
 
 spec = importlib.util.spec_from_file_location('bx', os.path.join(AQUI, 'baixa_estoque_pdv.py'))
 bx = importlib.util.module_from_spec(spec)
@@ -55,8 +57,24 @@ def em_lotes(ids, n=60):
         yield urllib.parse.quote('(' + ','.join('"%s"' % x for x in ids[i:i + n]) + ')')
 
 
-def contagens(desde):
-    """{(setor, produto, dia): quantidade contada} - a ultima contagem do dia vence.
+def fatores():
+    """{produto_id: fator_conversao} - quantas unidades de USO cabem em 1 de COMPRA."""
+    return {p['id']: float(p.get('fator_conversao') or 1) or 1
+            for p in G('est_produtos?select=id,fator_conversao')}
+
+
+def contagens(desde, fator):
+    """{(setor, produto, dia): quantidade contada, EM UNIDADE DE USO} - ultima do dia vence.
+
+    CONVERTE PARA UNIDADE DE USO. `est_inventario_itens.total` guarda o numero cru
+    que a pessoa digitou, e a tela de contagem mostra a unidade de COMPRA de
+    proposito (garrafa e contavel, mililitro nao). Ja as entradas do razao e o
+    consumo da ficha estao em unidade de USO. Sem converter, os dois lados da conta
+    ficam em unidades diferentes: a laranja e contada em pacote (1 PC = 100 UN) e
+    comparada com laranja consumida em unidade - 100x de diferenca inventada.
+    Sao 85 produtos ativos com fator != 1, e eles respondiam por R$ 17 mil do erro
+    bruto medido na primeira rodada. Esse pedaco do erro era do instrumento, nao
+    do estoque.
 
     FILTRA POR UNIDADE. `est_inventarios.local` guarda a unidade (Centro, Estoque
     Central, Producao, Delivery P10) e `setor` guarda o setor (BAR, COZINHA...).
@@ -79,16 +97,30 @@ def contagens(desde):
         k = (h['setor'], x['produto_id'], h['data'])
         if k not in quando or h['criado_em'] > quando[k]:
             quando[k] = h['criado_em']
-            out[k] = x['total'] or 0
+            out[k] = (x['total'] or 0) * fator.get(x['produto_id'], 1)
     return out
 
 
-def entradas():
-    """{(setor, produto, dia): quantidade que ENTROU} - so movimento oficial."""
+def entradas(fator):
+    """{(setor, produto, dia): quantidade que ENTROU, EM UNIDADE DE USO}.
+
+    Duas eras, e a conta muda entre elas. Ate 27/08/2026 o app gravava a entrada
+    do pedido interno com o numero cru da tela, que esta em unidade de COMPRA
+    (a laranja entra como '1' pacote, a bandeja como '20' pacotes). O commit
+    6084219, de 27/08, passou a converter na gravacao. Entao movimento anterior
+    ao corte precisa do fator; movimento posterior ja vem em unidade de uso.
+
+    Sem esta divisao a conta fica pior do que sem correcao nenhuma: converter so
+    a contagem e deixar a entrada crua desalinha os dois lados da subtracao.
+    """
     out = collections.defaultdict(float)
     for m in G('est_movimentacoes?select=produto_id,local,data,tipo,quantidade'):
-        if m['tipo'] in ('pedido_interno_entrada', 'recebimento', 'devolucao'):
-            out[(m['local'], m['produto_id'], m['data'])] += m['quantidade'] or 0
+        if m['tipo'] not in ('pedido_interno_entrada', 'recebimento', 'devolucao'):
+            continue
+        q = m['quantidade'] or 0
+        if (m['data'] or '') < CORTE_UNIDADE:
+            q *= fator.get(m['produto_id'], 1)
+        out[(m['local'], m['produto_id'], m['data'])] += q
     return out
 
 
@@ -98,8 +130,9 @@ def main():
     print(f'Mundo paralelo: {UNIDADE}, {dias[0]} a {dias[-1]} ({NDIAS} dias). Leitura pura.\n', flush=True)
 
     mapa, ficha, ings, prod, contado, setor_de, ambiguos, sem_setor = bx.carregar()
-    cont = contagens(dias[0])
-    ent  = entradas()
+    fator = fatores()
+    cont = contagens(dias[0], fator)
+    ent  = entradas(fator)
 
     consumo, memo = collections.defaultdict(float), {}
     for d in dias:

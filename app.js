@@ -3813,25 +3813,37 @@ async function enviarPedidoInterno() {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A CONTAGEM E EM UNIDADE CONTAVEL, O SALDO E EM UNIDADE DE USO
+// CONVERSAO DESLIGADA EM 28/08/2026 — LEIA ANTES DE RELIGAR
 //
-// Quem conta olha o que da para contar: garrafa, saco, caixa. Ninguem consegue
-// dizer "0,375 litro" olhando um Aperol pela metade. Mas a ficha tecnica e a
-// baixa trabalham na unidade de USO, e o saldo tem que estar nela.
+// Esta funcao convertia o numero da contagem em unidade de uso na hora de
+// gravar o saldo. A premissa era: a tela mostra unidade_comp, logo o time
+// digita em unidade_comp. O DADO DIZ QUE NAO.
 //
-// Entao a tela continua na unidade contavel (unidade_comp) e a conversao mora
-// aqui, na fronteira com o saldo: multiplica pelo fator_conversao na hora de
-// gravar. Laranja: conta 0,5 saco -> grava 50 UN (fator 100). Azeite: conta
-// 3 garrafas -> grava 1,5 LT (fator 0,5). Onde compra e uso sao iguais o fator
-// e 1 e nada muda.
+// Conferencia de 28/08 nos 85 produtos ativos com fator != 1, cruzando a ultima
+// contagem de cada um com o saldo e com a escala do recebimento:
+//   MP FARINHA BRANCA (FD->KG, x25)   digitaram 7   -> converter daria 175 kg
+//   MP SAL SACHE      (UN->UN, x1000) digitaram 160 -> daria 160.000 saches
+//   MP POLPA CUPUACU  (PC->UN, x8)    digitaram 104 -> daria 832 polpas
+//   MP MASSA DE PURE  (CX->KG, x6)    digitaram 400 -> daria 2.400 kg
+// Nesses o time JA CONTA na unidade de uso: o rotulo da tela diz outra coisa e
+// eles ignoram o rotulo. Converter estragaria o saldo desses produtos.
 //
-// Sao 39 produtos ativos com fator != 1 sendo contados (28/08/2026). O mesmo
-// conserto ja foi feito no recebimento de compra em 22/08 (_emUnidadeDeUso).
-// A tela mostra a unidade de compra desde 22/06 (commit d42b291), e esta certo:
-// o que faltava era converter na gravacao, nao trocar o que a tela mostra.
+// Em outros a conversao esta certa: garrafa (fator < 1) e contada em garrafa
+// mesmo — MP SAGATIBA 0,10 garrafa -> 0,07 LT, MP CORANTE AZUL 4 vidros ->
+// 0,04 KG. Nao da para decidir isso no codigo: depende de como cada item e
+// contado na pratica, um a um.
+//
+// Nada disso mexe no d42b291 (22/06), que fez a tela mostrar a unidade de
+// compra por causa das garrafas. A tela continua como esta; o que caiu foi a
+// multiplicacao na gravacao.
+//
+// Para religar: curar os 85 produtos (marcar em qual unidade cada um e contado
+// de verdade), guardar a decisao no cadastro e converter SO os marcados.
+// Ate la o saldo grava o numero cru — o comportamento que ja estava no ar e
+// que o time conhece.
 // ─────────────────────────────────────────────────────────────────────────────
 function _fatorDe(produto_id) {
-  return Number(prodFT(produto_id)?.fator_conversao) || 1;
+  return 1;   // desligado: ler o bloco acima antes de mexer
 }
 
 async function _enviarPedidoInterno() {
