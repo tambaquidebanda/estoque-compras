@@ -40,5 +40,6 @@ jobs:
           BAIXA_MODE: ${{ github.event.inputs.modo || 'dry' }}
           BAIXA_DAYS_BACK: ${{ github.event.inputs.days_back || '1' }}
           BAIXA_LOCAL: ${{ secrets.BAIXA_LOCAL }}
+          BAIXA_UNIDADE_PDV: ${{ secrets.BAIXA_UNIDADE_PDV }}
           BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE }}
         run: python scripts/baixa_estoque_pdv.py

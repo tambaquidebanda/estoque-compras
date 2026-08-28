@@ -24,6 +24,10 @@ Variáveis de ambiente (secrets do GitHub Actions):
   SUPABASE_URL, SUPABASE_SERVICE_KEY   (obrigatórios; nunca colocar a key no arquivo)
   BAIXA_MODE          dry | apply       (default dry)
   BAIXA_LOCAL         local do estoque de onde sai o insumo (default COZINHA)
+  BAIXA_UNIDADE_PDV   de qual loja contar a venda (default "Tambaqui de Banda Loja Centro").
+                      A API do iComanda devolve as DUAS lojas juntas e não diz qual é qual;
+                      quem separa é pdv_vendas.caixa_ext -> unidade_nome. Sem esse filtro a
+                      baixa desconta venda do Parque 10 do estoque do Centro (15,5% a mais).
   BAIXA_START_DATE    não processa antes disso (default 2026-08-15)
   BAIXA_DAYS_BACK     quantos dias retroativos revisitar (default 1 = ontem)
   ICOMANDA_API_URL, ICOMANDA_API_KEY   (opcionais; default abaixo, chave read-only pública)
@@ -47,6 +51,7 @@ SB_URL     = env('SUPABASE_URL', obrigatorio=True).rstrip('/')
 SB_KEY     = env('SUPABASE_SERVICE_KEY', obrigatorio=True)
 MODE       = env('BAIXA_MODE', 'dry').lower()
 LOCAL      = env('BAIXA_LOCAL', 'COZINHA')
+UNIDADE_PDV= env('BAIXA_UNIDADE_PDV', 'Tambaqui de Banda Loja Centro')
 START_DATE = env('BAIXA_START_DATE', '2026-08-15')
 DAYS_BACK  = int(env('BAIXA_DAYS_BACK', '1'))
 BASE       = f'{SB_URL}/rest/v1'
@@ -104,11 +109,57 @@ def buscar_dia(data):
         return json.load(r)
 
 
+_CAIXAS_UNIDADE = None
+
+def caixas_por_unidade():
+    """{ caixa_id(int) -> nome da unidade } — de qual loja é cada caixa do iComanda.
+
+    A API do iComanda NÃO diz a loja: ela devolve as duas juntas (o mesmo vkt_id
+    para tudo), sem nenhum campo de unidade no topo, no caixa, na comanda ou no
+    item. Quem sabe é o nosso próprio banco: `pdv_vendas.caixa_ext` guarda o
+    caixa_id do iComanda e a mesma linha traz `unidade_nome`. Conferido em
+    28/08/2026: 72 caixas mapeados, nenhum ambíguo, e o faturado de cada caixa
+    bate ao centavo com o que o financeiro registra por unidade.
+
+    Sem isso a baixa descontava venda do Parque 10 do estoque do Centro —
+    15,5% a mais em 8 dias medidos, sendo R$ 7,2 mil só de banda de tambaqui.
+    """
+    global _CAIXAS_UNIDADE
+    if _CAIXAS_UNIDADE is None:
+        votos = {}
+        for r in sb_get_all('pdv_vendas?select=caixa_ext,unidade_nome&caixa_ext=not.is.null'):
+            cx, un = r.get('caixa_ext'), r.get('unidade_nome')
+            if cx is None or not un:
+                continue
+            votos.setdefault(cx, {})
+            votos[cx][un] = votos[cx].get(un, 0) + 1
+        _CAIXAS_UNIDADE = {cx: max(u, key=u.get) for cx, u in votos.items()}
+    return _CAIXAS_UNIDADE
+
+
 def vendas_do_dia(data):
-    """{ icomanda_produto_id(int) -> qtd } dos itens ativos de comandas não canceladas."""
+    """{ icomanda_produto_id(int) -> qtd } dos itens ativos de comandas não canceladas,
+    SÓ da unidade em UNIDADE_PDV.
+
+    Caixa de outra loja é pulado. Caixa desconhecido COM venda derruba o dia de
+    propósito: incluir seria descontar venda de outra loja do nosso estoque, e
+    pular seria perder venda nossa sem avisar. O conserto é importar o relatório
+    do PDV daquele dia (é ele que preenche pdv_vendas.caixa_ext) e rodar de novo.
+    """
     j = buscar_dia(data)
-    vendas = {}
+    dono = caixas_por_unidade()
+    vendas, desconhecidos, pulados = {}, [], 0
     for cx in (j.get('caixas') or []):
+        cid = cx.get('caixa_id')
+        un  = dono.get(cid)
+        fat = (cx.get('totais') or {}).get('faturado') or 0
+        if un is None:
+            if fat > 0:
+                desconhecidos.append((cid, fat))
+            continue
+        if un != UNIDADE_PDV:
+            pulados += 1
+            continue
         for cm in (cx.get('comandas') or []):
             if cm.get('cancelada'):
                 continue
@@ -117,6 +168,13 @@ def vendas_do_dia(data):
                     continue
                 pid = it.get('produto_id')
                 vendas[pid] = vendas.get(pid, 0) + (it.get('quantidade') or 0)
+    if desconhecidos:
+        lista = ', '.join(f'caixa {c} (R$ {v:,.2f})' for c, v in desconhecidos)
+        raise RuntimeError(
+            f'{data}: nao sei de que loja sao estes caixas: {lista}. '
+            f'Importe o relatorio do PDV desse dia (preenche pdv_vendas.caixa_ext) e rode de novo.')
+    if pulados:
+        print(f'  {data}: {pulados} caixa(s) de outra unidade ignorado(s)')
     return vendas
 
 
