@@ -7,9 +7,17 @@ calcula o consumo de insumos. Dois modos:
 
   BAIXA_MODE=dry   (PADRÃO) → só CALCULA e grava em `pdv_baixa_preview`.
                               NÃO toca est_saldo_local nem est_movimentacoes.
-  BAIXA_MODE=apply           → baixa de verdade: grava no razão
-                              (est_movimentacoes, tipo 'venda_pensera',
-                              origem 'pdv_icomanda') e desconta est_saldo_local.
+  BAIXA_MODE=razao           → grava o consumo no razão (est_movimentacoes, tipo
+                              'venda_pensera', origem 'pdv_icomanda') e NÃO mexe
+                              no saldo. É o modo do PARALELO: o time conta à noite,
+                              depois do serviço, então o saldo já vem descontado do
+                              consumo do dia; se o robô descontasse de novo pela
+                              manhã, metade dos itens ficaria negativa todo dia. No
+                              paralelo a contagem continua sendo a verdade do saldo
+                              e o robô só registra o que a venda consumiu — que é o
+                              número que a gente quer comparar.
+  BAIXA_MODE=apply           → baixa de verdade: razão + desconta est_saldo_local.
+                              Só depois que a medição do paralelo autorizar.
 
 Regra de segurança: só baixa produto que esteja MAPEADO na `pdv_map`
 (status='mapeado') E cujo produto tenha ficha ativa. Pendente/ignorar não baixam.
@@ -50,6 +58,9 @@ API_KEY    = env('ICOMANDA_API_KEY', 'apidash_249_aB3xY7zQ9Wm2KpV5')
 SB_URL     = env('SUPABASE_URL', obrigatorio=True).rstrip('/')
 SB_KEY     = env('SUPABASE_SERVICE_KEY', obrigatorio=True)
 MODE       = env('BAIXA_MODE', 'dry').lower()
+if MODE not in ('dry', 'razao', 'apply'):
+    # sem isso, um modo escrito errado caia no 'else' do main e lancava no razao.
+    sys.exit(f"ERRO: BAIXA_MODE='{MODE}' invalido. Use dry, razao ou apply.")
 LOCAL      = env('BAIXA_LOCAL', 'COZINHA')
 UNIDADE_PDV= env('BAIXA_UNIDADE_PDV', 'Tambaqui de Banda Loja Centro')
 START_DATE = env('BAIXA_START_DATE', '2026-08-15')
@@ -57,6 +68,8 @@ DAYS_BACK  = int(env('BAIXA_DAYS_BACK', '1'))
 BASE       = f'{SB_URL}/rest/v1'
 HDR        = {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
 MANAUS     = timezone(timedelta(hours=-4))
+# modos que gravam no livro-razao. So o 'apply' encosta no saldo.
+ESCREVE    = ('apply', 'razao')
 
 
 # ───────────────────────── Supabase REST ─────────────────────────
@@ -359,15 +372,24 @@ def dias_alvo():
     return sorted(out)
 
 
-def ctrl_dias_ok():
-    """Dias que o APPLY ja processou. Filtrar por modo='apply' e essencial: o dry-run
+def ctrl_dias_ok(modo):
+    """Dias que ESTE modo ja processou. Filtrar por modo e essencial: o dry-run
     tambem grava status='ok', e sem esse filtro o apply pulava calado todo dia que ja
     tinha preview — terminava verde, com total R$ 0,00, sem baixar nada."""
     try:
         return {r['data'] for r in
-                sb_get_all('pdv_baixa_ctrl?select=data,status,modo&status=eq.ok&modo=eq.apply')}
+                sb_get_all(f'pdv_baixa_ctrl?select=data,status,modo&status=eq.ok&modo=eq.{modo}')}
     except Exception:
         return set()
+
+
+def ctrl_modo_do_dia(data):
+    """Em que modo o dia foi processado da ultima vez (ou None)."""
+    try:
+        r = sb_get_all(f'pdv_baixa_ctrl?select=modo,status&data=eq.{data}&limit=1')
+        return r[0].get('modo') if r else None
+    except Exception:
+        return None
 
 
 def ja_tem_movimento(data):
@@ -391,18 +413,24 @@ def main():
     print(f'   setor do insumo pela contagem ({UNIDADE_CONTAGEM}): {len(setor_de)} resolvidos, '
           f'{len(ambiguos)} em mais de um setor sem desempate')
 
-    ja_ok = ctrl_dias_ok() if MODE == 'apply' else set()
+    ja_ok = ctrl_dias_ok(MODE) if MODE in ESCREVE else set()
     memo = {}
     total_valor = 0.0
 
     for data in dias_alvo():
-        if MODE == 'apply' and data in ja_ok:
-            print(f'   {data}: já baixado (apply ok) — pulando.')
+        if MODE in ESCREVE and data in ja_ok:
+            print(f'   {data}: já lançado ({MODE} ok) — pulando.')
             continue
-        if MODE == 'apply' and ja_tem_movimento(data):
-            print(f'   {data}: ⛔ JÁ EXISTE lançamento venda_pensera no razão, mas sem registro '
-                  f'de apply concluído. Rodada anterior provavelmente caiu no meio. NÃO vou '
-                  f'baixar de novo — confira e, se preciso, rode o SQL_ROLLBACK_BAIXA_PDV.sql.')
+        if MODE in ESCREVE and ja_tem_movimento(data):
+            antes = ctrl_modo_do_dia(data)
+            if MODE == 'apply' and antes == 'razao':
+                print(f'   {data}: já foi lançado no razão pelo modo paralelo. O saldo deste dia '
+                      f'NÃO será descontado (o razão já existe e descontar agora contaria duas '
+                      f'vezes). A partir do próximo dia o apply assume normalmente.')
+            else:
+                print(f'   {data}: ⛔ JÁ EXISTE lançamento venda_pensera no razão, mas sem registro '
+                      f'de rodada concluída. A anterior provavelmente caiu no meio. NÃO vou '
+                      f'lançar de novo — confira e, se preciso, rode o SQL_ROLLBACK_BAIXA_PDV.sql.')
             continue
 
         # consumo: {(insumo_id, setor) -> qtd}
@@ -447,7 +475,7 @@ def main():
                 'detalhe': 'dry-run: nada baixado', 'processado_em': datetime.now(timezone.utc).isoformat(),
             }], 'data')
 
-        else:  # apply — baixa por (insumo, setor). Venda SEM setor NÃO baixa (trava de segurança).
+        else:  # razao / apply — por (insumo, setor). Venda SEM setor NÃO lança (trava de segurança).
             movs, alvos = [], []   # alvos = [(ing_id, setor, qtd)]
             for (ing_id, setor), qtd in consumo.items():
                 if not setor:
@@ -456,7 +484,9 @@ def main():
                 movs.append({
                     'produto_id': ing_id, 'local': setor, 'tipo': 'venda_pensera',
                     'quantidade': -round(qtd, 4), 'custo_unit': round(cu, 4),
-                    'origem': 'pdv_icomanda', 'motivo': f'Baixa venda PDV {data}',
+                    'origem': 'pdv_icomanda',
+                    'motivo': (f'Consumo da venda {data} (paralelo, nao mexe no saldo)'
+                               if MODE == 'razao' else f'Baixa venda PDV {data}'),
                     # ref_id NAO recebe a data: a coluna e uuid e o insert quebrava com
                     # 22P02 invalid input syntax for type uuid. O dia ja esta em `data`,
                     # que e o campo por onde a conferencia e o rollback casam a rodada.
@@ -466,31 +496,38 @@ def main():
             if movs:
                 for i in range(0, len(movs), 500):
                     sb_insert('est_movimentacoes', movs[i:i + 500])
-            # saldo: lê atual de cada (produto,setor) e desconta
-            por_setor = {}
-            for ing_id, setor, qtd in alvos:
-                por_setor.setdefault(setor, {})[ing_id] = por_setor.setdefault(setor, {}).get(ing_id, 0) + qtd
-            saldo_rows = []
-            for setor, mapa_ing in por_setor.items():
-                ids = list(mapa_ing.keys())
-                atual = {}
-                for i in range(0, len(ids), 150):
-                    inlist = ','.join(ids[i:i + 150])
-                    for s in sb_get_all(f'est_saldo_local?select=produto_id,saldo&local=eq.{urllib.parse.quote(setor)}&produto_id=in.({inlist})'):
-                        atual[s['produto_id']] = float(s.get('saldo') or 0)
-                for ing_id, qtd in mapa_ing.items():
-                    saldo_rows.append({
-                        'produto_id': ing_id, 'local': setor,
-                        'saldo': round(atual.get(ing_id, 0) - qtd, 4),
-                        'updated_at': datetime.now(timezone.utc).isoformat(),
-                    })
-            if saldo_rows:
-                for i in range(0, len(saldo_rows), 500):
-                    sb_upsert('est_saldo_local', saldo_rows[i:i + 500], 'produto_id,local')
+            # saldo: SO no apply. No modo razao a contagem continua mandando no saldo.
+            # (Escrever em est_movimentacoes nao mexe no saldo sozinho: nao ha trigger —
+            #  foi exatamente por isso que o recebimento nao chegava no saldo antes do
+            #  fix do onConflict. Quem desconta e o upsert abaixo, e mais ninguem.)
+            if MODE == 'apply':
+                por_setor = {}
+                for ing_id, setor, qtd in alvos:
+                    por_setor.setdefault(setor, {})[ing_id] = por_setor.setdefault(setor, {}).get(ing_id, 0) + qtd
+                saldo_rows = []
+                for setor, mapa_ing in por_setor.items():
+                    ids = list(mapa_ing.keys())
+                    atual = {}
+                    for i in range(0, len(ids), 150):
+                        inlist = ','.join(ids[i:i + 150])
+                        for s in sb_get_all(f'est_saldo_local?select=produto_id,saldo&local=eq.{urllib.parse.quote(setor)}&produto_id=in.({inlist})'):
+                            atual[s['produto_id']] = float(s.get('saldo') or 0)
+                    for ing_id, qtd in mapa_ing.items():
+                        saldo_rows.append({
+                            'produto_id': ing_id, 'local': setor,
+                            'saldo': round(atual.get(ing_id, 0) - qtd, 4),
+                            'updated_at': datetime.now(timezone.utc).isoformat(),
+                        })
+                if saldo_rows:
+                    for i in range(0, len(saldo_rows), 500):
+                        sb_upsert('est_saldo_local', saldo_rows[i:i + 500], 'produto_id,local')
+                detalhe = f'baixado por setor; sem-setor R$ {sem_setor_val:,.2f}'
+            else:
+                detalhe = f'razao (paralelo): saldo intocado; sem-setor R$ {sem_setor_val:,.2f}'
             sb_upsert('pdv_baixa_ctrl', [{
-                'data': data, 'modo': 'apply', 'status': 'ok',
+                'data': data, 'modo': MODE, 'status': 'ok',
                 'itens_venda': itens_venda, 'insumos': len(por_insumo), 'valor': round(valor_dia, 2),
-                'detalhe': f'baixado por setor; sem-setor R$ {sem_setor_val:,.2f}',
+                'detalhe': detalhe,
                 'processado_em': datetime.now(timezone.utc).isoformat(),
             }], 'data')
 
