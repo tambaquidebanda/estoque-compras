@@ -154,7 +154,8 @@ def main():
 
     consumo, memo = collections.defaultdict(float), {}
     for d in dias:
-        c, _, n = bx.consumo_do_dia(d, mapa, ficha, ings, contado, setor_de, memo)
+        # o 4o item e o preparo do dia (detector de ficha errada); aqui nao e usado
+        c, _, n, _prep = bx.consumo_do_dia(d, mapa, ficha, ings, contado, setor_de, memo)
         for (folha, setor), q in c.items():
             if setor and setor not in SETORES_IGNORAR:
                 consumo[(setor, folha, d)] += q

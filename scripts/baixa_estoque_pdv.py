@@ -284,7 +284,7 @@ def carregar():
 
     # info dos produtos (custo + nome)
     prod_info = {}
-    for p in sb_get_all('est_produtos?select=id,nome,custo_comp,custo_uso,fator_conversao,perda'):
+    for p in sb_get_all('est_produtos?select=id,nome,custo_comp,custo_uso,fator_conversao,perda,unidade_uso'):
         prod_info[p['id']] = p
 
     # CONTADOS = produtos que têm saldo cadastrado (inventário controla). A recursão para neles.
@@ -299,37 +299,54 @@ def carregar():
 
 
 def _bom(pid, ficha_por_prod, ings_por_ficha, contado, memo, stack):
-    """BOM achatado: quanto de cada item FOLHA (contado ou matéria-prima crua) resulta
-    de 1 unidade de `pid`. Regra híbrida: para em item CONTADO (tem saldo) ou sem ficha;
-    o que NÃO é contado é explodido pela própria ficha. Guarda contra ciclos."""
+    """(folhas, preparos) por 1 unidade de `pid`.
+
+    folhas  = quanto de cada item FOLHA (contado ou matéria-prima crua) resulta.
+              Regra híbrida: para em item CONTADO (tem saldo) ou sem ficha; o que
+              NÃO é contado é explodido pela própria ficha. Guarda contra ciclos.
+
+    preparos = quanto de cada item INTERMEDIÁRIO foi atravessado no caminho — o
+              caldinho, a farofa, o xarope. A baixa não precisa deles (o saldo
+              mora nas folhas), mas eles são o melhor detector de ficha errada
+              que temos: perguntar "a cozinha produz 60 litros de caldinho por
+              dia?" qualquer pessoa responde em dois segundos, e não depende de
+              contagem nem de saldo. Antes disso o preparo só existia dentro
+              desta recursão e sumia sem deixar rastro."""
     if pid in memo:
         return memo[pid]
     # folha: é contado (baixa ele mesmo) OU não tem ficha (matéria-prima crua)
     if pid in contado or pid not in ficha_por_prod or pid in stack:
-        memo[pid] = {pid: 1.0}
+        memo[pid] = ({pid: 1.0}, {})
         return memo[pid]
     f = ficha_por_prod[pid]
     rend = f['rendimento'] or 1
     stack.add(pid)
-    out = {}
+    folhas, preparos = {}, {}
     for ing_id, quant in ings_por_ficha.get(f['ficha_id'], []):
         if not ing_id:
             continue
         fator = (quant or 0) / rend
         if fator <= 0:
             continue
-        for folha, fq in _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, stack).items():
-            out[folha] = out.get(folha, 0) + fq * fator
+        # é preparo quando tem ficha e NÃO é contado: é o que a recursão abre.
+        # Mesmo teste que o topo da função faz, para os dois não discordarem.
+        if ing_id in ficha_por_prod and ing_id not in contado:
+            preparos[ing_id] = preparos.get(ing_id, 0) + fator
+        sub_folhas, sub_preparos = _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, stack)
+        for folha, fq in sub_folhas.items():
+            folhas[folha] = folhas.get(folha, 0) + fq * fator
+        for prep, pq in sub_preparos.items():        # preparo dentro de preparo
+            preparos[prep] = preparos.get(prep, 0) + pq * fator
     stack.discard(pid)
-    memo[pid] = out
-    return out
+    memo[pid] = (folhas, preparos)
+    return memo[pid]
 
 
 def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo=None):
     if memo is None:
         memo = {}
     vendas = vendas_do_dia(data)
-    consumo, fontes = {}, {}
+    consumo, fontes, preparos = {}, {}, {}
     itens_venda = 0
     for pid, qtd in vendas.items():
         m = mapa.get(pid)
@@ -347,7 +364,14 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de
             base = (quant or 0) * base_mult
             if base <= 0:
                 continue
-            for folha, fq in _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, set()).items():
+            sub_folhas, sub_preparos = _bom(ing_id, ficha_por_prod, ings_por_ficha, contado, memo, set())
+            # o próprio ingrediente do prato pode ser um preparo (o caso mais comum:
+            # o caldinho entra direto no prato). Os de dentro vêm em sub_preparos.
+            if ing_id in ficha_por_prod and ing_id not in contado:
+                preparos[ing_id] = preparos.get(ing_id, 0) + base
+            for prep, pq in sub_preparos.items():
+                preparos[prep] = preparos.get(prep, 0) + base * pq
+            for folha, fq in sub_folhas.items():
                 c = base * fq
                 if c <= 0:
                     continue
@@ -357,7 +381,7 @@ def consumo_do_dia(data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de
                 consumo[chave] = consumo.get(chave, 0) + c
                 fontes.setdefault(chave, set()).add(pid)
         itens_venda += qtd
-    return consumo, fontes, itens_venda
+    return consumo, fontes, itens_venda, preparos
 
 
 # ───────────────────────── dias a processar ─────────────────────────
@@ -433,8 +457,8 @@ def main():
                       f'lançar de novo — confira e, se preciso, rode o SQL_ROLLBACK_BAIXA_PDV.sql.')
             continue
 
-        # consumo: {(insumo_id, setor) -> qtd}
-        consumo, fontes, itens_venda = consumo_do_dia(
+        # consumo: {(insumo_id, setor) -> qtd};  preparos: {preparo_id -> qtd}
+        consumo, fontes, itens_venda, preparos = consumo_do_dia(
             data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo)
 
         # agrega por INSUMO (para a preview / total) e guarda o detalhe por (insumo,setor) p/ apply
@@ -458,6 +482,37 @@ def main():
         if amb_val > 0.005:
             aviso += f' — dos quais R$ {amb_val:,.2f} são de insumo contado em mais de um setor'
         print(f'   {data}: {itens_venda} itens → {len(por_insumo)} insumos, R$ {valor_dia:,.2f}{aviso}')
+
+        # PREPARO DO DIA — quanto o modelo diz que a cozinha produziu.
+        # Não é baixa: nenhuma linha daqui mexe em saldo nem no razão. É o detector
+        # de ficha errada, e o melhor que temos, porque a pergunta que ele levanta
+        # ("a cozinha faz 60 litros de caldinho por dia?") qualquer pessoa responde
+        # em dois segundos e NÃO depende de contagem — justamente onde temos menos
+        # confiança. Foi assim que caiu o CALDINHO DE TAMBAQUI em 28/08/2026: a
+        # cortesia consumia 1,0 de um preparo medido em LITRO; o certo era 0,1.
+        # Grava nos três modos, dry inclusive: medir não espera autorização.
+        try:
+            sb_delete(f'pdv_preparo_dia?data=eq.{data}')   # rodar de novo não duplica
+            linhas_prep = []
+            for prep_id, q in preparos.items():
+                if q <= 0.00005:
+                    continue
+                p = prod_info.get(prep_id, {})
+                rendi = float((ficha_por_prod.get(prep_id) or {}).get('rendimento') or 1) or 1
+                linhas_prep.append({
+                    'data': data, 'produto_id': prep_id, 'nome': p.get('nome'),
+                    'quantidade': round(q, 4), 'unidade': p.get('unidade_uso'),
+                    'rendimento': round(rendi, 4), 'lotes': round(q / rendi, 4),
+                    'modo': MODE,
+                })
+            for i in range(0, len(linhas_prep), 500):
+                sb_insert('pdv_preparo_dia', linhas_prep[i:i + 500])
+            if linhas_prep:
+                print(f'      {len(linhas_prep)} preparos registrados')
+        except Exception as e:
+            # a tabela pode ainda não existir (SQL_PREPARO_DIA.sql). Medição é
+            # acessória: nunca pode derrubar a baixa.
+            print(f'      preparos não gravados ({type(e).__name__}: {e}) — segue.')
 
         if MODE == 'dry':
             sb_delete(f'pdv_baixa_preview?data=eq.{data}')
