@@ -863,8 +863,17 @@ async function _conferirContagemFora(itens, setor, local) {
 
 async function registrarContagem(rows, opts) {
   const o = opts || {};
+  // Mesmo produto duas vezes na mesma contagem: somar, nunca deixar o último
+  // vencer. Ver o comentário longo em app.js (registrarContagem) — o campo
+  // vazio da linha repetida estava apagando o saldo recém-contado.
   const dedup = {};
-  (rows || []).forEach(r => { if (r.produto_id && r.local) dedup[r.produto_id + '||' + r.local] = r; });
+  (rows || []).forEach(r => {
+    if (!r.produto_id || !r.local) return;
+    const k = r.produto_id + '||' + r.local;
+    dedup[k] = dedup[k]
+      ? { ...r, saldo: (Number(dedup[k].saldo) || 0) + (Number(r.saldo) || 0) }
+      : r;
+  });
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
 

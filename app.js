@@ -4429,8 +4429,22 @@ async function _conferirContagemFora(itens, setor, local) {
 }
 
 async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null, data = null } = {}) {
+  // O MESMO PRODUTO PODE APARECER DUAS VEZES NA MESMA CONTAGEM
+  // A estrutura do setor lista dois nomes que apontam para o mesmo cadastro —
+  // "MP POLPA GRAVIOLA" e "MP POLPA GRAVIOLA 1 KG", "MP AZEITE" e "MP OLEO
+  // COMPOSTO", e mais seis pares. Viram dois campos na tela e o time preenche
+  // um só. Até 31/08/2026 o último vencia, então o campo vazio APAGAVA o que
+  // tinha acabado de ser contado: a graviola foi contada 61 e o saldo virou 0.
+  // Somar é o certo — o saldo do setor é o total daquele produto no setor,
+  // digitado numa linha ou repartido em duas.
   const dedup = {};
-  (rows || []).forEach(r => { if (r.produto_id && r.local) dedup[r.produto_id + '||' + r.local] = r; });
+  (rows || []).forEach(r => {
+    if (!r.produto_id || !r.local) return;
+    const k = r.produto_id + '||' + r.local;
+    dedup[k] = dedup[k]
+      ? { ...r, saldo: (Number(dedup[k].saldo) || 0) + (Number(r.saldo) || 0) }
+      : r;
+  });
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
 
