@@ -10368,9 +10368,37 @@ async function _carregarPreparos(dIni, dia) {
       a.rendimento = Number(r.rendimento) || a.rendimento;
     }
   });
+  // Quantos ingredientes tem a ficha de cada um. Não é reexplodir a ficha — é
+  // contar linhas — então continua havendo UMA implementação da explosão.
+  // Serve para separar as duas listas: ficha com 1 ingrediente (ou nenhum) não é
+  // preparo que a cozinha produz, é revenda ou ficha 1:1 (água com gás,
+  // refrigerante, suco). Perguntar "você produz 15 molhos tártaro por dia?" para
+  // um item desses é ruído, e ruído tira a força da pergunta que importa.
+  const ids = Object.keys(agg);
+  const nIngs = {};
+  if (ids.length) {
+    try {
+      const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id',
+        q => q.in('produto_id', ids).eq('ativo', true));
+      const porFicha = Object.fromEntries(fichas.map(f => [f.id, f.produto_id]));
+      fichas.forEach(f => { nIngs[f.produto_id] = 0; });
+      const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id',
+        q => q.in('ficha_id', Object.keys(porFicha)));
+      ings.forEach(i => {
+        const pid = porFicha[i.ficha_id];
+        if (pid) nIngs[pid] = (nIngs[pid] || 0) + 1;
+      });
+    } catch (e) { console.error('ingredientes do preparo:', e); }
+  }
+
   _parPreparos = Object.values(agg).map(a => {
     const media = a.dias ? a.soma / a.dias : 0;
-    return { ...a, media, lotesDia: a.rendimento ? media / a.rendimento : 0 };
+    return {
+      ...a, media,
+      lotesDia: a.rendimento ? media / a.rendimento : 0,
+      // null = não achei ficha ativa; fica na lista principal para não sumir
+      ings: a.produto_id in nIngs ? nIngs[a.produto_id] : null,
+    };
   }).sort((x, y) => y.lotesDia - x.lotesDia);
 }
 
@@ -10555,35 +10583,57 @@ function _parNum(v) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(v || 0);
 }
 
-function _pintarPreparos() {
-  const tb = document.getElementById('lst-prep');
-  if (!tb) return;
-  const busca = norm(document.getElementById('par-busca')?.value || '');
-  const lista = _parPreparos.filter(p => !busca || norm(p.nome || '').includes(busca));
-
-  const cont = document.getElementById('prep-contador');
-  if (cont) cont.textContent = _parPreparos.length
-    ? `${_parPreparos.length} preparo(s) nos últimos 14 dias` : '';
-
-  if (!lista.length) {
-    tb.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">${
-      _parPreparos.length
-        ? 'Nenhum preparo com esse nome.'
-        : 'Sem preparo registrado no período.<br><span class="small">O robô só começou a gravar isso em 31/08/2026 — dias anteriores não têm.</span>'
-    }</td></tr>`;
-    return;
-  }
-
-  tb.innerHTML = lista.map(p => `<tr>
+function _prepLinha(p) {
+  const vazia = p.ings === 0
+    ? ' <span class="badge bg-danger-subtle text-danger-emphasis" title="Ficha ativa sem nenhum ingrediente: não consome nada e não vira nada. Provavelmente ficou pela metade.">ficha vazia</span>'
+    : '';
+  return `<tr>
     <td><strong>${esc(p.nome || '(sem nome)')}</strong>${
-      p.unidade ? ` <span class="text-muted small">${esc(p.unidade)}</span>` : ''}</td>
+      p.unidade ? ` <span class="text-muted small">${esc(p.unidade)}</span>` : ''}${vazia}</td>
     <td class="text-end">${p.noDia === null
       ? '<span class="text-muted" title="Sem registro neste dia">—</span>'
       : _parNum(p.noDia)}</td>
     <td class="text-end fw-semibold">${_parNum(p.media)}</td>
     <td class="text-end" title="Rendimento da ficha: ${_parNum(p.rendimento)}">${_parNum(p.lotesDia)}</td>
     <td class="text-center text-muted small">${p.dias}</td>
-  </tr>`).join('');
+  </tr>`;
+}
+
+function _pintarPreparos() {
+  const tb = document.getElementById('lst-prep');
+  if (!tb) return;
+  const busca = norm(document.getElementById('par-busca')?.value || '');
+  const lista = _parPreparos.filter(p => !busca || norm(p.nome || '').includes(busca));
+
+  // duas listas: o que a cozinha PRODUZ (ficha com 2+ ingredientes) e o que só
+  // tem ficha 1:1 (revenda). Ficha não encontrada (ings null) fica na principal —
+  // sumir com um item por não achar o cadastro seria pior que mostrá-lo.
+  const reais = lista.filter(p => p.ings === null || p.ings >= 2);
+  const umPra1 = lista.filter(p => p.ings !== null && p.ings <= 1);
+
+  const cont = document.getElementById('prep-contador');
+  if (cont) {
+    const n11 = _parPreparos.filter(p => p.ings !== null && p.ings <= 1).length;
+    cont.textContent = _parPreparos.length
+      ? `${_parPreparos.length - n11} preparo(s) nos últimos 14 dias`
+        + (n11 ? ` · ${n11} com ficha 1:1` : '')
+      : '';
+  }
+
+  tb.innerHTML = reais.length
+    ? reais.map(_prepLinha).join('')
+    : `<tr><td colspan="5" class="text-center text-muted py-4">${
+        _parPreparos.length
+          ? 'Nenhum preparo com esse nome.'
+          : 'Sem preparo registrado no período.<br><span class="small">O robô só começou a gravar isso em 31/08/2026 — dias anteriores não têm.</span>'
+      }</td></tr>`;
+
+  const bloco = document.getElementById('prep-bloco-11');
+  const tb11  = document.getElementById('lst-prep-11');
+  if (bloco && tb11) {
+    bloco.style.display = umPra1.length ? '' : 'none';
+    tb11.innerHTML = umPra1.map(_prepLinha).join('');
+  }
 }
 
 function exportarParalelo() {
