@@ -12,7 +12,7 @@
 --
 -- ALCANCE (medido em 31/08/2026)
 --   48 linhas de est_saldo_local, em BAR, COZINHA e CHURRASQUEIRA
---   R$ 20.741.21 de estoque fantasma
+--   R$ 20.741,21 de estoque fantasma
 --   So a CONTAGEM foi afetada. A liberacao de pedido interno NAO foi:
 --   o time confirma pelo celular, e aquele trecho nao mudou. Conferi os 75
 --   itens com fator != 1 liberados desde sexta - todos gravados crus.
@@ -24,7 +24,13 @@
 --
 -- FORA DESTE ARQUIVO, DE PROPOSITO
 --   MP POLPA GRAVIOLA / BAR: contou 61, saldo esta 0. Nao e o fator (daria
---   488). Alguma outra coisa zerou. Ver separado.
+--   488) - e outro bug, achado na mesma varredura: o produto aparece DUAS
+--   vezes na tela de contagem (a estrutura tem "MP POLPA GRAVIOLA" e "MP POLPA
+--   GRAVIOLA 1 KG" apontando para o mesmo cadastro), o time preenche um campo
+--   so, e a linha vazia vencia o dedup e apagava o saldo. Consertado no codigo
+--   pelo commit 75440ab, que agora soma as duas linhas em vez de deixar a
+--   ultima vencer. O saldo se acerta sozinho na proxima contagem depois do
+--   Push - por isso nao entra neste arquivo.
 --
 -- ORDEM
 --   1. Fazer o Push do conserto no codigo ANTES de rodar isto. Sem isso a
