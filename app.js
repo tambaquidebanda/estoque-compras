@@ -10320,7 +10320,7 @@ function exportarLeadTime() {
 // cada item é contado não está no cadastro. Insumo com fator != 1 ganha o selo
 // "un?" para ninguém ler a diferença dele como furo de estoque.
 const _PAR_ENTRADAS = ['pedido_interno_entrada', 'recebimento', 'devolucao'];
-let _parLinhas = [], _parDia = null, _parPreparos = [];
+let _parLinhas = [], _parDia = null, _parPreparos = [], _parDiasVenda = new Set();
 
 function _parCustoEfetivo(p) {
   const fator = Number(p?.fator_conversao) || 1;
@@ -10486,10 +10486,16 @@ async function carregarParalelo() {
   const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo,quantidade',
     q => q.gte('data', dIni).lte('data', dia));
   const ent = {}, venda = {};
+  _parDiasVenda = new Set();
   movs.forEach(m => {
     const k = `${m.local}|${m.produto_id}|${m.data}`;
     if (_PAR_ENTRADAS.includes(m.tipo)) ent[k] = (ent[k] || 0) + (Number(m.quantidade) || 0);
-    else if (m.tipo === 'venda_pensera') venda[k] = (venda[k] || 0) + Math.abs(Number(m.quantidade) || 0);
+    else if (m.tipo === 'venda_pensera') {
+      venda[k] = (venda[k] || 0) + Math.abs(Number(m.quantidade) || 0);
+      // que dias o robô realmente lançou. Sem isso a tela não distingue
+      // "o modelo errou" de "o modelo não falou", e mostra 100% de erro nos dois.
+      _parDiasVenda.add(m.data);
+    }
   });
 
   // dias do intervalo, em ordem
@@ -10563,13 +10569,44 @@ function _pintarParalelo() {
   const pctErro = consumo > 0 ? (bruto / consumo) * 100 : null;
   const suspeitas = todas.filter(l => l.unSuspeita).length;
 
-  kpis.innerHTML = todas.length
-    ? _relKpiChip('Insumos comparados', String(todas.length), '#0d6efd')
-    + _relKpiChip('Batem (±25%)', `${batem} de ${todas.length}`, batem / todas.length >= 0.7 ? '#16a34a' : '#b45309')
-    + _relKpiChip('Erro bruto', brl(bruto), '#dc3545')
-    + (pctErro !== null ? _relKpiChip('Erro sobre o contado', pct(pctErro), pctErro <= 10 ? '#16a34a' : '#b45309') : '')
-    + (suspeitas ? _relKpiChip('Unidade não curada', String(suspeitas), '#6b7280') : '')
-    : '';
+  // "O MODELO ERROU" NÃO É "O MODELO NÃO FALOU"
+  // Sem lançamento de venda no razão a tela mostrava 100% de erro — o número
+  // certo para o estado errado, e assustador justo quando mais gente vai olhar.
+  // O modo dry NÃO escreve no razão (grava em pdv_baixa_preview), então até o
+  // paralelo começar isto é o estado normal, não um problema de estoque.
+  const semVenda = _parDiasVenda.size === 0;
+  const diaSemVenda = !semVenda && _parDia && !_parDiasVenda.has(_parDia);
+  const aviso = document.getElementById('par-aviso');
+  if (aviso) {
+    aviso.innerHTML = !todas.length ? '' : semVenda
+      ? `<div class="alert alert-secondary d-flex gap-2 py-2 px-3 mb-3" role="status">
+           <i class="bi bi-hourglass-split mt-1"></i>
+           <div class="small"><strong>O robô ainda não lançou venda nenhuma neste período.</strong>
+             Não há o que comparar — o que aparece abaixo é só o lado da contagem.
+             O modo <code>dry</code> calcula mas não escreve no livro-razão; quem escreve é o modo
+             <code>razão</code>, que começa no primeiro dia do paralelo.</div>
+         </div>`
+      : diaSemVenda
+      ? `<div class="alert alert-warning d-flex gap-2 py-2 px-3 mb-3" role="status">
+           <i class="bi bi-exclamation-triangle mt-1"></i>
+           <div class="small"><strong>O robô não lançou venda em ${esc(_dataBR(_parDia))}.</strong>
+             A janela de alguns insumos cobre dias que têm lançamento, mas o erro deste dia está
+             inflado pela ausência, não por furo de estoque. Rode o robô neste dia antes de ler o placar.</div>
+         </div>`
+      : '';
+  }
+
+  kpis.innerHTML = !todas.length ? ''
+    : semVenda
+      // sem o lado da venda, "batem" e "erro" não significam nada: seriam 0 e 100%
+      ? _relKpiChip('Insumos com movimento', String(todas.length), '#0d6efd')
+        + _relKpiChip('Consumo pela contagem', brl(consumo), '#6b7280')
+        + (suspeitas ? _relKpiChip('Unidade não curada', String(suspeitas), '#6b7280') : '')
+      : _relKpiChip('Insumos comparados', String(todas.length), '#0d6efd')
+        + _relKpiChip('Batem (±25%)', `${batem} de ${todas.length}`, batem / todas.length >= 0.7 ? '#16a34a' : '#b45309')
+        + _relKpiChip('Erro bruto', brl(bruto), '#dc3545')
+        + (pctErro !== null ? _relKpiChip('Erro sobre o contado', pct(pctErro), pctErro <= 10 ? '#16a34a' : '#b45309') : '')
+        + (suspeitas ? _relKpiChip('Unidade não curada', String(suspeitas), '#6b7280') : '');
   if (cont) cont.textContent = todas.length ? `${_dataBR(_parDia)} · ${todas.length} insumo(s) com movimento` : '';
 
   const linhas = _parFiltradas();
