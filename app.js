@@ -10735,8 +10735,16 @@ function exportarParalelo() {
 //
 // Não olha contagem nem saldo. É só o cadastro das fichas contra ele mesmo.
 // ════════════════════════════════════════════════════════════════════════════
-const _SF_NIVEIS = { grave: '#dc3545', atencao: '#b45309' };
+const _SF_NIVEIS = { grave: '#dc3545', atencao: '#b45309', sugestao: '#6b7280' };
+const _SF_ROTULO = { grave: 'Grave', atencao: 'Atenção', sugestao: 'Palpite' };
 let _sfAchados = [];
+
+// Palavras do nome, para achar a ficha IRMÃ. Esses pratos são construídos em
+// família — ISCA DE {PIRARUCU|FRANGO|CARNE} KIDS COM {FRITAS|PURE} — e a irmã
+// certa é a que divide quase todo o nome.
+function _sfTokens(nome) {
+  return new Set(norm(nome).split(/[^a-z0-9]+/i).filter(w => w.length > 1));
+}
 
 // Quantidade de ficha precisa das casas todas: _parNum arredonda em 2 e
 // transformava "0,026" em "0,03" — apagando justo o dígito que é o assunto.
@@ -10822,7 +10830,47 @@ async function carregarSaudeFichas() {
     });
   });
 
-  const ordem = { grave: 0, atencao: 1 };
+  // FALTA O QUE TODAS AS IRMÃS TÊM — palpite, e só sob pedido (fica fora do
+  // padrão da tela). Vem separado porque é muito mais ruidoso que as outras:
+  // um prato pode não levar sal de propósito. As sete acima apontam defeito;
+  // esta aponta assimetria, que é outra coisa.
+  //
+  // Ela existe porque o estrago da importação tem duas caras: a linha que ficou
+  // com ingrediente vazio (as 7 checagens pegam) e a linha que simplesmente não
+  // foi criada, que não deixa marca nenhuma. Só dá para desconfiar comparando
+  // com quem é parecido.
+  const conj = {}, toks = {};
+  fichas.forEach(f => {
+    conj[f.id] = new Set((porFicha[f.id] || [])
+      .map(i => i.ingrediente_id).filter(id => id in prod));
+    toks[f.id] = _sfTokens(nomeDe(f.produto_id));
+  });
+  fichas.forEach(f => {
+    const a = toks[f.id];
+    if (a.size < 3) return;                       // nome curto não tem irmã confiável
+    const irmas = [];
+    fichas.forEach(g => {
+      if (g.id === f.id || !toks[g.id].size) return;
+      let comuns = 0;
+      a.forEach(w => { if (toks[g.id].has(w)) comuns++; });
+      const sim = comuns / Math.max(a.size, toks[g.id].size);
+      if (sim >= 0.6) irmas.push({ sim, g });
+    });
+    if (irmas.length < 2) return;
+    irmas.sort((x, y) => y.sim - x.sim);
+    const top = irmas.slice(0, 5);
+    const candidatos = new Set();
+    top.forEach(({ g }) => conj[g.id].forEach(id => { if (!conj[f.id].has(id)) candidatos.add(id); }));
+    candidatos.forEach(id => {
+      if (id === f.produto_id) return;            // ela mesma não conta como falta
+      if (!top.every(({ g }) => conj[g.id].has(id))) return;   // TODAS as irmãs têm
+      add('sugestao', 'Falta o que todas as irmãs têm', nomeDe(f.produto_id),
+          `Não usa "${nomeDe(id)}", que aparece nas ${top.length} fichas de nome parecido `
+          + `(${top.slice(0, 2).map(({ g }) => nomeDe(g.produto_id)).join(', ')}…).`);
+    });
+  });
+
+  const ordem = { grave: 0, atencao: 1, sugestao: 2 };
   achados.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]
     || a.tipo.localeCompare(b.tipo) || a.ficha.localeCompare(b.ficha));
   _sfAchados = achados;
@@ -10846,7 +10894,10 @@ function _sfFiltrados() {
   const tipo = document.getElementById('sf-tipo')?.value || '';
   const busca = norm(document.getElementById('sf-busca')?.value || '');
   const soGraves = document.getElementById('sf-so-graves')?.checked;
+  const comSug = document.getElementById('sf-sugestoes')?.checked;
   return _sfAchados.filter(a =>
+    // palpite fica de fora por padrao; entra pelo check ou ao ser escolhido no filtro
+    (a.nivel !== 'sugestao' || comSug || tipo === a.tipo) &&
     (!tipo || a.tipo === tipo) &&
     (!soGraves || a.nivel === 'grave') &&
     (!busca || norm(a.ficha + ' ' + a.detalhe).includes(busca)));
@@ -10858,17 +10909,23 @@ function _pintarSaudeFichas() {
   const cont = document.getElementById('sf-contador');
   if (!tbody) return;
 
-  const graves = _sfAchados.filter(a => a.nivel === 'grave').length;
+  const graves  = _sfAchados.filter(a => a.nivel === 'grave').length;
+  const atencao = _sfAchados.filter(a => a.nivel === 'atencao').length;
+  const palpites = _sfAchados.filter(a => a.nivel === 'sugestao').length;
   const porTipo = {};
-  _sfAchados.forEach(a => { porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1; });
+  _sfAchados.filter(a => a.nivel !== 'sugestao')
+    .forEach(a => { porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1; });
 
-  kpis.innerHTML = _sfAchados.length
+  kpis.innerHTML = (graves + atencao)
     ? _relKpiChip('Graves', String(graves), graves ? '#dc3545' : '#16a34a')
-      + _relKpiChip('Atenção', String(_sfAchados.length - graves), '#b45309')
-      + Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      + _relKpiChip('Atenção', String(atencao), '#b45309')
+      + Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 2)
           .map(([t, n]) => _relKpiChip(t, String(n), '#6b7280')).join('')
-    : _relKpiChip('Nenhum problema encontrado', '✓', '#16a34a');
-  if (cont) cont.textContent = _sfAchados.length ? `${_sfAchados.length} achado(s)` : '';
+      + (palpites ? _relKpiChip('Palpites das irmãs', String(palpites), '#6b7280') : '')
+    : _relKpiChip('Nenhum problema encontrado', '✓', '#16a34a')
+      + (palpites ? _relKpiChip('Palpites das irmãs', String(palpites), '#6b7280') : '');
+  if (cont) cont.textContent = (graves + atencao)
+    ? `${graves + atencao} problema(s)` + (palpites ? ` · ${palpites} palpite(s)` : '') : '';
 
   const linhas = _sfFiltrados();
   if (!linhas.length) {
@@ -10878,7 +10935,7 @@ function _pintarSaudeFichas() {
     return;
   }
   tbody.innerHTML = linhas.map(a => `<tr>
-    <td><span class="badge" style="background:${_SF_NIVEIS[a.nivel]}">${a.nivel === 'grave' ? 'Grave' : 'Atenção'}</span></td>
+    <td><span class="badge" style="background:${_SF_NIVEIS[a.nivel]}">${_SF_ROTULO[a.nivel]}</span></td>
     <td><strong>${esc(a.ficha)}</strong></td>
     <td class="small">${esc(a.tipo)}</td>
     <td class="text-muted small">${esc(a.detalhe)}</td>
@@ -10891,7 +10948,7 @@ function exportarSaudeFichas() {
   const aoa = [
     ['Saude das Fichas - ' + _dataBR(new Date().toISOString().slice(0, 10))],
     ['Nivel', 'Ficha', 'Problema', 'O que acontece'],
-    ...linhas.map(a => [a.nivel === 'grave' ? 'Grave' : 'Atencao', a.ficha, a.tipo, a.detalhe]),
+    ...linhas.map(a => [_SF_ROTULO[a.nivel], a.ficha, a.tipo, a.detalhe]),
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 10 }, { wch: 42 }, { wch: 30 }, { wch: 80 }];

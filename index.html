@@ -2708,6 +2708,13 @@
           <input class="form-check-input" type="checkbox" id="sf-so-graves" onchange="_pintarSaudeFichas()">
           <label class="form-check-label small text-muted" for="sf-so-graves">Só os graves</label>
         </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="sf-sugestoes" onchange="_pintarSaudeFichas()">
+          <label class="form-check-label small text-muted" for="sf-sugestoes"
+                 title="Compara cada ficha com as irmãs de nome (ISCA DE PIRARUCU / DE FRANGO / DE CARNE) e mostra o que todas elas têm e esta não. É palpite, e ruidoso: um prato pode não levar sal de propósito.">
+            Incluir palpites das irmãs
+          </label>
+        </div>
         <div class="flex-grow-1"></div>
         <input type="search" class="form-control form-control-sm" id="sf-busca" placeholder="Buscar ficha ou item..." oninput="_pintarSaudeFichas()" style="width:210px">
         <button class="btn btn-sm btn-outline-secondary" onclick="carregarSaudeFichas()"><i class="bi bi-arrow-clockwise"></i></button>
