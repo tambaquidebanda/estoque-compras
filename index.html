@@ -2620,6 +2620,46 @@
           </small>
         </div>
       </div>
+
+      <div class="card-grafico p-0 overflow-hidden mt-4">
+        <div class="d-flex justify-content-between align-items-center px-3 pt-3 flex-wrap gap-2">
+          <h2 class="h6 mb-0"><i class="bi bi-fire"></i> A cozinha produz isso por dia?</h2>
+          <span class="text-muted small" id="prep-contador"></span>
+        </div>
+        <p class="text-muted small px-3 mt-1 mb-2" style="max-width:75ch">
+          Quanto a venda, pela ficha, diz que foi produzido de cada preparo.
+          <strong>Não usa contagem nem saldo</strong> — por isso funciona mesmo onde a contagem está ruim.
+          Um número que a cozinha não reconhece é ficha errada, e consertar um preparo
+          arruma todos os ingredientes dele de uma vez.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Preparo</th>
+                <th class="text-end">No dia</th>
+                <th class="text-end">Média por dia</th>
+                <th class="text-end">Lotes por dia</th>
+                <th class="text-center">Dias</th>
+              </tr>
+            </thead>
+            <tbody id="lst-prep">
+              <tr><td colspan="5" class="text-center text-muted py-4">Escolha o dia.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Média por dia</strong> é sobre os últimos 14 dias, não só o dia escolhido — é ela que
+            responde a pergunta do título. <strong>Lotes</strong> = média ÷ rendimento da ficha; o sinal
+            clássico de ficha errada é um prato consumindo ~1 lote inteiro.
+            Os filtros de <strong>setor</strong> e de <strong>divergência</strong> não valem aqui: preparo
+            não tem setor. Estes números são só da <strong>Loja Centro</strong>, que é a única loja
+            que o robô processa.
+          </small>
+        </div>
+      </div>
     </section>
 
     <!-- ═══════════ MAPEAMENTO PDV → ESTOQUE (baixa automática iComanda) ═══════════ -->

@@ -10320,7 +10320,7 @@ function exportarLeadTime() {
 // cada item é contado não está no cadastro. Insumo com fator != 1 ganha o selo
 // "un?" para ninguém ler a diferença dele como furo de estoque.
 const _PAR_ENTRADAS = ['pedido_interno_entrada', 'recebimento', 'devolucao'];
-let _parLinhas = [], _parDia = null;
+let _parLinhas = [], _parDia = null, _parPreparos = [];
 
 function _parCustoEfetivo(p) {
   const fator = Number(p?.fator_conversao) || 1;
@@ -10335,6 +10335,43 @@ function parDia(passo) {
   d.setDate(d.getDate() + passo);
   el.value = d.toISOString().slice(0, 10);
   carregarParalelo();
+}
+
+// PREPAROS — quanto o modelo diz que a cozinha produziu por dia.
+// Lê o que o robô gravou em pdv_preparo_dia; a explosão da ficha continua com
+// UMA implementação só, a do Python. Recalcular aqui criaria uma segunda que ia
+// divergir sem ninguém notar — mesma decisão do resto desta tela.
+// O índice único garante uma linha por (data, produto), então somar as linhas
+// do período é somar dias distintos, e `dias` é a contagem real de dias medidos.
+async function _carregarPreparos(dIni, dia) {
+  let preps = [];
+  try {
+    preps = await _fetchAllPaged('pdv_preparo_dia',
+      'data,produto_id,nome,quantidade,unidade,rendimento,lotes',
+      q => q.gte('data', dIni).lte('data', dia));
+  } catch (e) {
+    console.error('preparos:', e);    // tabela pode não existir ainda; a tela segue
+  }
+  const agg = {};
+  (preps || []).forEach(r => {
+    const a = agg[r.produto_id] || (agg[r.produto_id] = {
+      produto_id: r.produto_id, nome: r.nome, unidade: r.unidade,
+      rendimento: Number(r.rendimento) || 1, soma: 0, dias: 0, noDia: null, ult: '',
+    });
+    a.soma += Number(r.quantidade) || 0;
+    a.dias += 1;
+    if (r.data === dia) a.noDia = Number(r.quantidade) || 0;
+    if (r.data >= a.ult) {            // nome/unidade/rendimento do registro mais recente
+      a.ult = r.data;
+      a.nome = r.nome || a.nome;
+      a.unidade = r.unidade || a.unidade;
+      a.rendimento = Number(r.rendimento) || a.rendimento;
+    }
+  });
+  _parPreparos = Object.values(agg).map(a => {
+    const media = a.dias ? a.soma / a.dias : 0;
+    return { ...a, media, lotesDia: a.rendimento ? media / a.rendimento : 0 };
+  }).sort((x, y) => y.lotesDia - x.lotesDia);
 }
 
 async function carregarParalelo() {
@@ -10354,6 +10391,8 @@ async function carregarParalelo() {
   const dIni = desde.toISOString().slice(0, 10);
 
   await carregarProdutosFT();
+  await _carregarPreparos(dIni, dia);   // antes do resto: não depende de haver contagem
+
   const invs = await _fetchAllPaged('est_inventarios', 'id,setor,data,criado_em,local',
     q => q.gte('data', dIni).lte('data', dia));
 
@@ -10375,13 +10414,19 @@ async function carregarParalelo() {
   const itens = await _fetchAllPaged('est_inventario_itens', 'inventario_id,produto_id,total',
     q => q.in('inventario_id', Object.keys(cab)));
 
-  // última contagem de cada (setor, produto, dia) — recontagem do mesmo dia vence
+  // última contagem de cada (setor, produto, dia) — recontagem do mesmo dia vence.
+  // Dentro da MESMA contagem o produto pode aparecer duas vezes (dois nomes da
+  // estrutura no mesmo cadastro): aí o criado_em é igual, e fica com o MAIOR —
+  // a mesma regra do registrarContagem() e do simulador, para os três lerem
+  // igual. Sem isso a linha vazia mandava o instrumento ler 0.
   const cont = {}, quando = {};
   itens.forEach(x => {
     if (!x.produto_id) return;
     const h = cab[x.inventario_id]; if (!h) return;
     const k = `${h.setor}|${x.produto_id}|${h.data}`;
-    if (!(k in quando) || h.criado_em > quando[k]) { quando[k] = h.criado_em; cont[k] = Number(x.total) || 0; }
+    const v = Number(x.total) || 0;
+    if (!(k in quando) || h.criado_em > quando[k]) { quando[k] = h.criado_em; cont[k] = v; }
+    else if (h.criado_em === quando[k]) { cont[k] = Math.max(cont[k], v); }
   });
 
   // movimentos do período: entradas oficiais e a venda que o robô lançou
@@ -10449,6 +10494,7 @@ function _pintarParalelo() {
   const kpis  = document.getElementById('par-kpis');
   const cont  = document.getElementById('par-contador');
   if (!tbody) return;
+  _pintarPreparos();   // antes dos returns: a tabela de preparo não depende de haver contagem
 
   // KPIs sempre sobre o conjunto TODO do dia, não sobre o filtro: o placar do
   // paralelo não pode mudar porque alguém digitou algo na busca.
@@ -10507,6 +10553,37 @@ function _pintarParalelo() {
 
 function _parNum(v) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(v || 0);
+}
+
+function _pintarPreparos() {
+  const tb = document.getElementById('lst-prep');
+  if (!tb) return;
+  const busca = norm(document.getElementById('par-busca')?.value || '');
+  const lista = _parPreparos.filter(p => !busca || norm(p.nome || '').includes(busca));
+
+  const cont = document.getElementById('prep-contador');
+  if (cont) cont.textContent = _parPreparos.length
+    ? `${_parPreparos.length} preparo(s) nos últimos 14 dias` : '';
+
+  if (!lista.length) {
+    tb.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">${
+      _parPreparos.length
+        ? 'Nenhum preparo com esse nome.'
+        : 'Sem preparo registrado no período.<br><span class="small">O robô só começou a gravar isso em 31/08/2026 — dias anteriores não têm.</span>'
+    }</td></tr>`;
+    return;
+  }
+
+  tb.innerHTML = lista.map(p => `<tr>
+    <td><strong>${esc(p.nome || '(sem nome)')}</strong>${
+      p.unidade ? ` <span class="text-muted small">${esc(p.unidade)}</span>` : ''}</td>
+    <td class="text-end">${p.noDia === null
+      ? '<span class="text-muted" title="Sem registro neste dia">—</span>'
+      : _parNum(p.noDia)}</td>
+    <td class="text-end fw-semibold">${_parNum(p.media)}</td>
+    <td class="text-end" title="Rendimento da ficha: ${_parNum(p.rendimento)}">${_parNum(p.lotesDia)}</td>
+    <td class="text-center text-muted small">${p.dias}</td>
+  </tr>`).join('');
 }
 
 function exportarParalelo() {
