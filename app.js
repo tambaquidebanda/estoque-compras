@@ -10368,38 +10368,63 @@ async function _carregarPreparos(dIni, dia) {
       a.rendimento = Number(r.rendimento) || a.rendimento;
     }
   });
-  // Quantos ingredientes tem a ficha de cada um. Não é reexplodir a ficha — é
-  // contar linhas — então continua havendo UMA implementação da explosão.
-  // Serve para separar as duas listas: ficha com 1 ingrediente (ou nenhum) não é
-  // preparo que a cozinha produz, é revenda ou ficha 1:1 (água com gás,
-  // refrigerante, suco). Perguntar "você produz 15 molhos tártaro por dia?" para
-  // um item desses é ruído, e ruído tira a força da pergunta que importa.
+  // Ingredientes DIRETOS da ficha de cada preparo. Não é reexplodir a ficha —
+  // não há recursão aqui — então continua havendo UMA implementação da explosão,
+  // a do Python. Servem para duas coisas:
+  //   1. separar as listas: ficha com 1 ingrediente (ou nenhum) não é preparo que
+  //      a cozinha produz, é revenda ou ficha 1:1 (água com gás, suco). Perguntar
+  //      "você produz 15 molhos tártaro por dia?" gasta a pergunta à toa.
+  //   2. achar o insumo principal, que é o que a coluna mostra.
   const ids = Object.keys(agg);
-  const nIngs = {};
+  const nIngs = {}, ingsDe = {};
   if (ids.length) {
     try {
       const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id',
         q => q.in('produto_id', ids).eq('ativo', true));
       const porFicha = Object.fromEntries(fichas.map(f => [f.id, f.produto_id]));
-      fichas.forEach(f => { nIngs[f.produto_id] = 0; });
-      const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id',
+      fichas.forEach(f => { nIngs[f.produto_id] = 0; ingsDe[f.produto_id] = []; });
+      const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade',
         q => q.in('ficha_id', Object.keys(porFicha)));
       ings.forEach(i => {
         const pid = porFicha[i.ficha_id];
-        if (pid) nIngs[pid] = (nIngs[pid] || 0) + 1;
+        if (!pid) return;
+        nIngs[pid] = (nIngs[pid] || 0) + 1;
+        ingsDe[pid].push({ id: i.ingrediente_id, qtd: Number(i.quantidade) || 0 });
       });
     } catch (e) { console.error('ingredientes do preparo:', e); }
   }
 
   _parPreparos = Object.values(agg).map(a => {
     const media = a.dias ? a.soma / a.dias : 0;
+
+    // INSUMO PRINCIPAL: o ingrediente de maior peso em dinheiro na ficha, e
+    // quanto ESTE preparo consumiu dele por dia. É a frase que a cozinha confere
+    // olhando o estoque ("uns 26 kg de arroz cru por dia"), no lugar de "lotes",
+    // que enganava: para o caldinho o rendimento é tamanho de panela, mas para o
+    // arroz é conversão (1 kg cru rende 2 kg cozido), e a mesma coluna dizia
+    // "26 lotes" onde a leitura certa era "26 quilos".
+    let melhor = null, peso = -1;
+    (ingsDe[a.produto_id] || []).forEach(i => {
+      const p = prodFT(i.id);
+      const w = i.qtd * (_parCustoEfetivo(p) || 0);
+      if (w > peso) { peso = w; melhor = { ...i, p }; }
+    });
+    if (melhor && peso <= 0) {                    // ficha sem custo: desempata pela quantidade
+      melhor = (ingsDe[a.produto_id] || []).reduce((m, i) =>
+        !m || i.qtd > m.qtd ? { ...i, p: prodFT(i.id) } : m, null);
+    }
+    const principalDia = melhor && a.rendimento ? (melhor.qtd / a.rendimento) * media : null;
+
     return {
       ...a, media,
-      lotesDia: a.rendimento ? media / a.rendimento : 0,
+      principalNome: melhor?.p?.nome || null,
+      principalUnid: melhor?.p?.unidade_uso || melhor?.p?.unidade_comp || '',
+      principalDia,
+      principalRS: principalDia === null ? 0 : principalDia * (_parCustoEfetivo(melhor.p) || 0),
       // null = não achei ficha ativa; fica na lista principal para não sumir
       ings: a.produto_id in nIngs ? nIngs[a.produto_id] : null,
     };
-  }).sort((x, y) => y.lotesDia - x.lotesDia);
+  }).sort((x, y) => y.principalRS - x.principalRS);   // por dinheiro: comparável entre unidades
 }
 
 async function carregarParalelo() {
@@ -10594,7 +10619,10 @@ function _prepLinha(p) {
       ? '<span class="text-muted" title="Sem registro neste dia">—</span>'
       : _parNum(p.noDia)}</td>
     <td class="text-end fw-semibold">${_parNum(p.media)}</td>
-    <td class="text-end" title="Rendimento da ficha: ${_parNum(p.rendimento)}">${_parNum(p.lotesDia)}</td>
+    <td class="text-end">${p.principalNome
+      ? `${_parNum(p.principalDia)} <span class="text-muted small">${esc(p.principalUnid)}</span>
+         <span class="d-block text-muted small" title="Ingrediente de maior peso em dinheiro na ficha · rendimento ${_parNum(p.rendimento)} · ${brl(p.principalRS)}/dia">${esc(p.principalNome)}</span>`
+      : '<span class="text-muted">—</span>'}</td>
     <td class="text-center text-muted small">${p.dias}</td>
   </tr>`;
 }
