@@ -102,15 +102,28 @@ def contagens(desde):
     itens = []
     for lote in em_lotes(list(cab)):
         itens += G('est_inventario_itens?select=inventario_id,produto_id,total&inventario_id=in.' + lote)
+    # PRODUTO REPETIDO NA MESMA CONTAGEM: fica com o MAIOR, igual ao app.
+    # A estrutura do setor listava dois nomes caindo no mesmo cadastro, e as
+    # duas linhas chegam aqui com o mesmo criado_em. O `>` nunca era verdade
+    # para a segunda, entao vencia a PRIMEIRA - por acaso, nao por regra. A
+    # graviola do BAR entrava como 0 tendo sido contada 61, e o simulador lia
+    # consumo que nao existiu. Os nomes duplicados foram curados em 31/08
+    # (SQL_CURADORIA_NOMES_DUPLICADOS.sql), mas o historico anterior continua
+    # com as duas linhas, e a regra tem que valer para ele tambem.
+    # Mesma escolha do registrarContagem() no app: o maior nao apaga o que foi
+    # contado e nao dobra o que o time digitou igual nas duas linhas.
     out, quando = {}, {}
     for x in itens:
         if not x['produto_id']:
             continue
         h = cab[x['inventario_id']]
         k = (h['setor'], x['produto_id'], h['data'])
+        v = x['total'] or 0
         if k not in quando or h['criado_em'] > quando[k]:
             quando[k] = h['criado_em']
-            out[k] = x['total'] or 0
+            out[k] = v
+        elif h['criado_em'] == quando[k]:      # mesma contagem, linha repetida
+            out[k] = max(out[k], v)
     return out
 
 
