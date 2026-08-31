@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'saude-fichas'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -245,6 +245,7 @@ function ir(nome, el) {
   if (nome === 'sem-giro')        carregarSemGiro();
   if (nome === 'acuracidade')     carregarAcuracidade();
   if (nome === 'paralelo')        carregarParalelo();
+  if (nome === 'saude-fichas')    carregarSaudeFichas();
 }
 
 function irCad(tab, el) {
@@ -10718,6 +10719,185 @@ function exportarParalelo() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contagem x Venda');
   XLSX.writeFile(wb, `contagem-x-venda_${_parDia}.xlsx`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SAÚDE DAS FICHAS
+//
+// Procura o que faz a ficha calcular errado SEM NINGUÉM PERCEBER. Não é sobre
+// ficha faltando — essa dá erro visível e alguém reclama. É sobre a ficha que
+// existe, parece certa, e devolve um número menor do que a casa consome.
+//
+// Todas as checagens saíram de caso real. A revisão do piraruçu em 31/08/2026
+// achou quatro pratos cujo peixe ficou com `ingrediente_id` NULO: eles vendem
+// peixe e não descontam peixe nenhum, e o robô pula a linha em silêncio
+// (`if not ing_id: continue`). Nada no sistema apontava isso.
+//
+// Não olha contagem nem saldo. É só o cadastro das fichas contra ele mesmo.
+// ════════════════════════════════════════════════════════════════════════════
+const _SF_NIVEIS = { grave: '#dc3545', atencao: '#b45309' };
+let _sfAchados = [];
+
+// Quantidade de ficha precisa das casas todas: _parNum arredonda em 2 e
+// transformava "0,026" em "0,03" — apagando justo o dígito que é o assunto.
+function _sfNum(v) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 6 }).format(Number(v) || 0);
+}
+
+async function carregarSaudeFichas() {
+  const tbody = document.getElementById('lst-sf');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Carregando…</td></tr>';
+
+  const [prods, fichas, ings] = await Promise.all([
+    _fetchAllPaged('est_produtos', 'id,nome,ativo'),
+    _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id,rendimento,ativo', q => q.eq('ativo', true)),
+    _fetchAllPaged('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
+  ]);
+  const prod = Object.fromEntries(prods.map(p => [p.id, p]));
+  const nomeDe = id => prod[id]?.nome || '(sem cadastro)';
+  const porFicha = {};
+  ings.forEach(i => (porFicha[i.ficha_id] = porFicha[i.ficha_id] || []).push(i));
+
+  const achados = [];
+  const add = (nivel, tipo, ficha, detalhe) => achados.push({ nivel, tipo, ficha, detalhe });
+
+  // duas fichas ativas para o mesmo produto: o robô usa uma e ignora a outra,
+  // sem critério estável. Qual delas vale vira sorteio.
+  const quantas = {};
+  fichas.forEach(f => { quantas[f.produto_id] = (quantas[f.produto_id] || 0) + 1; });
+  Object.entries(quantas).filter(([, n]) => n > 1).forEach(([pid, n]) =>
+    add('grave', 'Mais de uma ficha ativa', nomeDe(pid),
+        `${n} fichas ativas para o mesmo produto — o cálculo usa uma delas sem critério.`));
+
+  fichas.forEach(f => {
+    const nome = nomeDe(f.produto_id);
+    const lista = porFicha[f.id] || [];
+
+    if (!lista.length)
+      add('atencao', 'Ficha ativa sem ingrediente', nome,
+          'Não consome nada e não vira nada. Ou ficou pela metade, ou devia estar inativa.');
+
+    if (!f.rendimento || Number(f.rendimento) <= 0)
+      add('grave', 'Rendimento zero ou vazio', nome,
+          `Rendimento = ${f.rendimento === null ? 'vazio' : f.rendimento}. O cálculo cai para 1 e o consumo sai errado.`);
+
+    lista.forEach(i => {
+      const q = Number(i.quantidade) || 0;
+      if (!i.ingrediente_id || !(i.ingrediente_id in prod))
+        add('grave', 'Linha sem ingrediente', nome,
+            `Uma linha de quantidade ${_sfNum(q)} não aponta para produto nenhum. O prato vende e não desconta esse item.`);
+      else if (i.ingrediente_id === f.produto_id)
+        add('grave', 'Ficha usa ela mesma', nome,
+            'A ficha se lista como próprio ingrediente. O cálculo trava nela e não desce até a matéria-prima.');
+      else if (!prod[i.ingrediente_id].ativo)
+        add('atencao', 'Ingrediente inativo', nome,
+            `Usa "${nomeDe(i.ingrediente_id)}", que está inativo no cadastro.`);
+    });
+  });
+
+  // DÍGITO FALTANDO. Não compara com a média: preparo usa muito mais de um
+  // ingrediente que prato, e comparar os dois só gera ruído (testei: 104 falsos).
+  // A assinatura do erro real é outra — a quantidade aparece UMA vez, e o mesmo
+  // ingrediente aparece com o valor ×10 (ou ×100) em várias outras fichas.
+  // Foi assim que PIRARUCU DESFIADO 50% DESCONTO apareceu com 0,026 de arroz
+  // onde 61 fichas irmãs usam 0,26.
+  const uso = {};
+  fichas.forEach(f => (porFicha[f.id] || []).forEach(i => {
+    const q = Math.round((Number(i.quantidade) || 0) * 1e6) / 1e6;
+    if (q > 0 && i.ingrediente_id in prod)
+      (uso[i.ingrediente_id] = uso[i.ingrediente_id] || []).push({ q, pid: f.produto_id });
+  }));
+  Object.entries(uso).forEach(([ingId, lst]) => {
+    const cont = {};
+    lst.forEach(x => { cont[x.q] = (cont[x.q] || 0) + 1; });
+    lst.forEach(({ q, pid }) => {
+      if (cont[q] !== 1) return;
+      [10, 100].forEach(mult => {
+        const alvo = Math.round(q * mult * 1e6) / 1e6;
+        if ((cont[alvo] || 0) >= 3)
+          add('grave', 'Suspeita de dígito faltando', nomeDe(pid),
+              `Usa ${_sfNum(q)} de "${nomeDe(ingId)}"; ${cont[alvo]} outras fichas usam ${_sfNum(alvo)} — ${mult}× mais.`);
+      });
+    });
+  });
+
+  const ordem = { grave: 0, atencao: 1 };
+  achados.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]
+    || a.tipo.localeCompare(b.tipo) || a.ficha.localeCompare(b.ficha));
+  _sfAchados = achados;
+
+  const tipos = [...new Set(achados.map(a => a.tipo))].sort();
+  const sel = document.getElementById('sf-tipo');
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os problemas</option>'
+    + tipos.map(t => `<option${t === atual ? ' selected' : ''}>${esc(t)}</option>`).join('');
+
+  const rod = document.getElementById('sf-rodape');
+  if (rod) rod.innerHTML = `<i class="bi bi-info-circle me-1"></i>
+    Conferidas <strong>${fichas.length}</strong> fichas ativas e <strong>${ings.length}</strong> linhas de
+    ingrediente. As checagens que não aparecem acima passaram limpas.
+    <strong>Dígito faltando é suspeita, não veredito</strong> — pode ser receita menor de propósito;
+    quem decide é quem conhece o preparo.`;
+  _pintarSaudeFichas();
+}
+
+function _sfFiltrados() {
+  const tipo = document.getElementById('sf-tipo')?.value || '';
+  const busca = norm(document.getElementById('sf-busca')?.value || '');
+  const soGraves = document.getElementById('sf-so-graves')?.checked;
+  return _sfAchados.filter(a =>
+    (!tipo || a.tipo === tipo) &&
+    (!soGraves || a.nivel === 'grave') &&
+    (!busca || norm(a.ficha + ' ' + a.detalhe).includes(busca)));
+}
+
+function _pintarSaudeFichas() {
+  const tbody = document.getElementById('lst-sf');
+  const kpis = document.getElementById('sf-kpis');
+  const cont = document.getElementById('sf-contador');
+  if (!tbody) return;
+
+  const graves = _sfAchados.filter(a => a.nivel === 'grave').length;
+  const porTipo = {};
+  _sfAchados.forEach(a => { porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1; });
+
+  kpis.innerHTML = _sfAchados.length
+    ? _relKpiChip('Graves', String(graves), graves ? '#dc3545' : '#16a34a')
+      + _relKpiChip('Atenção', String(_sfAchados.length - graves), '#b45309')
+      + Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 3)
+          .map(([t, n]) => _relKpiChip(t, String(n), '#6b7280')).join('')
+    : _relKpiChip('Nenhum problema encontrado', '✓', '#16a34a');
+  if (cont) cont.textContent = _sfAchados.length ? `${_sfAchados.length} achado(s)` : '';
+
+  const linhas = _sfFiltrados();
+  if (!linhas.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-4">${
+      _sfAchados.length ? 'Nada com esses filtros.' : 'Nenhuma ficha com problema. 🎯'
+    }</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = linhas.map(a => `<tr>
+    <td><span class="badge" style="background:${_SF_NIVEIS[a.nivel]}">${a.nivel === 'grave' ? 'Grave' : 'Atenção'}</span></td>
+    <td><strong>${esc(a.ficha)}</strong></td>
+    <td class="small">${esc(a.tipo)}</td>
+    <td class="text-muted small">${esc(a.detalhe)}</td>
+  </tr>`).join('');
+}
+
+function exportarSaudeFichas() {
+  const linhas = _sfFiltrados();
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  const aoa = [
+    ['Saude das Fichas - ' + _dataBR(new Date().toISOString().slice(0, 10))],
+    ['Nivel', 'Ficha', 'Problema', 'O que acontece'],
+    ...linhas.map(a => [a.nivel === 'grave' ? 'Grave' : 'Atencao', a.ficha, a.tipo, a.detalhe]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 10 }, { wch: 42 }, { wch: 30 }, { wch: 80 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Saude das Fichas');
+  XLSX.writeFile(wb, `saude-fichas_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 function _relKpiChip(label, valor, cor) {

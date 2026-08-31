@@ -170,6 +170,9 @@
         <a href="#" onclick="ir('paralelo',this)">
           <i class="bi bi-arrow-left-right"></i> Contagem × Venda
         </a>
+        <a href="#" onclick="ir('saude-fichas',this)">
+          <i class="bi bi-heart-pulse"></i> Saúde das Fichas
+        </a>
       </div>
       <!-- Grupo CONFIGURAÇÕES -->
       <div class="nav-grupo-btn" id="nav-grupo-config" onclick="toggleNavGrupo('config')">
@@ -2679,6 +2682,56 @@
             não tem setor. Estes números são só da <strong>Loja Centro</strong>, que é a única loja
             que o robô processa.
           </small>
+        </div>
+      </div>
+    </section>
+
+    <section id="pg-saude-fichas" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-heart-pulse"></i> Saúde das Fichas</h1>
+        <span class="text-muted small" id="sf-contador"></span>
+      </div>
+      <p class="text-muted small mb-3" style="max-width:75ch">
+        Procura o que faz a ficha calcular errado sem ninguém perceber: linha sem ingrediente,
+        ficha vazia, ingrediente desativado e quantidade com cara de dígito faltando.
+        Não olha contagem nem saldo — só o cadastro das fichas.
+      </p>
+
+      <div class="d-flex flex-wrap gap-2 mb-3" id="sf-kpis"></div>
+
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1">Problema</label>
+          <select class="form-select form-select-sm" id="sf-tipo" onchange="_pintarSaudeFichas()" style="width:260px"></select>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="sf-so-graves" onchange="_pintarSaudeFichas()">
+          <label class="form-check-label small text-muted" for="sf-so-graves">Só os graves</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="sf-busca" placeholder="Buscar ficha ou item..." oninput="_pintarSaudeFichas()" style="width:210px">
+        <button class="btn btn-sm btn-outline-secondary" onclick="carregarSaudeFichas()"><i class="bi bi-arrow-clockwise"></i></button>
+        <button class="btn btn-sm btn-outline-success" onclick="exportarSaudeFichas()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:90px">Nível</th>
+                <th>Ficha</th>
+                <th>Problema</th>
+                <th>O que acontece</th>
+              </tr>
+            </thead>
+            <tbody id="lst-sf">
+              <tr><td colspan="4" class="text-center text-muted py-4">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted" id="sf-rodape"></small>
         </div>
       </div>
     </section>
