@@ -223,24 +223,46 @@ def setor_por_insumo(produtos):
 
     Desempate dos ambiguos: chave 'baixa_setor_principal' em inv_configuracoes,
     no formato {"NOME DO PRODUTO": "SETOR"}. Sem entrada la, o insumo NAO baixa.
+
+    O CADASTRO MANDA — a fonte e a CONTAGEM GRAVADA, nao a configuracao da tela.
+    Ate 01/09/2026 esta funcao lia `inv_configuracoes['estrutura']` e filtrava
+    pela lista `excluidos`. Duas coisas quebravam nisso:
+
+      1. Aquelas listas guardam TEXTO. Quando o cadastro muda, elas ficam para
+         tras — 56 dos 80 nomes em `excluidos` nao existiam mais no cadastro.
+      2. Pior: nomes que ainda casam derrubavam produto VIVO. MP STELLA ARTOIS,
+         MP SPATEN 600ml, MP AGUA COM/SEM GAS e outros seis eram contados no BAR
+         todo dia e o robo nao baixava nenhum — R$ 358/dia parados por causa de
+         uma lista velha.
+
+    `est_inventario_itens` grava `produto_id` e o inventario grava o setor. Essa
+    e a unica fonte que nao depende de nome: se o time contou aquele produto
+    naquele setor, e de la que ele sai. Estrutura, mapeamentos, excluidos e
+    adicoes deixam de participar desta decisao — eles continuam mandando na TELA,
+    que e o lugar deles.
     """
     cfg = {r['chave']: r['valor'] for r in sb_get_all('inv_configuracoes?select=chave,valor')}
-    estrutura   = (cfg.get('estrutura') or {}).get(UNIDADE_CONTAGEM) or {}
-    mapeamentos = cfg.get('mapeamentos') or {}
-    excluidos   = set(cfg.get('excluidos') or [])
-    adicoes     = cfg.get('adicoes') or {}
-    principal   = cfg.get('baixa_setor_principal') or {}
+    principal = cfg.get('baixa_setor_principal') or {}
+    por_nome  = {_norm(p['nome']): p['id'] for p in produtos.values()}
 
-    por_nome = {_norm(p['nome']): p['id'] for p in produtos.values()}
+    # Janela de 60 dias: longa o bastante para pegar item contado de vez em
+    # quando, curta o bastante para nao ressuscitar setor de meses atras.
+    desde = (datetime.now(MANAUS).date() - timedelta(days=60)).isoformat()
+    unid  = urllib.parse.quote(UNIDADE_CONTAGEM)
+    cab = {i['id']: i for i in sb_get_all(
+        f'est_inventarios?select=id,setor&data=gte.{desde}&local=eq.{unid}')}
     onde = {}
-    for setor, grupos in estrutura.items():
-        for grupo, nomes in (grupos or {}).items():
-            lista  = [n for n in (nomes or []) if n not in excluidos]
-            lista += [n for n in (adicoes.get(f'{setor}|{grupo}') or []) if n]
-            for n in lista:
-                pid = por_nome.get(_norm(mapeamentos.get(n, n)))
-                if pid:
-                    onde.setdefault(pid, set()).add(setor)
+    ids = list(cab)
+    for i in range(0, len(ids), 60):
+        lote = ','.join(f'"{x}"' for x in ids[i:i + 60])
+        for x in sb_get_all('est_inventario_itens?select=inventario_id,produto_id'
+                            f'&inventario_id=in.({lote})'):
+            pid = x.get('produto_id')
+            h = cab.get(x['inventario_id'])
+            # ESTOQUE DA LOJA nao e setor: e o estoque central da unidade, de
+            # onde o setor recebe. Baixar de la seria descontar duas vezes.
+            if pid and h and h['setor'] not in ('ESTOQUE DA LOJA', 'ESTOQUE_LOJA'):
+                onde.setdefault(pid, set()).add(h['setor'])
 
     # desempate por nome do produto (mais legivel de manter que uuid)
     escolhido = {}
