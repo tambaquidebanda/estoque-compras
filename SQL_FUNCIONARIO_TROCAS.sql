@@ -7,7 +7,7 @@
 --     MP ACUCAR            ->  MC ACUCAR
 --     MP POLPA MANGA 1KG   ->  MC POLPA MANGA 1KG
 --     MP POLPA GOIABA 1KG  ->  MC POLPA GOIABA 1KG
---     MP KIT DE TAMBAQUI   ->  MC KIT DE TAMBAQUI      (PASSO 3, opcional)
+--     MP KIT DE TAMBAQUI   ->  MC KIT DE TAMBAQUI      (PASSO 3)
 --
 -- POR QUE ISSO IMPORTA
 -- O acucar e o caso urgente: ele esta em COZINHA | ESTIVAS e tambem em
@@ -102,11 +102,12 @@ END $$;
 
 
 -- ============================================================================
--- PASSO 3 - OPCIONAL. O kit de tambaqui.
+-- PASSO 3 - ESCREVE. O kit de tambaqui.
 --
--- So rode DEPOIS de confirmar que a refeicao do funcionario usa o
--- MC KIT DE TAMBAQUI (KG, custo 35,00) e nao o kit do restaurante.
--- Se ainda esta confirmando, pule - ele nao apaga contagem de ninguem.
+-- Confirmado pelo Wagner em 01/09: o kit da refeicao do funcionario e o
+-- MC KIT DE TAMBAQUI, categoria MC REFEICAO/CONSUMO FUNCIONARIOS, KG na
+-- compra e no uso, custo 35,00. Mesma unidade do MP que sai, entao o time
+-- nao muda nada no que escreve na contagem.
 -- ============================================================================
 DO $$
 DECLARE
@@ -140,7 +141,7 @@ END $$;
 -- ============================================================================
 
 -- 4a) O grupo do funcionario nao pode ter mais nenhum MP, tirando o feijao
---     de corda, que ficou de fora de proposito (e o kit, se voce pulou o 3).
+--     de corda, que ficou de fora de proposito. Esperado: so ele.
 SELECT unid.key AS unidade, x AS ainda_MP
 FROM inv_configuracoes c,
      jsonb_each(c.valor) AS unid, jsonb_each(unid.value) AS setor,
