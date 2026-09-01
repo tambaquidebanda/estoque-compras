@@ -20,6 +20,24 @@
 --
 -- ACENTOS: literais na forma U&'...' para o arquivo ficar ASCII sem estragar o
 -- texto (Producao, NAO ALCOOLICAS, CACHACA...).
+--
+-- IMPORTANTE - O QUE ESTE SQL FAZ, E O QUE NAO FAZ (mudou em 01/09/2026)
+-- Desde o commit bd07472 o robo descobre o setor de cada insumo olhando ONDE O
+-- PRODUTO FOI CONTADO (est_inventario_itens, por produto_id), e nao mais a
+-- estrutura da tela. Entao:
+--
+--   este SQL faz o item APARECER na tela de contagem do setor certo;
+--   o setor so passa a valer para a baixa DEPOIS que o time contar o item.
+--
+-- Ou seja: rode hoje, o time conta a noite, e amanha o insumo comeca a baixar
+-- sozinho. Nao espere o numero mudar na hora - ele muda na proxima contagem.
+--
+-- Dois da lista precisam de um passo a mais, porque estao em
+-- inv_configuracoes['excluidos'] e por isso nao aparecem na TELA:
+--   PPC TUCUPI REDUZIDO   (ja esta na estrutura de COZINHA/ESTIVAS)
+--   MP BUDWEISER ZERO LN
+-- Para eles a inclusao aqui nao basta: e preciso tirar da lista de excluidos
+-- pela tela de Contagem, senao continuam invisiveis para quem conta.
 -- ============================================================================
 
 
