@@ -48,7 +48,8 @@ SELECT jsonb_array_length(valor -> 'BAR|ESTIVAS')             AS nomes_hoje,
        (SELECT count(DISTINCT x) FROM jsonb_array_elements_text(valor -> 'BAR|ESTIVAS') x)
                                                               AS nomes_distintos
 FROM inv_configuracoes WHERE chave = 'adicoes';
--- Esperado: 26 e 25. (25 distintos, e um deles sai no PASSO 3 -> ficam 24.)
+-- Esperado: 26 e 17. Sao 9 nomes repetidos duas vezes cada: 26 - 9 = 17.
+-- A pimenta rosa e um desses 17 e sai no PASSO 3, entao sobram 16.
 
 -- 1c) Quais estao repetidos.
 SELECT x AS nome, count(*) AS vezes
@@ -100,13 +101,13 @@ UPDATE inv_configuracoes
 -- PASSO 4 - CONFERENCIA.
 -- ============================================================================
 
--- 4a) 24 nomes, todos distintos, sem pimenta rosa.
+-- 4a) 16 nomes, todos distintos, sem pimenta rosa.
 SELECT jsonb_array_length(valor -> 'BAR|ESTIVAS') AS nomes_agora,
        (SELECT count(DISTINCT x) FROM jsonb_array_elements_text(valor -> 'BAR|ESTIVAS') x)
                                                   AS distintos_agora,
        (valor -> 'BAR|ESTIVAS') @> '["MP PIMENTA ROSA"]'::jsonb AS ainda_tem_pimenta
 FROM inv_configuracoes WHERE chave = 'adicoes';
--- Esperado: 24, 24, false.
+-- Esperado: 16, 16, false.
 
 -- 4b) Copo 180ml fora das embalagens do bar.
 SELECT (valor -> 'BAR|EMBALAGEMDESCAR') @> '["MC COPO DESCART. 180ML"]'::jsonb AS ainda_tem_copo
