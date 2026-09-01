@@ -23,7 +23,7 @@
 -- Estoque Central). O bloco abaixo troca em TODAS, para nao criarem divergencia
 -- entre si.
 --
--- O PASSO 3 e OPCIONAL e resolve o ACUCAR - leia antes de rodar.
+-- O acucar, as polpas e o kit de tambaqui estao no SQL_FUNCIONARIO_TROCAS.sql.
 -- ============================================================================
 
 
@@ -85,48 +85,17 @@ END $$;
 
 
 -- ============================================================================
--- PASSO 3 - OPCIONAL. O ACUCAR.
+-- PASSO 3 - REMOVIDO. NAO RODE NADA AQUI.
 --
--- LEIA ANTES DE RODAR. Nao existe cadastro de acucar de funcionario - procurei
--- nos 45 produtos com FUNCIONARIO no nome e nao ha nenhum. Entao aqui ha duas
--- saidas, e este passo faz a SEGUNDA:
+-- Aqui havia um passo opcional que APAGAVA o MP ACUCAR do grupo, porque eu
+-- nao tinha achado cadastro de acucar de funcionario. Eu tinha procurado pelo
+-- NOME (produtos com FUNCIONARIO escrito no nome) e o certo era procurar pela
+-- CATEGORIA: existe sim o MC ACUCAR, categoria MC REFEICAO/CONSUMO
+-- FUNCIONARIOS. O Wagner apontou em 01/09.
 --
---   (a) criar o produto "MC ACUCAR - FUNCIONARIO" no cadastro e fazer a mesma
---       troca da batata. Melhor se voce quer o consumo do funcionario separado.
---       NAO rode este passo - me avise que eu monto o SQL da troca.
---
---   (b) tirar o MP ACUCAR do grupo do funcionario e contar so em ESTIVAS.
---       Para de apagar a contagem hoje a noite, e o acucar do funcionario
---       passa a estar somado no numero da cozinha. E o que este passo faz.
---
--- Se voce ainda nao decidiu, PULE. O unico custo de esperar e o acucar
--- continuar zerando, como zerou em 01/09.
+-- Entao o acucar tem o mesmo conserto da batata - troca, nao remocao - e ele
+-- esta junto com as polpas no SQL_FUNCIONARIO_TROCAS.sql. Rode aquele.
 -- ============================================================================
-DO $$
-DECLARE
-  u text; g text; caminho text[]; lista jsonb;
-BEGIN
-  FOR u IN SELECT key FROM inv_configuracoes, jsonb_each(valor) WHERE chave = 'estrutura'
-  LOOP
-    FOR g IN SELECT key FROM inv_configuracoes,
-                    jsonb_each(valor #> ARRAY[u, 'COZINHA'])
-              WHERE chave = 'estrutura' AND key LIKE '%FUNCION%'
-    LOOP
-      caminho := ARRAY[u, 'COZINHA', g];
-      SELECT valor #> caminho INTO lista FROM inv_configuracoes WHERE chave = 'estrutura';
-      CONTINUE WHEN lista IS NULL OR NOT (lista @> '["MP ACUCAR"]'::jsonb);
-
-      UPDATE inv_configuracoes
-         SET valor = jsonb_set(valor, caminho, (
-               SELECT COALESCE(jsonb_agg(x ORDER BY ord), '[]'::jsonb)
-                 FROM jsonb_array_elements(lista) WITH ORDINALITY AS t(x, ord)
-                WHERE x <> '"MP ACUCAR"'::jsonb))
-       WHERE chave = 'estrutura';
-
-      RAISE NOTICE 'acucar removido de % / COZINHA / %', u, g;
-    END LOOP;
-  END LOOP;
-END $$;
 
 
 -- ============================================================================
@@ -149,7 +118,7 @@ WHERE c.chave = 'estrutura'
 ORDER BY 1, 2, 3;
 
 -- 4c) O grupo continua com o mesmo tamanho - trocou, nao perdeu ninguem.
---     Esperado: 23 em cada unidade (ou 22, se voce rodou o PASSO 3).
+--     Esperado: 23 em cada unidade. A troca nao muda o tamanho do grupo.
 SELECT unid.key AS unidade, jsonb_array_length(grupo.value) AS nomes_no_grupo
 FROM inv_configuracoes c,
      jsonb_each(c.valor) AS unid, jsonb_each(unid.value) AS setor, jsonb_each(setor.value) AS grupo
@@ -162,8 +131,9 @@ ORDER BY 1;
 -- Estes quatro nao apagam contagem de ninguem (nao estao repetidos na COZINHA),
 -- entao nao ha pressa - mas continuam descontando do estoque do restaurante:
 --
---     MP KIT DE TAMBAQUI      (existe MC TAMBAQUI POSTAS - FUNCIONARIO)
---     MP FEIJAO DE CORDA      (existe MC FEIJAO PRAIA FUNCIONARIO)
---     MP POLPA MANGA 1KG      (nao existe gemeo de funcionario)
---     MP POLPA GOIABA 1KG     (nao existe gemeo de funcionario)
+--     MP ACUCAR, MP POLPA MANGA 1KG, MP POLPA GOIABA 1KG
+--         -> tem gemeo e estao no SQL_FUNCIONARIO_TROCAS.sql
+--     MP KIT DE TAMBAQUI  -> o Wagner esta confirmando
+--     MP FEIJAO DE CORDA  -> ja esta na categoria Comida Funcionario; ver o
+--                            outro arquivo antes de mexer
 -- ============================================================================
