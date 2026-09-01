@@ -31,7 +31,6 @@ Fórmula de consumo (idêntica ao app):
 Variáveis de ambiente (secrets do GitHub Actions):
   SUPABASE_URL, SUPABASE_SERVICE_KEY   (obrigatórios; nunca colocar a key no arquivo)
   BAIXA_MODE          dry | apply       (default dry)
-  BAIXA_LOCAL         local do estoque de onde sai o insumo (default COZINHA)
   BAIXA_UNIDADE_PDV   de qual loja contar a venda (default "Tambaqui de Banda Loja Centro").
                       A API do iComanda devolve as DUAS lojas juntas e não diz qual é qual;
                       quem separa é pdv_vendas.caixa_ext -> unidade_nome. Sem esse filtro a
@@ -61,7 +60,6 @@ MODE       = env('BAIXA_MODE', 'dry').lower()
 if MODE not in ('dry', 'razao', 'apply'):
     # sem isso, um modo escrito errado caia no 'else' do main e lancava no razao.
     sys.exit(f"ERRO: BAIXA_MODE='{MODE}' invalido. Use dry, razao ou apply.")
-LOCAL      = env('BAIXA_LOCAL', 'COZINHA')
 UNIDADE_PDV= env('BAIXA_UNIDADE_PDV', 'Tambaqui de Banda Loja Centro')
 START_DATE = env('BAIXA_START_DATE', '2026-08-15')
 DAYS_BACK  = int(env('BAIXA_DAYS_BACK', '1'))
@@ -452,7 +450,7 @@ def ja_tem_movimento(data):
 
 # ───────────────────────── main ─────────────────────────
 def main():
-    print(f'== Robô baixa PDV == modo={MODE} local={LOCAL} start={START_DATE} days_back={DAYS_BACK}')
+    print(f'== Robô baixa PDV == modo={MODE} start={START_DATE} days_back={DAYS_BACK}')
     (mapa, ficha_por_prod, ings_por_ficha, prod_info, contado,
      setor_de, ambiguos, sem_setor) = carregar()
     print(f'   mapeados={len(mapa)}  fichas={len(ficha_por_prod)}  produtos={len(prod_info)}  contados={len(contado)}')
