@@ -1,6 +1,7 @@
 name: Robô Baixa de Estoque (iComanda)
 
-# MANUAL por enquanto: só roda quando você clica "Run workflow".
+# AUTOMÁTICO desde 04/09/2026: roda todo dia pelo `schedule` abaixo.
+# O botão "Run workflow" continua valendo para rodadas avulsas.
 #
 # Os tres modos:
 #   dry    = so calcula e grava a previa. Nao encosta em nada.
@@ -11,26 +12,38 @@ name: Robô Baixa de Estoque (iComanda)
 #   apply  = razao + desconta o saldo de verdade. So depois de 23/09, e so se a
 #            medicao dos 15 dias autorizar.
 #
-# Para ligar o automatico do paralelo, descomente o `schedule` abaixo E troque o
-# default do `modo` para razao. Antes disso, ajuste o secret BAIXA_START_DATE
-# para o primeiro dia do paralelo — sem isso o robo lanca dias ja fechados no
-# razao retroativamente.
+# BAIXA_START_DATE trava o retroativo: o robô ignora qualquer dia anterior a
+# ela. Sem essa trava, ao ligar o automático ele lançaria no razão dias já
+# fechados, sujando a medição antes de começar. O valor vem do secret, mas o
+# workflow tem 2026-09-08 embutido como reserva — assim um secret ausente ou
+# escrito errado não vira lançamento retroativo silencioso. Data, não segredo:
+# está aqui à vista de propósito.
+#
+# Entre 05/09 e 08/09 o robô roda e não acha nada para processar (todo dia-alvo
+# é anterior à trava). É de propósito: testa agendamento, secrets e permissões
+# num período em que errar não custa nada. Em 09/09 de manhã ele processa o
+# 08/09, o primeiro dia do paralelo.
 on:
   workflow_dispatch:
     inputs:
       modo:
         description: 'dry (so calcula) | razao (paralelo, nao mexe no saldo) | apply (baixa de verdade)'
         required: true
-        default: 'dry'
+        default: 'razao'
         type: choice
         options: [dry, razao, apply]
       days_back:
         description: 'Quantos dias retroativos processar'
         required: false
         default: '1'
-  # schedule:
-  #   - cron: '30 12 * * *'   # 08:30 Manaus — dia anterior já fechado
-  #   - cron: '30 15 * * *'   # 11:30 Manaus — segunda tentativa
+  schedule:
+    - cron: '30 12 * * *'   # 08:30 Manaus — dia anterior já fechado
+    - cron: '30 15 * * *'   # 11:30 Manaus — segunda tentativa
+    # Duas tentativas porque o dia é recusado quando o relatório do PDV ainda
+    # não foi importado (aparece caixa sem loja identificada). Rodar duas vezes
+    # é seguro: há duas travas independentes contra lançamento duplo — o
+    # controle por modo em pdv_baixa_ctrl e a existência do próprio lançamento
+    # no razão (ja_tem_movimento).
 
 concurrency:
   group: baixa-estoque-pdv
@@ -49,8 +62,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          BAIXA_MODE: ${{ github.event.inputs.modo || 'dry' }}
+          BAIXA_MODE: ${{ github.event.inputs.modo || 'razao' }}
           BAIXA_DAYS_BACK: ${{ github.event.inputs.days_back || '1' }}
           BAIXA_UNIDADE_PDV: ${{ secrets.BAIXA_UNIDADE_PDV }}
-          BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE }}
+          BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE || '2026-09-08' }}
         run: python scripts/baixa_estoque_pdv.py
