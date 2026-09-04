@@ -108,6 +108,37 @@ def entradas(desde):
     return out
 
 
+def medianas(desde):
+    """{(setor, produto): mediana das contagens} - base para achar contagem em gramas.
+
+    Mesmo teste que a trava do app (commit 176f1c1, app.js:4401 e
+    contagem.html:833): valor >= 50 e >= 50x a mediana, e o valor/1000 caindo na
+    faixa normal do item. Aqui ele serve para OUTRA coisa: la o objetivo e
+    impedir o erro na hora de digitar; aqui e nomear o erro que escapou, para
+    ser corrigido no mesmo dia em vez de sujar a medicao dos 15.
+
+    A trava e um confirm() - avisa, mas a pessoa pode salvar assim. Por isso
+    ainda vale procurar depois.
+    """
+    unid = urllib.parse.quote(UNIDADE)
+    inv  = G(f'est_inventarios?select=id,setor,data,local&data=gte.{desde}&local=eq.{unid}')
+    cab  = {i['id']: i for i in inv}
+    itens = []
+    for lote in em_lotes(list(cab)):
+        itens += G('est_inventario_itens?select=inventario_id,produto_id,total&inventario_id=in.' + lote)
+    hist = collections.defaultdict(list)
+    for x in itens:
+        v = x['total'] or 0
+        if x['produto_id'] and v > 0:
+            hist[(cab[x['inventario_id']]['setor'], x['produto_id'])].append(v)
+    out = {}
+    for k, vs in hist.items():
+        if len(vs) >= 3:
+            vs.sort()
+            out[k] = vs[len(vs) // 2]
+    return out
+
+
 def modelo(desde):
     """{(setor, produto, dia): quantidade que a VENDA consumiu} - o razao do robo.
 
@@ -128,6 +159,9 @@ def main():
 
     P = {p['id']: p for p in G('est_produtos?select=id,nome,custo_comp,custo_uso,'
                                'fator_conversao,perda,unidade_uso')}
+    # medianas de 60 dias antes do inicio: mediana de 3 dias nao e mediana
+    hist_desde = (datetime.date.fromisoformat(INICIO) - datetime.timedelta(days=60)).isoformat()
+    med  = medianas(hist_desde)
     cont = contagens(desde)
     ent  = entradas(desde)
     mod  = modelo(desde)
@@ -201,6 +235,23 @@ def main():
         if negativos:
             print(f'      {len(negativos)} item(ns) com consumo real NEGATIVO (R$ {val_neg:,.2f}): '
                   f'a contagem subiu sem entrada registrada — entrada por fora do sistema')
+            # dos negativos, quais tem cara de contagem em GRAMAS num campo de quilo
+            gramas = []
+            for (setor, pid), (_r, _q) in negativos.items():
+                v = cont.get((setor, pid, dia)) or 0
+                m = med.get((setor, pid))
+                if not m or m <= 0 or v < 50 or v < 50 * m:
+                    continue
+                em_kg = v / 1000.0
+                parece = (m / 5) <= em_kg <= (m * 5)
+                gramas.append((setor, pid, v, m, em_kg, parece))
+            for setor, pid, v, m, em_kg, parece in sorted(gramas, key=lambda g: -g[2]):
+                extra = f' — {v:,.0f} gramas seria {em_kg:,.3f}' if parece else ''
+                print(f'      >> PARECE CONTAGEM EM GRAMAS: {nome(pid)[:34]} ({setor}) '
+                      f'contou {v:,.0f}, o normal ali e {m:,.3f}{extra}')
+            if gramas:
+                print(f'      >> corrija a contagem do dia e rode de novo: um dia assim sozinho '
+                      f'derruba o criterio e distorce o acumulado dos 15')
         if DETALHE:
             piores = sorted(comparavel.items(),
                             key=lambda kv: -abs(kv[1][1] - kv[1][0]) * custo(kv[0][1]))[:DETALHE]
