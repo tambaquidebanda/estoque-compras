@@ -23,6 +23,18 @@ name: Robô Baixa de Estoque (iComanda)
 # é anterior à trava). É de propósito: testa agendamento, secrets e permissões
 # num período em que errar não custa nada. Em 09/09 de manhã ele processa o
 # 08/09, o primeiro dia do paralelo.
+#
+# DAYS_BACK=3, e não 1, porque o `schedule` do GitHub não é garantido. Nas seis
+# rodadas de 05 a 07/09 o atraso foi de 2 a 4 h e CRESCENTE (+117 min no dia 05,
+# +320 min no dia 07). Atraso desse tamanho não quebra nada sozinho — a janela do
+# dia é o dia de Manaus e sobram horas — mas mostra que a rodada é oferecida, não
+# garantida: em carga alta o GitHub também descarta execuções agendadas. Com
+# janela de 1 dia, um dia não disparado some do paralelo para sempre e a medição
+# fica com buraco. Com 3, a rodada seguinte recupera sozinha o que faltou. Reprocessar é seguro: há duas travas
+# independentes contra lançamento duplo — pdv_baixa_ctrl filtrado por modo e a
+# existência do lançamento no razão (ja_tem_movimento), e ambas apenas pulam o
+# dia. A trava de START_DATE continua valendo, então a janela maior não alcança
+# dia anterior ao paralelo.
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +47,7 @@ on:
       days_back:
         description: 'Quantos dias retroativos processar'
         required: false
-        default: '1'
+        default: '3'
   schedule:
     - cron: '30 12 * * *'   # 08:30 Manaus — dia anterior já fechado
     - cron: '30 15 * * *'   # 11:30 Manaus — segunda tentativa
@@ -63,7 +75,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BAIXA_MODE: ${{ github.event.inputs.modo || 'razao' }}
-          BAIXA_DAYS_BACK: ${{ github.event.inputs.days_back || '1' }}
+          BAIXA_DAYS_BACK: ${{ github.event.inputs.days_back || '3' }}
           BAIXA_UNIDADE_PDV: ${{ secrets.BAIXA_UNIDADE_PDV }}
           BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE || '2026-09-08' }}
         run: python scripts/baixa_estoque_pdv.py
