@@ -200,9 +200,14 @@ EXCECOES = [
  ('C2','PIRAO DE TAMBAQUI','TAMBAQUI',
   'o peixe entraria pelo PPC FUNDO DE PEIXE, que e vazio de proposito (ver excecao C6)', '2026-09-04'),
 
- ('D1','CAIPILE','',
-  'os dois caipiles do CLUBE ROTEROS BAR sairam do cardapio e do PDV em 31/08; '
-  'as vendas que aparecem sao anteriores a inativacao', '2026-09-04'),
+ # EXCECAO REMOVIDA EM 08/09. Eu a escrevi em 04/09 dizendo que os dois caipiles
+ # tinham saido do PDV em 31/08 e que as vendas eram anteriores. E FALSO: em
+ # 08/09 conferi dia a dia e os dois continuam vendendo (icomanda 1209 e 1212,
+ # 16 unidades nos 7 dias anteriores, inclusive no dia 07). Estao inativos so no
+ # nosso cadastro. Pior: a excecao tambem calava um C2 verdadeiro - o caipile de
+ # ABACAXI E ACAI desconta MP PICOLE DE GRAVIOLA.
+ # Licao: excecao baseada em "saiu do cardapio" tem que ser conferida na venda,
+ # nao na palavra. Uma excecao errada e o unico jeito de esta checagem mentir.
 
  # --- falsos positivos que eu conferi um a um ---
  ('C2','MATRINXA DE CASACA','CASACA',
