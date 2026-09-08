@@ -21,8 +21,11 @@ def _vendas30():
     hoje=datetime.date.today().isoformat()
     if os.path.exists(CACHE):
         d=json.load(open(CACHE))
-        if d.get('gerado_em')==hoje: return {k:v for k,v in d['cen'].items()}
-    dono=bx.caixas_por_unidade(); cen=_c.Counter(); desconhecidos=_c.Counter()
+        if d.get('gerado_em')==hoje and d.get('v')==2:
+            return ({k:v for k,v in d['cen'].items()},
+                    {int(k):v for k,v in d['bruto'].items()},
+                    {int(k):v for k,v in d['nomes'].items()})
+    dono=bx.caixas_por_unidade(); cen=_c.Counter(); desconhecidos=_c.Counter(); nomes={}
     hj=datetime.date.today()
     for i in range(1,31):
         dia=(hj-datetime.timedelta(days=i)).isoformat()
@@ -38,7 +41,9 @@ def _vendas30():
             for cm in (cx.get('comandas') or []):
                 if cm.get('cancelada'): continue
                 for it in (cm.get('itens') or []):
-                    if it.get('status')=='ativo': cen[it.get('produto_id')]+=it.get('quantidade') or 0
+                    if it.get('status')=='ativo':
+                        cen[it.get('produto_id')]+=it.get('quantidade') or 0
+                        nomes[it.get('produto_id')]=it.get('produto_nome') or '?'
     if desconhecidos:
         print('  aviso: %d dia(s) com caixa sem loja identificada (relatorio do PDV nao importado): %s'
               %(len(desconhecidos),', '.join(sorted(desconhecidos))))
@@ -48,9 +53,17 @@ def _vendas30():
     out=_c.Counter()
     for pdvid,q in cen.items():
         if mp.get(pdvid): out[mp[pdvid]]+=q
-    json.dump({'gerado_em':datetime.date.today().isoformat(),'cen':dict(out)},open(CACHE,'w'))
-    return dict(out)
-_CEN=_vendas30()
+    # BRUTO por item do PDV, ANTES de passar pelo mapeamento. Sem isso a checagem
+    # A1 nunca teria como acusar nada: item nao mapeado nao tem produto_id nosso,
+    # entao ele sumia aqui e o universo ja nascia so com quem estava mapeado. A1
+    # dava zero por construcao, nao por estar tudo certo. Achado em 08/09/2026,
+    # quando o item 2388 (CAIPILE LIMAO E GRAVIOLA, resto do CLUBE ROTEROS BAR)
+    # apareceu vendendo sem mapeamento e a checagem tinha dito zero.
+    json.dump({'gerado_em':datetime.date.today().isoformat(),'v':2,'cen':dict(out),
+               'bruto':{str(k):v for k,v in cen.items() if k is not None},
+               'nomes':{str(k):v for k,v in nomes.items()}},open(CACHE,'w'))
+    return dict(out),{k:v for k,v in cen.items() if k is not None},dict(nomes)
+_CEN,_BRUTO,_NOMEPDV=_vendas30()
 casa={k:{"qtd":v} for k,v in _CEN.items()}
 def vend(p): return casa.get(p,{}).get('qtd',0) or 0
 def nome(p): return (P.get(p) or {}).get('nome','?')
@@ -91,9 +104,32 @@ def ingw(s): return {t for t in sn(s).split() if t in VOCAB}
 ACH=collections.defaultdict(list)
 def add(p,c,t): ACH[p].append((c,t))
 mapeados={m['produto_id'] for m in mapa.values()}
+
+# A1 e o unico teste que roda do lado do PDV, e tem que ser assim: um item que
+# vende sem mapeamento nao tem produto_id nosso, entao ele nao existe em VEND.
+# Enquanto A1 morava no laco abaixo ele dava zero por construcao.
+#
+# pdv_map tem TRES estados, e confundi-los e o jeito facil de esta checagem
+# virar barulho. `mapa` (de bx.carregar) so traz status='mapeado', entao comparar
+# com ele acusaria como furo as 38 linhas 'ignorar' - que sao decisao tomada:
+# BRA/EST/MAO sao origem do cliente, COM GELO e talheres sao modificador, e as
+# guarnicoes viraram 'ignorar' de proposito em 18/08 e 01/09 (ver a memoria
+# project_guarnicao). Decisao registrada nao e pendencia.
+# Sobram dois casos de verdade:
+#   SEM LINHA - a curadoria nunca viu esse item
+#   pendente  - viu e ainda nao decidiu
+_PDVMAP={m['icomanda_produto_id']:m['status'] for m in
+         bx.sb_get_all('pdv_map?select=icomanda_produto_id,status')}
+SEM_LINHA,PENDENTES=[],[]
+for _pdvid,_q in sorted(_BRUTO.items(),key=lambda x:-x[1]):
+    _st=_PDVMAP.get(_pdvid)
+    if _st in ('mapeado','ignorar'): continue
+    (PENDENTES if _st=='pendente' else SEM_LINHA).append(
+        (_pdvid,_NOMEPDV.get(_pdvid,'?'),_q))
+NAO_MAPEADOS=SEM_LINHA+PENDENTES
+
 for p in VEND:
-    if p not in mapeados: add(p,'A1','vende e nao tem mapeamento no pdv_map')
-    elif p not in fpp and p not in contado: add(p,'A2','mapeado e sem ficha ativa')
+    if p not in fpp and p not in contado: add(p,'A2','mapeado e sem ficha ativa')
     elif p in fpp and not ipf.get(fpp[p]['ficha_id']): add(p,'A3','ficha ativa e VAZIA')
     elif not BOM[p][0]: add(p,'A4','a ficha nao chega em item de estoque')
     if ATIVO.get(p) is False: add(p,'D1','produto INATIVO mas vendendo')
@@ -251,7 +287,7 @@ for pid in list(ACH):
     else: del ACH[pid]
 
 json.dump(dict(ACH),open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'.checagem_ultimo.json'),'w'))
-NOMES={'A1':'vende e nao tem mapeamento','A2':'mapeado sem ficha','A3':'ficha ativa e vazia','A4':'ficha nao chega em estoque',
+NOMES={'A1':'vende sem curadoria (sem linha ou pendente)','A2':'mapeado sem ficha','A3':'ficha ativa e vazia','A4':'ficha nao chega em estoque',
 'B1':'insumo sem setor na contagem','B2':'insumo em varios setores','B3':'insumo inativo','B4':'insumo com custo zero',
 'C1':'ficha de outro produto','C2':'nome cita ingrediente que a receita nao tem','C3':'custo maior que a venda',
 'C4':'ingrediente com quantidade zero','C6':'atravessa preparo de ficha vazia','C7':'rendimento invalido',
@@ -262,11 +298,24 @@ print("universo: %d produtos venderam nos ultimos 30 dias\n"%len(VEND))
 print("%-5s %-46s %8s %9s"%("cod","o que e","produtos","un/30d"))
 print("-"*72)
 for c in ['A1','A2','A3','A4','B1','B2','B3','B4','C1','C2','C3','C4','C6','C7','C8','C9','C10','D1','D2','D3','D4']:
+    if c=='A1':   # conta itens do PDV, nao produtos nossos: eles nao tem cadastro
+        print("%-5s %-46s %8d %9.0f"%(c,NOMES[c],len(NAO_MAPEADOS),sum(q for _,_,q in NAO_MAPEADOS)))
+        continue
     ps={p for p,v in ACH.items() if any(x[0]==c for x in v)}
     print("%-5s %-46s %8d %9.0f"%(c,NOMES[c],len(ps),sum(vend(p) for p in ps)))
 print("-"*72)
 print("produtos com achado: %d de %d"%(len(ACH),len(VEND)))
 print()
+for _titulo,_lista in (
+    ("A1a - o PDV vendeu e a curadoria NUNCA VIU (nem linha em pdv_map):",SEM_LINHA),
+    ("A1b - visto e ainda sem decisao (status pendente):",PENDENTES)):
+    if not _lista: continue
+    print(_titulo)
+    print("      esse consumo nao e descontado de ninguem.")
+    for _id,_nm,_q in _lista:
+        print("   icomanda %-7s %-46s %7.0f un/30d"%(_id,_nm[:46],_q))
+    print()
+
 print("%d achado(s) suprimido(s) por excecao conferida:"%len(SUPRIMIDOS))
 vis=set()
 for cod,nm,motivo in SUPRIMIDOS:
