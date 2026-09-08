@@ -12567,9 +12567,18 @@ function _ymd(dt) { return dt.getFullYear() + '-' + String(dt.getMonth() + 1).pa
 
 // Modificadores / marcadores do PDV que NÃO baixam estoque.
 // BRA/EST/MAO = origem do cliente (turista BR / estrangeiro / cliente local).
+// G 001..G 0NN = guia de turismo. O garçom lança o número do guia na comanda
+// para o restaurante saber quem trouxe o grupo. É informativo, igual a BRA/EST/
+// MAO, e não sai nada do estoque. Vêm em série numerada (icomanda 3071 em
+// diante), então precisam de padrão e não de lista: quando um guia novo for
+// cadastrado, ele já nasce como 'ignorar' em vez de virar pendência.
+// (Confirmado pelo Wagner em 08/09/2026. No iComanda esses cadastros aparecem
+// com custo de R$ 0,60 porque ficaram com a ficha do caldinho pendurada - é
+// duplicação lá, não afeta a nossa baixa, que ignora o item inteiro.)
 function pdvEhModificador(nome) {
   const n = _pdvNorm(nome).toUpperCase();
   if (['BRA', 'EST', 'MAO', 'GUIA', 'BANHEIRO'].includes(n)) return true;
+  if (/^G ?\d{1,3}$/.test(n)) return true;
   if (/TALHER|DESCARTAVEL|COUVERT/.test(n)) return true;
   if (/^(SIM|NAO),/.test(n)) return true;
   if (/^(COM|SEM) GELO$/.test(n)) return true;
