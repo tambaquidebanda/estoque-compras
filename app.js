@@ -349,9 +349,23 @@ function toggleFormCad(key) {
 // ═══════════════════════════════════════════════════════════════
 // DATE HELPERS
 // ═══════════════════════════════════════════════════════════════
+
+// A data de HOJE no relogio de quem esta usando o sistema - NAO em UTC.
+// `new Date().toISOString().slice(0,10)` devolve a data em UTC, e Manaus e
+// UTC-4: das 20h em diante ele ja responde o dia seguinte. Como a contagem e
+// feita entre 21h e 23h, isso carimbava a noite inteira um dia a frente.
+// Medido em 09/09/2026: 127 de 168 inventarios do Centro desde 01/09 estavam
+// um dia a frente. Os outros 41 nao estavam porque a tela tinha sido ABERTA
+// antes das 20h (o campo data-inv e preenchido uma vez, no DOMContentLoaded),
+// e por isso o erro vinha em blocos de uma noite inteira - parecia um segundo
+// caminho no codigo, e nao era: e sempre este.
+function hojeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function setHoje(id) {
   const el = document.getElementById(id);
-  if (el) el.value = new Date().toISOString().split('T')[0];
+  if (el) el.value = hojeLocal();
 }
 
 function setMes(id) {
@@ -660,7 +674,7 @@ function limparFiltrosBI() {
 
 async function carregarBI() {
   // Período padrão: ano corrente
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeLocal();
   const anoIni = hoje.slice(0, 4) + '-01-01';
   const iniEl = document.getElementById('bi-ini');
   const fimEl = document.getElementById('bi-fim');
@@ -2991,7 +3005,7 @@ async function selecionarSetorInv(setor) {
 
 async function selecionarGrupoInv(grupo) {
   _liberarTela('pedido-interno');   // outro grupo = outro pedido
-  const _hoje = new Date().toISOString().split('T')[0];
+  const _hoje = hojeLocal();
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo)
     .eq('data', _hoje).eq('status', 'pendente').limit(1);
@@ -4661,7 +4675,7 @@ async function criarSolicitacaoTransf(itens, origem = 'manual') {
     unidade_origem: 'Estoque Central',
     responsavel: resp,
     status: 'pendente',
-    data: new Date().toISOString().split('T')[0],
+    data: hojeLocal(),
     origem,
   }).select().single();
   if (error || !pedido) { toast('Erro ao criar solicitação.', 'erro'); return null; }
@@ -4903,7 +4917,7 @@ async function _enviarEmergencia() {
   if (!itens.length) { toast('Adicione ao menos um produto.', 'warn'); return; }
 
   const numPed = await _proximoNumPedido();
-  const data   = new Date().toISOString().slice(0, 10);
+  const data   = hojeLocal();
 
   const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
     num_pedido: numPed, data,
@@ -5531,7 +5545,7 @@ async function confirmarPedidoFornecedor() {
 
   const tbody = document.getElementById('lst-planejamento');
   const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const data  = document.getElementById('plan-data')?.value || hojeLocal();
 
   const linhasRepor = _planLinhasDados(keys).filter(l => l.forn === forn && l.comprar > 0);
   if (!linhasRepor.length) { toast(`Nenhum produto de "${forn}" com status 🚨 Repor.`, 'erro'); return; }
@@ -5559,7 +5573,7 @@ async function gerarPedidosPlanejamento() {
 
   const tbody = document.getElementById('lst-planejamento');
   const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const data  = document.getElementById('plan-data')?.value || hojeLocal();
 
   const todasLinhas = _planLinhasDados(keys).filter(l => l.comprar > 0);
   if (!todasLinhas.length) { toast('Nenhum produto com quantidade a comprar > 0.', 'erro'); return; }
@@ -5594,7 +5608,7 @@ function salvarLimparLista() {
 }
 
 function imprimirPlanejamento() {
-  const data   = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const data   = document.getElementById('plan-data')?.value || hojeLocal();
   const dataBR = data.split('-').reverse().join('/');
   const tbody  = document.getElementById('lst-planejamento');
   const keys   = JSON.parse(tbody.dataset.keys || '[]');
@@ -5648,7 +5662,7 @@ function imprimirPlanejamento() {
 function imprimirItensOKPlan() {
   const tbody = document.getElementById('lst-planejamento');
   const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || new Date().toISOString().split('T')[0];
+  const data  = document.getElementById('plan-data')?.value || hojeLocal();
   const dataBR = data.split('-').reverse().join('/');
 
   const itensOK = keys.filter(key => {

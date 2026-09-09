@@ -40,7 +40,7 @@ Uso:
     CMP_INICIO=2026-09-08 CMP_DIAS=15 CMP_UNIDADE=Centro   (padroes)
     CMP_DETALHE=20   quantas linhas de insumo mostrar por dia (0 = so o resumo)
 """
-import os, sys, json, collections, datetime, urllib.parse, importlib.util
+import os, re, sys, json, collections, datetime, urllib.parse, importlib.util
 
 AQUI    = os.path.dirname(os.path.abspath(__file__))
 INICIO  = os.environ.get('CMP_INICIO', '2026-09-08')
@@ -53,6 +53,7 @@ spec = importlib.util.spec_from_file_location('bx', os.path.join(AQUI, 'baixa_es
 bx = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bx)
 G = bx.sb_get_all
+MANAUS = bx.MANAUS
 
 spec2 = importlib.util.spec_from_file_location('sim', os.path.join(AQUI, 'simular_mundo_paralelo.py'))
 
@@ -68,6 +69,56 @@ def dias():
     return [(d0 + datetime.timedelta(days=i)).isoformat() for i in range(NDIAS)]
 
 
+DATA_CONTAGEM = os.environ.get('CMP_DATA_CONTAGEM', 'criado')
+
+
+def dia_da_contagem(h):
+    """De que DIA e esta contagem - pelo relogio, nao pelo campo `data`.
+
+    O campo est_inventarios.data e gravado em UTC pela tela (contagem.html:938,
+    contagem.html:1399, app.js:354). Como a contagem e feita entre 21h e 23h de
+    Manaus, isso e 01h-03h do dia seguinte em UTC: o carimbo sai um dia a frente.
+    Medido em 09/09/2026 nos 168 inventarios do Centro desde 01/09: 127 (76%)
+    um dia a frente, 41 (24%) certos - MISTURADO dentro do mesmo setor e da
+    mesma hora, o que quer dizer que existe um segundo caminho no codigo que
+    grava a data e ainda nao foi achado.
+
+    Por ser misturado, deslocar o bloco inteiro em um dia nao conserta - foi
+    testado em 09/09 e PIOROU (erro de 85% para 206%, cobertura de 100% para
+    35%): quem ja estava certo passava a errar. O conserto e por inventario,
+    aqui: cada contagem recebe o dia do seu proprio `criado_em` em Manaus.
+
+    Isso so vale porque a contagem e FISICA a noite - confirmado pelo Wagner em
+    09/09/2026. Se fosse contada de manha e digitada a noite, o `criado_em`
+    seria a hora da digitacao e datar por ele trocaria um erro por outro.
+
+    CMP_DATA_CONTAGEM=gravada volta ao comportamento antigo (confia no campo),
+    para reproduzir numeros anteriores a esta correcao.
+    """
+    if DATA_CONTAGEM == 'gravada':
+        return h['data']
+    t = h.get('criado_em')
+    if not t:
+        return h['data']
+    try:
+        return _para_manaus(t).date().isoformat()
+    except Exception:
+        return h['data']
+
+
+def _para_manaus(t):
+    """ISO do Postgres -> datetime em Manaus. O Python 3.9 so aceita 3 ou 6
+    casas de fracao de segundo, e o Supabase costuma devolver 5."""
+    t = t.replace('Z', '+00:00')
+    m = re.match(r'^(.*\.)(\d+)(.*)$', t)
+    if m:
+        t = m.group(1) + m.group(2).ljust(6, '0')[:6] + m.group(3)
+    d = datetime.datetime.fromisoformat(t)
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.astimezone(MANAUS)
+
+
 def contagens(desde):
     """{(setor, produto, dia): quantidade contada, COMO FOI DIGITADA}.
 
@@ -77,8 +128,11 @@ def contagens(desde):
     fosse do Centro, porque os nomes de setor se repetem entre unidades.
     """
     unid = urllib.parse.quote(UNIDADE)
+    # busca um dia antes: uma contagem cujo `data` esta um dia a frente pode
+    # pertencer a `desde` depois de derivada, e sem essa folga ela nao viria.
+    janela = (datetime.date.fromisoformat(desde) - datetime.timedelta(days=1)).isoformat()
     inv  = G(f'est_inventarios?select=id,setor,grupo,data,criado_em,local'
-             f'&data=gte.{desde}&local=eq.{unid}')
+             f'&data=gte.{janela}&local=eq.{unid}')
     cab  = {i['id']: i for i in inv}
     itens = []
     for lote in em_lotes(list(cab)):
@@ -90,7 +144,7 @@ def contagens(desde):
         h = cab[x['inventario_id']]
         if h['setor'] in SETORES_IGNORAR:
             continue
-        k = (h['setor'], x['produto_id'], h['data'])
+        k = (h['setor'], x['produto_id'], dia_da_contagem(h))
         v = x['total'] or 0
         if k not in quando or h['criado_em'] > quando[k]:
             quando[k] = h['criado_em']; out[k] = v
@@ -100,11 +154,22 @@ def contagens(desde):
 
 
 def entradas(desde):
-    """{(setor, produto, dia): quantidade que ENTROU} - so movimento oficial."""
+    """{(setor, produto, dia): quantidade que ENTROU} - so movimento oficial.
+
+    Mesmo conserto de data das contagens, e pela mesma razao: quem registra a
+    entrada depois das 20h de Manaus ja esta no dia seguinte em UTC. Medido em
+    09/09/2026 nos 1365 movimentos desde 01/09: 1296 certos e 69 um dia a
+    frente - e os 69 sao exatamente os 69 registrados as 22h e 23h. Os demais
+    caem entre 08h e 17h, onde UTC e Manaus concordam.
+
+    Sem este conserto, corrigir so a contagem desalinha os dois lados da conta.
+    """
     out = collections.defaultdict(float)
-    for m in G(f'est_movimentacoes?select=produto_id,local,data,tipo,quantidade&data=gte.{desde}'):
+    janela = (datetime.date.fromisoformat(desde) - datetime.timedelta(days=1)).isoformat()
+    for m in G(f'est_movimentacoes?select=produto_id,local,data,criado_em,tipo,quantidade'
+               f'&data=gte.{janela}'):
         if m['tipo'] in ('pedido_interno_entrada', 'recebimento', 'devolucao'):
-            out[(m['local'], m['produto_id'], m['data'])] += m['quantidade'] or 0
+            out[(m['local'], m['produto_id'], dia_da_contagem(m))] += m['quantidade'] or 0
     return out
 
 

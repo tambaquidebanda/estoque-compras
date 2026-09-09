@@ -301,6 +301,20 @@ let sb   = null;
 let user = null;
 let _pedidoAtual = null;
 
+// A data de HOJE no relogio de quem esta usando o sistema - NAO em UTC.
+// `new Date().toISOString().slice(0,10)` devolve a data em UTC, e Manaus e
+// UTC-4: das 20h em diante ele ja responde o dia seguinte. Como a contagem e
+// feita entre 21h e 23h, isso carimbava a noite inteira um dia a frente.
+// Medido em 09/09/2026: 127 de 168 inventarios do Centro desde 01/09 estavam
+// um dia a frente. Os outros 41 nao estavam porque a tela tinha sido ABERTA
+// antes das 20h (o campo data-inv e preenchido uma vez, no DOMContentLoaded),
+// e por isso o erro vinha em blocos de uma noite inteira - parecia um segundo
+// caminho no codigo, e nao era: e sempre este.
+function hojeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function mostrar(id) {
   ['tela-login','tela-lista','tela-pedido'].forEach(t => {
     const el = document.getElementById(t);
@@ -435,7 +449,7 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
   const { data: itensOrig } = await sb.from('cmp_compras')
     .select('id,plano_conta').eq('pedido_num', pedido_num);
 
-  const dataRec = new Date().toISOString().split('T')[0];
+  const dataRec = hojeLocal();
   const venc = conta.vencimento || dataRec;
 
   await enviarDespesaCompExternoMobile({
@@ -452,7 +466,7 @@ async function _executarFinalizarRegularMob(pedido_num, conta, ref) {
   const totalAcum = await _totalRecebComItem(pedido_num);
   if (!totalAcum) return;
 
-  const dataRec = new Date().toISOString().split('T')[0];
+  const dataRec = hojeLocal();
   const venc = conta?.vencimento || dataRec;
 
   // Grava o valor real recebido — cria a conta se ela não existir (ex: recebimento antigo que não a criou)

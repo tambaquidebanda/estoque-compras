@@ -927,6 +927,20 @@ function toast(msg, tipo) {
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, 3500);
 }
+// A data de HOJE no relogio de quem esta usando o sistema - NAO em UTC.
+// `new Date().toISOString().slice(0,10)` devolve a data em UTC, e Manaus e
+// UTC-4: das 20h em diante ele ja responde o dia seguinte. Como a contagem e
+// feita entre 21h e 23h, isso carimbava a noite inteira um dia a frente.
+// Medido em 09/09/2026: 127 de 168 inventarios do Centro desde 01/09 estavam
+// um dia a frente. Os outros 41 nao estavam porque a tela tinha sido ABERTA
+// antes das 20h (o campo data-inv e preenchido uma vez, no DOMContentLoaded),
+// e por isso o erro vinha em blocos de uma noite inteira - parecia um segundo
+// caminho no codigo, e nao era: e sempre este.
+function hojeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function mostrarModal(id) { document.getElementById(id).style.display = 'flex'; }
 function fecharModal(id)  { document.getElementById(id).style.display = 'none'; }
 function fecharSePano(e, id) { if (e.target.id === id) fecharModal(id); }
@@ -935,7 +949,7 @@ function fecharSePano(e, id) { if (e.target.id === id) fecharModal(id); }
 document.addEventListener('DOMContentLoaded', async () => {
   sb   = supabase.createClient(SB_URL, SB_KEY);
   _dia = DIAS_SEM[new Date().getDay()];
-  document.getElementById('data-inv').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('data-inv').value = hojeLocal();
   atualizarBtnsDia();
   const { data: { session } } = await sb.auth.getSession();
   if (session) { user = session.user; entrar(); }
@@ -1288,7 +1302,7 @@ function renderGrupos() {
   }
 }
 async function selecionarGrupo(grupo) {
-  const _hoje = new Date().toISOString().split('T')[0];
+  const _hoje = hojeLocal();
   const { data: pedAberto } = await sb.from('pedidos_internos')
     .select('num_pedido,status').eq('setor', _setor).eq('obs', grupo)
     .eq('data', _hoje).eq('status', 'pendente').limit(1);
@@ -1396,7 +1410,7 @@ async function salvarSaldoInicialSetorMob() {
   if (!confirm(`Salvar saldo inicial de ${_setor} / ${_grupo}?`)) return;
   const btn = document.getElementById('btn-saldo-inicial');
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-  const data = document.getElementById('inp-data')?.value || new Date().toISOString().split('T')[0];
+  const data = document.getElementById('inp-data')?.value || hojeLocal();
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const agora = new Date().toISOString();
 
@@ -1920,7 +1934,7 @@ async function _enviarEmergencia() {
 
   if (!itens.length) { toast('Adicione ao menos um produto.', 'err'); return; }
 
-  const data = new Date().toISOString().slice(0, 10);
+  const data = hojeLocal();
   const num_pedido = await _proximoNumPedido();
 
   const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
