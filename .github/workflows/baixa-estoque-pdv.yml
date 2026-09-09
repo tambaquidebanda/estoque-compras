@@ -49,13 +49,29 @@ on:
         required: false
         default: '3'
   schedule:
-    - cron: '30 12 * * *'   # 08:30 Manaus — dia anterior já fechado
-    - cron: '30 15 * * *'   # 11:30 Manaus — segunda tentativa
-    # Duas tentativas porque o dia é recusado quando o relatório do PDV ainda
-    # não foi importado (aparece caixa sem loja identificada). Rodar duas vezes
-    # é seguro: há duas travas independentes contra lançamento duplo — o
+    - cron: '7 5 * * *'     # 01:07 Manaus — o jantar de ontem já fechou
+    - cron: '23 7 * * *'    # 03:23 Manaus
+    - cron: '47 9 * * *'    # 05:47 Manaus
+    - cron: '13 12 * * *'   # 08:13 Manaus — última rede, antes de a equipe chegar
+    # POR QUE DE MADRUGADA (mudado em 09/09/2026, a pedido: o resultado precisa
+    # estar pronto cedo para liberar produto para os setores). Medido nos dias
+    # 03 a 08/09, o último caixa fechou entre 22:57 e 23:32 — depois disso não
+    # falta mais nada para calcular o dia. Antes a
+    # rodada era às 08:30 porque ela dependia do robô `pull-pdv` do repositório
+    # do financeiro ter importado o dia (é ele que dizia de que loja era cada
+    # caixa). Essa dependência morreu: agora o script pergunta a loja direto ao
+    # iComanda (unidade_do_caixa). Medição que motivou tudo: em 4 dos 7 dias até
+    # 08/09 o mapa do financeiro só ficou completo ao MEIO-DIA do dia seguinte —
+    # rodar às 08:30 teria derrubado o dia nesses 4.
+    #
+    # POR QUE QUATRO TENTATIVAS, E EM MINUTO QUEBRADO. O `schedule` do GitHub é
+    # oferecido, não garantido: nas rodadas de 05 a 08/09 o atraso foi de 78 a
+    # 320 minutos, e a fila é pior em minuto redondo (:00 e :30). Rodar várias
+    # vezes é seguro: há duas travas independentes contra lançamento duplo — o
     # controle por modo em pdv_baixa_ctrl e a existência do próprio lançamento
-    # no razão (ja_tem_movimento).
+    # no razão (ja_tem_movimento) — e uma terceira contra lançar dia pela
+    # metade: se algum caixa ainda estiver aberto o script pula o dia limpo
+    # (DiaAindaAberto) e a tentativa seguinte pega.
 
 concurrency:
   group: baixa-estoque-pdv

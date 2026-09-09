@@ -125,14 +125,19 @@ _CAIXAS_UNIDADE = None
 def caixas_por_unidade():
     """{ caixa_id(int) -> nome da unidade } — de qual loja é cada caixa do iComanda.
 
-    A API do iComanda NÃO diz a loja: ela devolve as duas juntas (o mesmo vkt_id
-    para tudo), sem nenhum campo de unidade no topo, no caixa, na comanda ou no
-    item. Quem sabe é o nosso próprio banco: `pdv_vendas.caixa_ext` guarda o
-    caixa_id do iComanda e a mesma linha traz `unidade_nome`. Conferido em
-    28/08/2026: 72 caixas mapeados, nenhum ambíguo, e o faturado de cada caixa
-    bate ao centavo com o que o financeiro registra por unidade.
+    Fonte BARATA (uma consulta só, para todos os caixas de uma vez): o nosso banco.
+    `pdv_vendas.caixa_ext` guarda o caixa_id do iComanda e a mesma linha traz
+    `unidade_nome`. Conferido em 28/08/2026: 72 caixas mapeados, nenhum ambíguo,
+    e o faturado de cada caixa bate ao centavo com o financeiro por unidade.
 
-    Sem isso a baixa descontava venda do Parque 10 do estoque do Centro —
+    Mas esta fonte CHEGA TARDE: quem preenche pdv_vendas é o robô `pull-pdv` do
+    repositório do financeiro, e o caixa é um número novo todo dia. Medido em
+    09/09/2026, dia a dia: em 4 dos 7 dias anteriores o último caixa do dia só
+    ficou conhecido ao MEIO-DIA do dia seguinte. Por isso ela não é mais a única
+    fonte — quem não estiver aqui é perguntado direto ao iComanda, em
+    unidade_do_caixa(). Ver o porquê de tudo isso em vendas_do_dia().
+
+    Sem saber a loja a baixa descontava venda do Parque 10 do estoque do Centro —
     15,5% a mais em 8 dias medidos, sendo R$ 7,2 mil só de banda de tambaqui.
     """
     global _CAIXAS_UNIDADE
@@ -148,22 +153,72 @@ def caixas_por_unidade():
     return _CAIXAS_UNIDADE
 
 
+class DiaAindaAberto(Exception):
+    """O dia existe mas ainda não fechou — não é erro, é cedo demais. Pular e voltar depois."""
+
+
+_UNIDADE_DO_CAIXA = {}
+
+def unidade_do_caixa(caixa_id, data):
+    """Pergunta ao iComanda de que loja é UM caixa. None se ele não souber responder.
+
+    Endpoint `detalhamento.php` (o mesmo que o pull_caixa.py do financeiro usa):
+    ele devolve `cabecalho.unidades`, que o endpoint raiz não traz. Conferido em
+    09/09/2026 contra os 4 caixas do dia 08/09, cuja loja já era conhecida por
+    pdv_vendas: 4 de 4 iguais, incluindo o único do Parque 10 (12930).
+
+    Uma chamada por caixa desconhecido, com cache na memória do processo — são
+    ~4 caixas por dia, então no pior caso isso é 4 chamadas a mais por dia.
+    """
+    if caixa_id in _UNIDADE_DO_CAIXA:
+        return _UNIDADE_DO_CAIXA[caixa_id]
+    qs = urllib.parse.urlencode({'api_key': API_KEY, 'data_inicial': data,
+                                 'data_final': data, 'caixa_ids': str(caixa_id),
+                                 'blocos': 'servicos_descontos'})
+    url = f'{API_URL}/detalhamento.php?{qs}'
+    req = urllib.request.Request(url, headers={'Accept': 'application/json',
+                                               'User-Agent': 'tdb-baixa/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            j = json.load(r)
+        un = ((j.get('cabecalho') or {}).get('unidades') or [None])[0]
+    except Exception as e:
+        print(f'  aviso: nao consegui perguntar a loja do caixa {caixa_id} ao iComanda ({e})')
+        un = None
+    _UNIDADE_DO_CAIXA[caixa_id] = un
+    return un
+
+
 def vendas_do_dia(data):
     """{ icomanda_produto_id(int) -> qtd } dos itens ativos de comandas não canceladas,
     SÓ da unidade em UNIDADE_PDV.
 
-    Caixa de outra loja é pulado. Caixa desconhecido COM venda derruba o dia de
-    propósito: incluir seria descontar venda de outra loja do nosso estoque, e
-    pular seria perder venda nossa sem avisar. O conserto é importar o relatório
-    do PDV daquele dia (é ele que preenche pdv_vendas.caixa_ext) e rodar de novo.
+    Caixa de outra loja é pulado. Caixa que ninguém sabe de que loja é, e que TEM
+    venda, derruba o dia de propósito: incluir seria descontar venda de outra loja
+    do nosso estoque, e pular seria perder venda nossa sem avisar. Antes de
+    derrubar, agora pergunta ao próprio iComanda (unidade_do_caixa) — foi isso que
+    tirou a dependência de esperar o robô do financeiro importar o dia.
+
+    E o dia só é processado com TODOS os caixas fechados. Enquanto o jantar está
+    aberto o dia existe pela metade: baixar assim lançaria meio dia no razão e a
+    trava do dia marcaria como pronto, perdendo o resto para sempre. Não era risco
+    quando a rodada era às 08:30 (tudo já fechado); passou a ser quando ela foi
+    para a madrugada.
     """
     j = buscar_dia(data)
     dono = caixas_por_unidade()
-    vendas, desconhecidos, pulados = {}, [], 0
+    vendas, desconhecidos, abertos, pulados = {}, [], [], 0
     for cx in (j.get('caixas') or []):
         cid = cx.get('caixa_id')
         un  = dono.get(cid)
         fat = (cx.get('totais') or {}).get('faturado') or 0
+        if (cx.get('status_caixa') or '') != 'fechado':
+            abertos.append((cid, cx.get('tipo_turno'), cx.get('status_caixa')))
+            continue
+        if un is None:
+            un = unidade_do_caixa(cid, data)
+            if un:
+                dono[cid] = un
         if un is None:
             if fat > 0:
                 desconhecidos.append((cid, fat))
@@ -179,11 +234,14 @@ def vendas_do_dia(data):
                     continue
                 pid = it.get('produto_id')
                 vendas[pid] = vendas.get(pid, 0) + (it.get('quantidade') or 0)
+    if abertos:
+        lista = ', '.join(f'caixa {c} ({t or "?"}, {st or "?"})' for c, t, st in abertos)
+        raise DiaAindaAberto(f'{data}: ainda tem caixa aberto — {lista}')
     if desconhecidos:
         lista = ', '.join(f'caixa {c} (R$ {v:,.2f})' for c, v in desconhecidos)
         raise RuntimeError(
-            f'{data}: nao sei de que loja sao estes caixas: {lista}. '
-            f'Importe o relatorio do PDV desse dia (preenche pdv_vendas.caixa_ext) e rode de novo.')
+            f'{data}: nao sei de que loja sao estes caixas: {lista}. Nem pdv_vendas nem o '
+            f'proprio iComanda souberam responder. Confira o caixa no PDV e rode de novo.')
     if pulados:
         print(f'  {data}: {pulados} caixa(s) de outra unidade ignorado(s)')
     return vendas
@@ -478,8 +536,14 @@ def main():
             continue
 
         # consumo: {(insumo_id, setor) -> qtd};  preparos: {preparo_id -> qtd}
-        consumo, fontes, itens_venda, preparos = consumo_do_dia(
-            data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo)
+        try:
+            consumo, fontes, itens_venda, preparos = consumo_do_dia(
+                data, mapa, ficha_por_prod, ings_por_ficha, contado, setor_de, memo)
+        except DiaAindaAberto as e:
+            # Nao e erro: e cedo demais. O dia continua na janela (DAYS_BACK) e a
+            # proxima tentativa pega. So nao pode lancar meio dia e travar o resto.
+            print(f'   ⏳ {e} — nao vou lancar o dia pela metade. Fica para a proxima rodada.')
+            continue
 
         # agrega por INSUMO (para a preview / total) e guarda o detalhe por (insumo,setor) p/ apply
         por_insumo = {}
