@@ -12238,21 +12238,94 @@ function renderSaldo() {
   </tr>`;
 }
 
+// Ajuste manual de saldo: grava QUEM fez (do login — ninguém digita) e POR QUÊ (lista
+// curta, obrigatória). Antes era um prompt() só com o número: de 01 a 10/09/2026 foram 639
+// ajustes no ESTOQUE_LOJA — R$ 86 mil de saída e R$ 76 mil de entrada — todos com o motivo
+// fixo "Ajuste manual de saldo" e nenhum com nome. Na prática o ajuste fazia papel de
+// pedido interno (limão: 95,15 kg recebidos em 08/09, zero pedido para a cozinha, ajuste
+// de −95,15 em 10/09), de contagem do estoque e de correção, e depois não dava para
+// separar uma coisa da outra.
+// `origem` continua 'ajuste_manual' (é a chave das análises); o motivo vai em `motivo`
+// como "Ajuste manual: <motivo>[ — detalhe]" e o nome em `responsavel`.
+const _MOTIVOS_AJUSTE = [
+  'Mercadoria foi para um setor sem pedido interno',
+  'Contagem do estoque',
+  'Correção de lançamento errado',
+  'Perda, quebra ou vencimento',
+  'Saldo inicial',
+  'Outro',
+];
+
+function _nomeUsuario() {
+  return (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
+}
+
+function _pedirAjusteSaldo(nome, local, atual) {
+  return new Promise(resolve => {
+    document.getElementById('modal-ajuste-saldo')?.remove();
+    const opts = _MOTIVOS_AJUSTE.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    const el = document.createElement('div');
+    el.className = 'modal fade'; el.id = 'modal-ajuste-saldo'; el.tabIndex = -1;
+    el.innerHTML = `
+      <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Ajustar saldo</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3"><strong>${esc(nome)}</strong>
+            <div class="text-muted small">${esc(local)} · saldo atual: ${esc(String(atual))}</div></div>
+          <label class="form-label" for="aj-novo">Novo saldo</label>
+          <input id="aj-novo" type="text" inputmode="decimal" class="form-control mb-3" value="${esc(String(atual))}">
+          <label class="form-label" for="aj-motivo">Motivo <span class="text-danger">*</span></label>
+          <select id="aj-motivo" class="form-select mb-2"><option value="">Escolha o motivo…</option>${opts}</select>
+          <input id="aj-obs" type="text" class="form-control" maxlength="200"
+            placeholder="Detalhe (opcional; obrigatório em “Outro”)">
+          <div id="aj-erro" class="text-danger small mt-2" role="alert"></div>
+          <div class="text-muted small mt-2">Fica registrado em nome de <strong>${esc(_nomeUsuario() || '—')}</strong>.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-success" id="aj-ok">Salvar ajuste</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(el);
+    const modal = new bootstrap.Modal(el);
+    let resposta = null;
+    el.querySelector('#aj-ok').onclick = () => {
+      const novoStr = el.querySelector('#aj-novo').value.trim();
+      const motivo  = el.querySelector('#aj-motivo').value;
+      const obs     = el.querySelector('#aj-obs').value.trim();
+      const erro    = el.querySelector('#aj-erro');
+      if (!/\d/.test(novoStr)) { erro.textContent = 'Informe o novo saldo.'; return; }
+      if (!motivo) { erro.textContent = 'Escolha o motivo do ajuste.'; return; }
+      if (motivo === 'Outro' && !obs) { erro.textContent = 'Em “Outro”, descreva o motivo.'; return; }
+      resposta = { novoSaldo: parseQtd(novoStr), motivo: 'Ajuste manual: ' + motivo + (obs ? ' — ' + obs : '') };
+      modal.hide();
+    };
+    el.addEventListener('shown.bs.modal', () => el.querySelector('#aj-novo').select());
+    el.addEventListener('hidden.bs.modal', () => { el.remove(); resolve(resposta); });
+    modal.show();
+  });
+}
+
 async function ajustarSaldoLocal(produto_id, local, nome) {
   const atual = _saldoMatrix[produto_id]?.[local] ?? 0;
-  const novoStr = prompt(`Ajustar saldo de "${nome}" (${local})\nValor atual: ${atual}\n\nNovo saldo:`, atual);
-  if (novoStr === null) return;
-  const novoSaldo = parseQtd(novoStr);
+  const pedido = await _pedirAjusteSaldo(nome, local, atual);
+  if (!pedido) return;                                  // cancelou
+  if (!await _garantirSessao()) return;
+  const novoSaldo = pedido.novoSaldo;
+  const resp = _nomeUsuario();
   const { error } = await sb.from('est_saldo_local')
     .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() },
             { onConflict: 'produto_id,local' });
-  if (error) { toast('Erro: ' + error.message, 'erro'); return; }
+  if (error) { toast(_msgErroBanco(error), 'erro'); return; }
   // Livro-razão: registra o ajuste manual (delta = novo − atual) — best-effort
   const deltaAj = novoSaldo - (Number(atual) || 0);
   if (Math.abs(deltaAj) > 0.0001) {
     try {
       const { error: eLed } = await sb.from('est_movimentacoes')
-        .insert({ produto_id, local, tipo: 'ajuste', quantidade: deltaAj, origem: 'ajuste_manual', motivo: 'Ajuste manual de saldo' });
+        .insert({ produto_id, local, tipo: 'ajuste', quantidade: deltaAj, origem: 'ajuste_manual', motivo: pedido.motivo, responsavel: resp || null });
       if (eLed) console.error('ajuste manual: razão falhou (saldo OK):', eLed.message);
     } catch (e) { console.error('ajuste manual: exceção no razão (saldo OK):', e); }
   }
