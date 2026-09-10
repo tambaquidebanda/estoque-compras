@@ -3344,6 +3344,7 @@ async function salvarInventario() {
 
   const totalPedido = itens.reduce((s, it) => s + it.pedido, 0);
 
+  if (!await _garantirSessao()) return;
   const num_inv = await _proximoNumInv();
 
   const { data: inv, error } = await sb.from('est_inventarios').insert([{
@@ -3351,7 +3352,7 @@ async function salvarInventario() {
     setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido
   }]).select().single();
 
-  if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
+  if (error) { toast(_msgErroBanco(error), 'erro'); return; }
 
   const itensComId = itens.map(it => ({ ...it, inventario_id: inv.id }));
   await sb.from('est_inventario_itens').insert(itensComId);
@@ -3785,6 +3786,77 @@ function _travarEnvio(chave, btnId, aviso) {
   };
 }
 
+// ─── LOGIN CAÍDO ─────────────────────────────────────────────────
+// A tela não percebe sozinha quando o login cai: continua mostrando o nome de quem
+// entrou, deixa contar o grupo inteiro, e só na hora de gravar o banco recusa — as
+// tabelas de contagem só aceitam usuário logado (policy "auth_only", SQL_INVENTARIO.sql),
+// e sem sessão o supabase-js manda a chave pública. Rastro: noite de 09/09/2026, a
+// COZINHA/CONGELADOS e a CHURRASQUEIRA perderam a contagem inteira ("new row violates
+// row-level security policy for table est_inventarios") enquanto o BAR gravava no
+// mesmo minuto; os pedidos de emergência da churrasqueira passaram, porque
+// pedidos_internos não tem essa regra. Nas rotinas de "Salvar Saldo" era pior: o erro
+// nem era conferido, o histórico sumia e a tela dizia "salvo".
+// Por isso: conferir a sessão ANTES da primeira gravação e, se caiu, pedir o login por
+// cima da tela — sem recarregar, para não perder o que foi digitado.
+// NÃO abrir a policy para anon: a chave pública está no código da página.
+function _msgErroBanco(e) {
+  const m = e?.message || String(e || '');
+  if (/row-level security|jwt|not authorized|permission denied/i.test(m))
+    return 'Seu acesso expirou e o banco recusou a gravação. Envie de novo: o sistema vai pedir o login, e o que foi digitado continua na tela.';
+  return 'Erro: ' + m;
+}
+
+async function _garantirSessao() {
+  try {
+    const { data } = await sb.auth.getSession();   // renova sozinha se ainda der
+    if (data?.session) return true;
+  } catch (e) { console.warn('getSession falhou:', e); }
+  return _reentrar();
+}
+
+function _reentrar() {
+  return new Promise(resolve => {
+    document.getElementById('reentrar-overlay')?.remove();
+    const campo = 'width:100%;box-sizing:border-box;padding:10px;margin-bottom:8px;border:1px solid #c9c9c9;border-radius:8px;font-size:1rem';
+    const ov = document.createElement('div');
+    ov.id = 'reentrar-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML = `
+      <div role="dialog" aria-modal="true" aria-labelledby="reentrar-titulo" style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:360px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)">
+        <div id="reentrar-titulo" style="font-weight:700;font-size:1.1rem;margin-bottom:6px">Seu acesso expirou</div>
+        <div style="font-size:.9rem;color:#555;margin-bottom:14px">Entre de novo para gravar. O que você digitou continua na tela.</div>
+        <input id="reentrar-email" type="email" placeholder="seu@email.com" autocomplete="username" style="${campo}">
+        <input id="reentrar-senha" type="password" placeholder="senha" autocomplete="current-password" style="${campo}">
+        <div id="reentrar-erro" style="color:#c0392b;font-size:.85rem;min-height:1.2em;margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px">
+          <button id="reentrar-cancelar" type="button" style="flex:1;padding:10px;border:1px solid #c9c9c9;background:#f2f2f2;color:#1a1a1a;border-radius:8px;font-size:1rem">Cancelar</button>
+          <button id="reentrar-ok" type="button" style="flex:1;padding:10px;border:0;background:#0d6efd;color:#fff;border-radius:8px;font-size:1rem;font-weight:600">Entrar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const $ = id => document.getElementById(id);
+    $('reentrar-email').value = user?.email || '';
+    (user?.email ? $('reentrar-senha') : $('reentrar-email')).focus();
+    const fim = ok => { ov.remove(); resolve(ok); };
+    const entrarDeNovo = async () => {
+      const email = $('reentrar-email').value.trim(), senha = $('reentrar-senha').value;
+      if (!email || !senha) { $('reentrar-erro').textContent = 'Preencha e-mail e senha.'; return; }
+      const b = $('reentrar-ok'); b.disabled = true; b.textContent = 'Entrando...';
+      const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
+      if (error) {
+        $('reentrar-erro').textContent = /fetch|network/i.test(error.message)
+          ? 'Sem internet. Confira a conexão e tente de novo.' : 'E-mail ou senha incorretos.';
+        b.disabled = false; b.textContent = 'Entrar'; return;
+      }
+      user = data.user;
+      fim(true);
+    };
+    $('reentrar-cancelar').onclick = () => fim(false);
+    $('reentrar-ok').onclick = entrarDeNovo;
+    $('reentrar-senha').onkeydown = e => { if (e.key === 'Enter') entrarDeNovo(); };
+  });
+}
+
 // ─── Numeracao: quem da o numero e o banco ───────────────────────
 // Antes o numero saia do aparelho: le o maior num_pedido, soma 1. Dois envios ao
 // mesmo tempo (dois setores, dois celulares) liam o mesmo maior e nasciam com o
@@ -3888,6 +3960,7 @@ async function _enviarPedidoInterno() {
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
   if (!await _conferirContagemFora(itensCont, _invSetor, _invLocal)) return;
+  if (!await _garantirSessao()) return;
 
   const num_inv   = await _proximoNumInv();
 
@@ -3895,7 +3968,7 @@ async function _enviarPedidoInterno() {
     num_inv, data, local: _invLocal, responsavel: resp,
     setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido,
   }]).select().single();
-  if (eInv) { toast('Erro ao salvar contagem: ' + eInv.message, 'erro'); return; }
+  if (eInv) { toast(_msgErroBanco(eInv), 'erro'); return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
@@ -3951,6 +4024,8 @@ async function salvarSaldoContagemDesktop() {
     unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
   }));
 
+  if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; } return; }
+
   // Registra em est_inventarios para histórico
   const num_inv   = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
@@ -3989,6 +4064,8 @@ async function salvarSaldoInicialSetor() {
     total: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
     unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
   }));
+
+  if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Saldo Inicial'; } return; }
 
   // Histórico em est_inventarios
   const num_inv   = await _proximoNumInv();
@@ -4546,28 +4623,52 @@ async function abrirReceberPedido(pedidoId) {
   new bootstrap.Modal(document.getElementById('modal-receber-pedido')).show();
 }
 
+// Receber pedido interno: trava de voo no botão + RESERVA do pedido no banco antes de
+// mexer em qualquer saldo. A trava sozinha não basta (dois aparelhos, ou a tela reaberta);
+// a reserva é um UPDATE condicional — só passa se o pedido ainda está 'liberado' — e o
+// Postgres garante que, de N toques simultâneos, só um encontra 'liberado'.
+// Rastro: sem isso o mesmo pedido entrava várias vezes EM PARALELO — PED-2417 (COZINHA,
+// 10/09/2026 08:35) gravou 20 produtos x 6 cópias em 3 segundos; de 01 a 10/09 foram
+// 388 linhas a mais, ~R$ 25 mil saindo do ESTOQUE_LOJA e entrando nos setores só no
+// sistema. O 7eeeed7 (26/08) travou o ENVIO do pedido, não o recebimento.
 async function confirmarRecebimentoInv() {
+  const _solta = _travarEnvio('receber-pedido', 'inv-btn-receber');
+  if (!_solta) return;
+  try { await _confirmarRecebimentoInv(); } finally { _solta(false); }   // sem bilhete: a reserva cuida do resto
+}
+
+async function _confirmarRecebimentoInv() {
   if (!_pedReceberId) return;
-  const itenIds = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
+  // congela o que está na tela ANTES do primeiro await
+  const pedidoId = _pedReceberId, setor = _pedReceberSetor;
+  const itenIds  = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
+  const qtdTela  = id => parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
+  const qtds     = Object.fromEntries(itenIds.map(id => [id, qtdTela(id)]));
+  const itensRec = (_pedReceberItens || []).map(it => ({ ...it, _qtd: qtdTela(it.id) }));
 
-  await Promise.all(itenIds.map(id => {
-    const qtd = parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
-    return sb.from('pedidos_internos_itens').update({ qtd_recebida: qtd }).eq('id', id);
-  }));
-
-  await sb.from('pedidos_internos').update({
+  const { data: reservado, error: eRes } = await sb.from('pedidos_internos').update({
     status: 'recebido', recebido_em: new Date().toISOString(),
-  }).eq('id', _pedReceberId);
+  }).eq('id', pedidoId).eq('status', 'liberado').select('id');
+  if (eRes) { toast(_msgErroBanco(eRes), 'erro'); return; }
+  if (!reservado?.length) {
+    bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
+    toast('Este pedido já tinha sido recebido. Nada foi lançado de novo.', 'warn');
+    carregarMeusPedidos();
+    return;
+  }
+
+  await Promise.all(itenIds.map(id =>
+    sb.from('pedidos_internos_itens').update({ qtd_recebida: qtds[id] }).eq('id', id)));
 
   // Movimentar saldo: diminui ESTOQUE_LOJA, aumenta setor.
   // O pedido e digitado na unidade CONTAVEL (garrafa, saco); o saldo e em unidade
   // de USO. Sem o fator, liberar 2 garrafas de azeite somava 2 litros no setor.
-  await Promise.all(_pedReceberItens.filter(it => it.produto_id).map(async it => {
-    const qtd = parseQtd(document.getElementById(`rec-qtd-${it.id}`)?.value);
+  await Promise.all(itensRec.filter(it => it.produto_id).map(async it => {
+    const qtd = it._qtd;
     if (!qtd) return;
     const uso = qtd * _fatorDe(it.produto_id);
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${_pedReceberSetor ? ' → ' + _pedReceberSetor : ''}` });
-    if (_pedReceberSetor) await movimentar({ produto_id: it.produto_id, local: _pedReceberSetor, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
+    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
+    if (setor) await movimentar({ produto_id: it.produto_id, local: setor, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
