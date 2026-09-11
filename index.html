@@ -2565,6 +2565,7 @@
 
       <div id="par-aviso"></div>
       <div class="d-flex flex-wrap gap-2 mb-3" id="par-kpis"></div>
+      <div class="mb-3" id="par-resumo"></div>
 
       <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
         <div>
@@ -2574,6 +2575,15 @@
         <div class="btn-group btn-group-sm" role="group">
           <button class="btn btn-outline-secondary" onclick="parDia(-1)" title="Dia anterior">‹</button>
           <button class="btn btn-outline-secondary" onclick="parDia(1)" title="Dia seguinte">›</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="par-noites">Período</label>
+          <select class="form-select form-select-sm" id="par-noites" onchange="carregarParalelo()" style="width:130px"
+                  title="Quantas noites de contagem a conta soma. Somar noites cancela o erro de uma contagem isolada.">
+            <option value="1">1 noite</option>
+            <option value="3" selected>3 noites</option>
+            <option value="7">7 noites</option>
+          </select>
         </div>
         <div>
           <label class="form-label small text-muted mb-1">Unidade</label>
@@ -2615,12 +2625,15 @@
         <div class="px-3 py-2 border-top bg-light">
           <small class="text-muted">
             <i class="bi bi-info-circle me-1"></i>
-            <strong>Contagem diz</strong> = contagem anterior + o que o estoque liberou − contagem do dia.
+            <strong>Contagem diz</strong> = contagem do início do período + o que entrou entre as duas contagens − contagem do dia
+            (passe o mouse no número para ver as três partes). Entrada repetida no mesmo minuto conta uma vez só.
             <strong>Venda diz</strong> = o que o robô calculou pela ficha, do livro-razão.
-            A <strong>janela</strong> é o intervalo entre as duas contagens daquele insumo naquele setor —
-            nem todo item é contado todo dia. <span class="badge bg-warning text-dark">un?</span> marca insumo
-            com unidade de compra diferente da de uso: a contagem dele pode estar em outra unidade que a ficha,
-            então a diferença pode ser só isso. Sem linha nenhuma = o robô ainda não rodou em modo razão nesse dia.
+            O <strong>período</strong> soma 1, 3 ou 7 noites: uma noite sozinha engana, várias cancelam o erro de contagem.
+            A <strong>janela</strong> de cada insumo pode ser maior quando ele não foi contado no começo do período.
+            <span class="badge bg-secondary">em branco?</span> = zero numa das contagens de um item que costuma ter estoque
+            (linha deixada em branco). <span class="badge bg-warning text-dark">un?</span> = unidade de compra diferente da de uso.
+            Os dois aparecem na lista mas <strong>ficam fora do placar e do resumo por setor</strong>.
+            Sem linha nenhuma = o robô ainda não rodou em modo razão nesse dia.
           </small>
         </div>
       </div>
