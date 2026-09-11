@@ -425,9 +425,7 @@
     </div>
     <div class="local-pills">
       <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
-      <div class="pill" data-local="Delivery P10" onclick="selecionarLocal('Delivery P10')">🛵 Delivery P10</div>
-      <div class="pill" data-local="Produção" onclick="selecionarLocal('Produção')">🏭 Produção</div>
-      <div class="pill" data-local="Estoque Central" onclick="selecionarLocal('Estoque Central')">🏪 Est. Central</div>
+      <div class="pill" data-local="Delivery P10" onclick="escolherLocal('Delivery P10')">🛵 Delivery P10</div>
     </div>
     <div class="info-linha">
       <span>📅</span>
@@ -979,9 +977,9 @@ async function entrar() {
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
   await Promise.all([carregarProdutos(), carregarMapeamentos()]);
-  // Restaura última unidade selecionada — garante estrutura atualizada do Supabase
-  const savedLocal = localStorage.getItem('mob_local');
-  if (savedLocal) selecionarLocal(savedLocal);
+  // Sempre abre no Centro — NÃO restaura a última unidade (ver _LOCAIS_MOB)
+  localStorage.removeItem('mob_local');
+  selecionarLocal('Centro');
 }
 
 async function carregarMapeamentos() {
@@ -1003,9 +1001,24 @@ async function carregarMapeamentos() {
 async function sair() { await sb.auth.signOut(); location.reload(); }
 
 // ─── LOCAL ───────────────────────────────────────────────────────
+// Unidade travada: o celular do setor só conta/pede para o Centro ou para o Delivery P10.
+// Rastro: a tela lembrava a última pílula em localStorage e oferecia "Est. Central" e
+// "Produção". Na noite de 10/09/2026 um celular ficou em "Est. Central" e SALAO, DELIVERY
+// e ASG gravaram contagem e pedidos como Estoque Central (SQL_FIX_LOCAL_EST_CENTRAL_10SET).
+// Desde 01/06 nenhuma contagem de setor no Est. Central foi de verdade, e Produção só teve
+// uso em 28-30/06. O Estoque Central continua no computador (index.html), onde atende as
+// transferências. Agora a tela abre sempre no Centro e o P10 pede confirmação a cada vez.
+const _LOCAIS_MOB = ['Centro', 'Delivery P10'];
+
+function escolherLocal(l) {
+  if (l === _local) return;
+  if (l !== 'Centro' && !confirm(`Contar e pedir para a loja ${l}?\n\nSó confirme se você está trabalhando no ${l} hoje. Os setores do Centro devem ficar em "Centro".`)) return;
+  selecionarLocal(l);
+}
+
 function selecionarLocal(l) {
+  if (!_LOCAIS_MOB.includes(l)) l = 'Centro';
   _local = l;
-  localStorage.setItem('mob_local', l);
   if (Object.keys(_todasEstruturasMob).length) _aplicarEstruturaLocalMob(l);
   document.querySelectorAll('.local-pills .pill').forEach(el => {
     el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
