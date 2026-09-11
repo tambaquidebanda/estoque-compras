@@ -3753,6 +3753,7 @@ const _STATUS_PED = {
   liberado:  '<span class="badge bg-primary">Liberado</span>',
   recebido:  '<span class="badge bg-success">Recebido</span>',
   cancelado: '<span class="badge bg-danger">Cancelado</span>',
+  encerrado: '<span class="badge bg-secondary">Encerrado</span>',   // ver _confirmacaoAtrasada
 };
 
 // ─── Trava de reentrada dos envios ───────────────────────────────
@@ -4637,6 +4638,46 @@ async function confirmarRecebimentoInv() {
   try { await _confirmarRecebimentoInv(); } finally { _solta(false); }   // sem bilhete: a reserva cuida do resto
 }
 
+// CONFIRMAÇÃO ATRASADA — a saída do ESTOQUE_LOJA só acontece quando o setor confirma, mas a
+// mercadoria sai fisicamente na entrega. Se o setor confirma dias depois e o estoque foi
+// contado no meio, a contagem já não viu a mercadoria e a confirmação tira DE NOVO.
+// Rastro: 11/09/2026 13:32-13:36 o BAR confirmou 28 pedidos de uma vez (alguns de 02/09, um
+// de 08/08); metade dos 59 negativos do ESTOQUE_LOJA nasceu aí. Barra quando o pedido foi
+// liberado há mais de 24 h (93% dos pedidos são confirmados antes disso; a virada de meia-noite
+// das emergências cabe folgada) ou quando algum item foi contado/ajustado no ESTOQUE_LOJA
+// depois da liberação. A saída é ENCERRAR: status 'encerrado', sem mexer em saldo nenhum —
+// a contagem da noite acerta o setor. Mesma regra em contagem.html (_confirmacaoAtrasada).
+const _PED_ATRASO_H = 24;
+
+async function _confirmacaoAtrasada(pedidoId) {
+  const { data: ped } = await sb.from('pedidos_internos').select('liberado_em').eq('id', pedidoId).single();
+  if (!ped?.liberado_em) return null;
+  const lib = new Date(ped.liberado_em);
+  const quando = lib.toLocaleString('pt-BR', { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  if (Date.now() - lib.getTime() > _PED_ATRASO_H * 3600e3)
+    return `foi liberado em ${quando}, há mais de ${_PED_ATRASO_H} horas`;
+  const { data: its } = await sb.from('pedidos_internos_itens').select('produto_id').eq('pedido_id', pedidoId);
+  const pids = [...new Set((its || []).map(i => i.produto_id).filter(Boolean))];
+  if (!pids.length) return null;
+  const { data: cont } = await sb.from('est_movimentacoes').select('id')
+    .eq('local', 'ESTOQUE_LOJA').in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
+    .gt('criado_em', ped.liberado_em).limit(1);
+  return cont?.length ? `foi liberado em ${quando} e o estoque já foi contado depois disso` : null;
+}
+
+async function _encerrarPedidoAtrasado(pedidoId, motivo) {
+  if (!confirm(`Este pedido ${motivo}.\n\nConfirmar agora tiraria a mercadoria do estoque pela segunda vez: a contagem do estoque já não encontra essa mercadoria.\n\nSe a mercadoria já chegou ao setor, clique OK para ENCERRAR o pedido sem mexer em nenhum saldo.\nClique Cancelar para deixar como está e falar com o estoque.`)) {
+    toast('Nada foi lançado.', 'warn');
+    return;
+  }
+  const { data, error } = await sb.from('pedidos_internos').update({ status: 'encerrado' })
+    .eq('id', pedidoId).eq('status', 'liberado').select('id');
+  if (error) { toast(_msgErroBanco(error), 'erro'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
+  toast(data?.length ? 'Pedido encerrado, sem mexer no saldo.' : 'Este pedido já não estava liberado. Nada foi lançado.', data?.length ? 'ok' : 'warn');
+  carregarMeusPedidos();
+}
+
 async function _confirmarRecebimentoInv() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
@@ -4645,6 +4686,9 @@ async function _confirmarRecebimentoInv() {
   const qtdTela  = id => parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
   const qtds     = Object.fromEntries(itenIds.map(id => [id, qtdTela(id)]));
   const itensRec = (_pedReceberItens || []).map(it => ({ ...it, _qtd: qtdTela(it.id) }));
+
+  const atraso = await _confirmacaoAtrasada(pedidoId);
+  if (atraso) { await _encerrarPedidoAtrasado(pedidoId, atraso); return; }
 
   const { data: reservado, error: eRes } = await sb.from('pedidos_internos').update({
     status: 'recebido', recebido_em: new Date().toISOString(),
