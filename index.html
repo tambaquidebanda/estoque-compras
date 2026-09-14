@@ -458,6 +458,13 @@
                 <option value="Cartão">💳 Cartão</option>
               </select>
             </div>
+            <div class="col-md-2">
+              <label class="form-label">🔢 Parcelas</label>
+              <select class="form-select" id="c-parcelas">
+                <option value="1" selected>À vista (1x)</option>
+              </select>
+              <div class="form-text text-muted small">Confirma no recebimento</div>
+            </div>
             <div class="col-md-3">
               <label class="form-label">🚚 Data de Entrega <span class="text-danger">*</span></label>
               <input type="date" class="form-control" id="c-data-entrega" required>
@@ -3359,7 +3366,7 @@
       </div>
       <div class="modal-body">
         <div class="row g-3 mb-3">
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label fw-semibold">📅 Data do Recebimento</label>
             <input type="date" class="form-control" id="receb-data-rec">
           </div>
@@ -3367,9 +3374,15 @@
             <label class="form-label fw-semibold">👤 Responsável</label>
             <input type="text" class="form-control" id="receb-responsavel" placeholder="Nome do estoquista">
           </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">📅 Vencimento (Contas a Pagar)</label>
-            <input type="date" class="form-control" id="receb-vencimento">
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">📅 Vencimento <span id="receb-venc-hint" class="text-muted fw-normal"></span></label>
+            <input type="date" class="form-control" id="receb-vencimento" onchange="renderPreviewParcelas()">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">🔢 Parcelas</label>
+            <select class="form-select" id="receb-parcelas" onchange="renderPreviewParcelas()">
+              <option value="1" selected>À vista (1x)</option>
+            </select>
           </div>
           <div class="col-md-1">
             <label class="form-label fw-semibold">🧾 NF</label>
@@ -3382,6 +3395,27 @@
               oninput="mascaraMoeda(this);calcTotalReceb()"
               onfocus="moedaFocus(this)"
               onblur="moedaBlur(this);calcTotalReceb()">
+          </div>
+        </div>
+        <!-- Parcelamento: só aparece quando o pedido é em mais de 1x -->
+        <div id="receb-parc-box" class="d-none mb-3 p-2 rounded" style="background:#fff7ed;border:1px solid #fed7aa">
+          <div class="row g-2">
+            <div class="col-md-3">
+              <label class="form-label fw-semibold small mb-1">Intervalo entre parcelas</label>
+              <select class="form-select form-select-sm" id="receb-parcela-int" onchange="renderPreviewParcelas()">
+                <option value="mensal" selected>Mensal (mesmo dia)</option>
+                <option value="7">A cada 7 dias</option>
+                <option value="14">A cada 14 dias</option>
+                <option value="15">A cada 15 dias</option>
+                <option value="21">A cada 21 dias</option>
+                <option value="28">A cada 28 dias</option>
+                <option value="30">A cada 30 dias</option>
+              </select>
+            </div>
+            <div class="col-md-9">
+              <div class="small fw-semibold mb-1">Vai gerar no financeiro:</div>
+              <div id="receb-parcelas-preview" class="small"></div>
+            </div>
           </div>
         </div>
         <input type="hidden" id="receb-pedido-num-hidden">
@@ -3611,9 +3645,37 @@
             <div id="gc-total-display" class="form-control fw-bold text-center"
               style="background:#d1fae5;border:2px solid #10b981;color:#065f46;pointer-events:none">—</div>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-2">
             <label class="form-label fw-semibold">Vencimento *</label>
-            <input type="date" class="form-control" id="gc-vencimento">
+            <input type="date" class="form-control" id="gc-vencimento" onchange="renderPreviewParcelasGC()">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">🔢 Parcelas</label>
+            <select class="form-select" id="gc-parcelas" onchange="renderPreviewParcelasGC()">
+              <option value="1" selected>À vista (1x)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Parcelamento: só aparece quando é em mais de 1x -->
+        <div id="gc-parc-box" class="d-none mb-3 p-2 rounded" style="background:#fff7ed;border:1px solid #fed7aa">
+          <div class="row g-2">
+            <div class="col-md-3">
+              <label class="form-label fw-semibold small mb-1">Intervalo entre parcelas</label>
+              <select class="form-select form-select-sm" id="gc-parcela-int" onchange="renderPreviewParcelasGC()">
+                <option value="mensal" selected>Mensal (mesmo dia)</option>
+                <option value="7">A cada 7 dias</option>
+                <option value="14">A cada 14 dias</option>
+                <option value="15">A cada 15 dias</option>
+                <option value="21">A cada 21 dias</option>
+                <option value="28">A cada 28 dias</option>
+                <option value="30">A cada 30 dias</option>
+              </select>
+            </div>
+            <div class="col-md-9">
+              <div class="small fw-semibold mb-1">Vai gerar no financeiro:</div>
+              <div id="gc-parcelas-preview" class="small"></div>
+            </div>
           </div>
         </div>
         <div class="row g-3 mb-3">

@@ -936,6 +936,8 @@ async function prepararFormCompra() {
       cUnidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
   }
 
+  _preencherSelectParcelas('c-parcelas', 1);
+
   if (_pedidoEditando) {
     // Modo edição: pré-preenche cabeçalho com dados do primeiro item
     const primeiro = _pedidoItens[0];
@@ -947,6 +949,7 @@ async function prepararFormCompra() {
       if (setorSel) setorSel.value = primeiro.setor || '';
       const fmSel = document.getElementById('c-forma-pgto');
       if (fmSel) fmSel.value = primeiro.formaPagamento || '';
+      _preencherSelectParcelas('c-parcelas', primeiro.parcelas || 1);
       const deEl = document.getElementById('c-data-entrega');
       if (deEl) deEl.value = primeiro.dataEntrega || '';
     }
@@ -1354,6 +1357,7 @@ async function finalizarPedido() {
   const acrescimo     = parseMoeda('c-acrescimo');
   const setor         = document.getElementById('c-setor')?.value || '';
   const forma_pagamento = document.getElementById('c-forma-pgto')?.value || '';
+  const parcelas      = Math.max(1, parseInt(document.getElementById('c-parcelas')?.value, 10) || 1);
   const data_entrega  = document.getElementById('c-data-entrega')?.value || '';
   if (!forma_pagamento) {
     toast('Selecione a Forma de Pagamento.', 'erro');
@@ -1389,6 +1393,7 @@ async function finalizarPedido() {
     acrescimo,
     setor,
     forma_pagamento,
+    parcelas,
     bonificado:      !!it.bonificado,
     status_receb:    'pendente',
     criado_por:      user.id,
@@ -1422,6 +1427,7 @@ function cancelarPedido() {
   if (setorSel) setorSel.value = '';
   const formaPgtoSel = document.getElementById('c-forma-pgto');
   if (formaPgtoSel) formaPgtoSel.value = '';
+  _preencherSelectParcelas('c-parcelas', 1);
   const dataEntEl = document.getElementById('c-data-entrega');
   if (dataEntEl) dataEntEl.value = '';
   _renderItensPedido();
@@ -6006,7 +6012,7 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso,bonificado')
+    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso,bonificado,forma_pagamento,parcelas')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
@@ -6017,6 +6023,11 @@ async function abrirModalReceber(pedido_num) {
   document.getElementById('receb-ped-num').textContent     = pedido_num;
   document.getElementById('receb-data-rec').value          = new Date().toISOString().split('T')[0];
   document.getElementById('receb-vencimento').value        = '';
+  // Parcelas: vem do que foi combinado no pedido; o estoquista confirma aqui
+  _preencherSelectParcelas('receb-parcelas', itens[0]?.parcelas || 1);
+  const intSel = document.getElementById('receb-parcela-int');
+  if (intSel) intSel.value = 'mensal';
+  renderPreviewParcelas();
   document.getElementById('receb-responsavel').value       = '';
   document.getElementById('receb-nf').value                = '';
   setMoeda('receb-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
@@ -6114,6 +6125,7 @@ function calcTotalReceb() {
     elB.style.display = bonif > 0 ? '' : 'none';
     elB.textContent   = bonif > 0 ? `· Bonificado (não gera conta): ${brl(bonif)}` : '';
   }
+  renderPreviewParcelas();
 }
 
 async function confirmarRecebimento() {
@@ -6121,6 +6133,8 @@ async function confirmarRecebimento() {
   const dataRec     = document.getElementById('receb-data-rec').value;
   const responsavel = (document.getElementById('receb-responsavel').value || '').trim();
   const vencimento  = document.getElementById('receb-vencimento').value;
+  const parcelas    = Math.max(1, parseInt(document.getElementById('receb-parcelas')?.value, 10) || 1);
+  const parcelaInt  = document.getElementById('receb-parcela-int')?.value || 'mensal';
   if (!dataRec)     { toast('Informe a data do recebimento.', 'erro'); return; }
   if (!responsavel) { toast('Informe o responsável.', 'erro'); return; }
   if (!vencimento)  { toast('Informe a data de vencimento.', 'erro'); return; }
@@ -6178,6 +6192,15 @@ async function confirmarRecebimento() {
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
   // Guard: bloqueia apenas se o lançamento já foi PAGO; se pendente, permite receber e ajusta valor
+  // Parcelado: qualquer parcela já paga tranca o pedido (o vínculo da conta
+  // aponta para uma parcela só, então checa pelo número do pedido também).
+  const { data: _lancPagos } = await sb.from('lancamentos')
+    .select('id').eq('numero_pedido', pedido_num).eq('status', 'pago').limit(1);
+  if (_lancPagos?.length) {
+    toast('Este pedido já foi pago no financeiro e não pode ser alterado.', 'erro');
+    return;
+  }
+
   const { data: _guardConta } = await sb.from('cmp_contas_pagar')
     .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
   if (_guardConta?.lancamento_id) {
@@ -6238,12 +6261,14 @@ async function confirmarRecebimento() {
   if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
       recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
+      parcelas, parcela_intervalo: parcelaInt,
     }).eq('id', contaExist.id);
   } else {
     await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
       data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
+      parcelas, parcela_intervalo: parcelaInt,
     }]);
   }
 
@@ -6251,28 +6276,22 @@ async function confirmarRecebimento() {
   // sincroniza o valor do rascunho com o valor recebido. Sem isso, ao aprovar a
   // integração o financeiro usaria o valor ORIGINAL do pedido, ignorando a
   // divergência de peso/valor do recebimento. Update em 0 linhas se não há rascunho.
-  await sb.from('lancamentos_rascunho')
-    .update({ valor: Math.max(0, totalAcumulado - acrescimo), acrescimo })
-    .eq('pedido_num', pedido_num);
+  // Parcelado: redistribui o novo total entre todos os rascunhos do pedido.
+  await _sincronizarRascunhoParcelas(pedido_num, Math.max(0, totalAcumulado - acrescimo), acrescimo);
 
-  // Se já existia lançamento pendente no financeiro (enviado antes do recebimento), ajusta valor automaticamente
-  let _financAjustado = false;
-  if (contaExist?.lancamento_id) {
-    const notaLiq = Math.max(0, totalAcumulado - acrescimo);
-    await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', contaExist.lancamento_id);
-    _financAjustado = true;
-  } else {
-    // Fallback: busca lançamento pendente diretamente — vínculo pode ter sido perdido
+  // Se já existia lançamento no financeiro (enviado antes do recebimento), ajusta o
+  // valor automaticamente. Parcelado: divide o novo total entre TODAS as parcelas.
+  const _financAjustado = await _sincronizarLancamentoParcelas(
+    pedido_num, Math.max(0, totalAcumulado - acrescimo), acrescimo);
+
+  // Vínculo perdido (ou parcelado): reaponta a conta para a 1ª parcela
+  if (_financAjustado && !contaExist?.lancamento_id) {
     const { data: _lancFb } = await sb.from('lancamentos')
-      .select('id').eq('numero_pedido', pedido_num).eq('status', 'pendente').maybeSingle();
-    if (_lancFb?.id) {
-      const notaLiq = Math.max(0, totalAcumulado - acrescimo);
-      await sb.from('lancamentos').update({ valor: notaLiq, acrescimo }).eq('id', _lancFb.id);
-      _financAjustado = true;
-      // Restaura o vínculo para próximos recebimentos
-      const { data: _contaFb } = await sb.from('cmp_contas_pagar')
-        .select('id').eq('pedido_num', pedido_num).maybeSingle();
-      if (_contaFb?.id) await sb.from('cmp_contas_pagar').update({ lancamento_id: _lancFb.id }).eq('id', _contaFb.id);
+      .select('id').eq('numero_pedido', pedido_num).order('vencimento').limit(1);
+    const { data: _contaFb } = await sb.from('cmp_contas_pagar')
+      .select('id').eq('pedido_num', pedido_num).maybeSingle();
+    if (_lancFb?.[0]?.id && _contaFb?.id) {
+      await sb.from('cmp_contas_pagar').update({ lancamento_id: _lancFb[0].id }).eq('id', _contaFb.id);
     }
   }
 
@@ -6306,7 +6325,7 @@ async function confirmarRecebimento() {
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
   if (!restantes?.length) {
     const { data: contaFinal } = await sb.from('cmp_contas_pagar')
-      .select('id,adiantamento_lancamento_id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+      .select('id,adiantamento_lancamento_id,lancamento_id,vencimento,parcelas,parcela_intervalo').eq('pedido_num', pedido_num).maybeSingle();
     if (contaFinal && !contaFinal.lancamento_id) {
       if (isCompExt) {
         await _executarFinalizarCompExt(pedido_num, contaFinal, ref, unidade_id, nf);
@@ -6439,7 +6458,7 @@ async function verDetalheReceb(id) {
 
 async function renderContasPagar() {
   const { data: contas } = await sb.from('cmp_contas_pagar')
-    .select('id,pedido_num,fornecedor,data_receb,vencimento,valor,status,data_pagamento')
+    .select('id,pedido_num,fornecedor,data_receb,vencimento,valor,status,data_pagamento,parcelas')
     .order('criado_em', { ascending: false });
 
   const lista = contas || [];
@@ -6466,7 +6485,7 @@ async function renderContasPagar() {
       <td><span class="badge" style="background:#FF6B35">${esc(c.pedido_num||'—')}</span></td>
       <td>${esc(c.fornecedor||'—')}</td>
       <td>${recBR}</td>
-      <td>${vencBR}</td>
+      <td>${vencBR}${(c.parcelas || 1) > 1 ? ` <span class="badge bg-warning text-dark">${c.parcelas}x</span>` : ''}</td>
       <td class="text-center fw-bold">${brl(c.valor)}</td>
       <td class="text-center"><span class="badge" style="background:${corBadge}">${label}</span></td>
       <td class="text-center">
@@ -7480,7 +7499,7 @@ async function reabrirPedido(pedido_num) {
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,bonificado')
+    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,parcelas,bonificado')
     .eq('pedido_num', pedido_num)
     .order('id');
 
@@ -7509,6 +7528,7 @@ async function editarPedido(pedido_num) {
       unidadeId:  uniObj?.id || null,
       setor:          it.setor || '',
       formaPagamento: it.forma_pagamento || '',
+      parcelas:       it.parcelas || 1,
       bonificado:     !!it.bonificado,
       total:          (it.custo_unit || 0) * (it.quantidade || 0),
     };
@@ -8463,6 +8483,170 @@ function redefinirConexao() {
 // INTEGRAÇÃO FINANCEIRO — CONTAS A PAGAR
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+// PARCELAMENTO — boleto/cartão em N vezes
+// Padrão 1x: tudo segue como sempre foi (um lançamento só no financeiro).
+// O pedido escolhe em quantas vezes; o recebimento confirma e gera as parcelas.
+// ═══════════════════════════════════════════════════════════════
+const PARC_MAX = 12;
+
+function _preencherSelectParcelas(id, valor) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  const opts = ['<option value="1">À vista (1x)</option>'];
+  for (let n = 2; n <= PARC_MAX; n++) opts.push(`<option value="${n}">${n}x</option>`);
+  sel.innerHTML = opts.join('');
+  sel.value = String(Math.max(1, Math.min(PARC_MAX, parseInt(valor, 10) || 1)));
+}
+
+// Divide um total em n parcelas iguais; a ÚLTIMA absorve a sobra dos centavos.
+function _dividirParcelas(total, n) {
+  const cent = Math.round((Number(total) || 0) * 100);
+  const base = Math.floor(cent / n);
+  const out  = [];
+  for (let i = 0; i < n - 1; i++) out.push(base / 100);
+  out.push((cent - base * (n - 1)) / 100);
+  return out;
+}
+
+// Vencimentos a partir do 1º. 'mensal' mantém o dia do mês (dia 31 cai no
+// último dia do mês curto); número = intervalo em dias corridos.
+function _datasParcelas(primeiroVenc, n, intervalo) {
+  const [Y, M, D] = (primeiroVenc || '').split('-').map(Number);
+  if (!Y || !M || !D) return [];
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    if (intervalo === 'mensal') {
+      const ultimoDia = new Date(Y, M + i, 0).getDate();  // dia 0 do mês seguinte = último dia
+      out.push(fmt(new Date(Y, M - 1 + i, Math.min(D, ultimoDia))));
+    } else {
+      out.push(fmt(new Date(Y, M - 1, D + i * (parseInt(intervalo, 10) || 30))));
+    }
+  }
+  return out;
+}
+
+// Monta as parcelas já com valor e vencimento. Com rateio, cada categoria é
+// dividida em n e a parcela fica com a soma das fatias — assim o rateio fecha
+// exatamente com o valor da parcela, sem sobra de centavo.
+function _montarParcelas({ valor, acrescimo = 0, vencimento, parcelas = 1, intervalo = 'mensal', rateioItens = [] }) {
+  const n     = Math.max(1, Math.min(PARC_MAX, parseInt(parcelas, 10) || 1));
+  const datas = _datasParcelas(vencimento, n, intervalo);
+  const acrs  = _dividirParcelas(acrescimo, n);
+
+  const rateioPorParcela = [];
+  let notas;
+  if (rateioItens.length) {
+    const fatias = rateioItens.map(r => _dividirParcelas(r.valor, n));
+    notas = [];
+    for (let i = 0; i < n; i++) {
+      const itensI = rateioItens.map((r, k) => ({ ...r, valor: fatias[k][i] })).filter(r => r.valor !== 0);
+      rateioPorParcela.push(itensI);
+      notas.push(itensI.reduce((s, r) => s + r.valor, 0));
+    }
+  } else {
+    notas = _dividirParcelas((Number(valor) || 0) - (Number(acrescimo) || 0), n);
+    for (let i = 0; i < n; i++) rateioPorParcela.push([]);
+  }
+
+  return notas.map((nota, i) => ({
+    num: i + 1, de: n,
+    nota:        Math.round(nota * 100) / 100,
+    acrescimo:   acrs[i],
+    total:       Math.round((nota + acrs[i]) * 100) / 100,
+    vencimento:  datas[i] || vencimento,
+    rateioItens: rateioPorParcela[i],
+  }));
+}
+
+function _descParcela(base, p) {
+  return p.de > 1 ? `${base} (${p.num}/${p.de})` : base;
+}
+function _obsParcela(base, p) {
+  if (p.de <= 1) return base;
+  return base ? `${base} — Parcela ${p.num}/${p.de}` : `Parcela ${p.num}/${p.de}`;
+}
+function _htmlPreviewParcelas(parcs) {
+  return parcs.map(p =>
+    `<span class="badge bg-white text-dark border me-1 mb-1">${p.num}/${p.de} · ${p.vencimento.split('-').reverse().join('/')} · <strong>${brl(p.total)}</strong></span>`
+  ).join('');
+}
+
+// Redistribui o valor recebido entre os rascunhos do pedido (1 ou N parcelas).
+async function _sincronizarRascunhoParcelas(pedido_num, notaTotal, acrescimo) {
+  const { data: rascs } = await sb.from('lancamentos_rascunho')
+    .select('id').eq('pedido_num', pedido_num).order('vencimento');
+  if (!rascs?.length) return;
+  const notas = _dividirParcelas(notaTotal, rascs.length);
+  const acrs  = _dividirParcelas(acrescimo, rascs.length);
+  for (let i = 0; i < rascs.length; i++) {
+    await sb.from('lancamentos_rascunho').update({ valor: notas[i], acrescimo: acrs[i] }).eq('id', rascs[i].id);
+  }
+}
+
+// Mesma coisa para lançamentos já aprovados. Se alguma parcela foi paga, não
+// mexe em nada — o ajuste passa a ser manual no financeiro.
+async function _sincronizarLancamentoParcelas(pedido_num, notaTotal, acrescimo) {
+  const { data: lancs } = await sb.from('lancamentos')
+    .select('id,status').eq('numero_pedido', pedido_num).order('vencimento');
+  if (!lancs?.length) return false;
+  if (lancs.some(l => l.status === 'pago')) {
+    toast('Atenção: uma parcela deste pedido já está paga — ajuste o valor direto no financeiro.', 'erro');
+    return false;
+  }
+  const notas = _dividirParcelas(notaTotal, lancs.length);
+  const acrs  = _dividirParcelas(acrescimo, lancs.length);
+  for (let i = 0; i < lancs.length; i++) {
+    await sb.from('lancamentos').update({ valor: notas[i], acrescimo: acrs[i] }).eq('id', lancs[i].id);
+  }
+  return true;
+}
+
+// Prévia das parcelas no modal de recebimento
+function renderPreviewParcelas() {
+  const n    = Math.max(1, parseInt(document.getElementById('receb-parcelas')?.value, 10) || 1);
+  const box  = document.getElementById('receb-parc-box');
+  const hint = document.getElementById('receb-venc-hint');
+  if (hint) hint.textContent = n > 1 ? '(1ª parcela)' : '';
+  if (!box) return;
+  if (n <= 1) { box.classList.add('d-none'); return; }
+  box.classList.remove('d-none');
+
+  const alvo = document.getElementById('receb-parcelas-preview');
+  const venc = document.getElementById('receb-vencimento')?.value || '';
+  if (!venc) { alvo.innerHTML = '<span class="text-danger">Informe o vencimento da 1ª parcela.</span>'; return; }
+
+  const totalTxt = (document.getElementById('receb-total-modal')?.textContent || '').replace(/[R$\s.]/g, '').replace(',', '.');
+  alvo.innerHTML = _htmlPreviewParcelas(_montarParcelas({
+    valor:      parseFloat(totalTxt) || 0,
+    acrescimo:  parseMoeda('receb-acrescimo'),
+    vencimento: venc, parcelas: n,
+    intervalo:  document.getElementById('receb-parcela-int')?.value || 'mensal',
+  }));
+}
+
+// Prévia das parcelas no modal Gerar Conta
+function renderPreviewParcelasGC() {
+  const n   = Math.max(1, parseInt(document.getElementById('gc-parcelas')?.value, 10) || 1);
+  const box = document.getElementById('gc-parc-box');
+  if (!box) return;
+  if (n <= 1) { box.classList.add('d-none'); return; }
+  box.classList.remove('d-none');
+
+  const alvo = document.getElementById('gc-parcelas-preview');
+  const venc = document.getElementById('gc-vencimento')?.value || '';
+  if (!venc) { alvo.innerHTML = '<span class="text-danger">Informe o vencimento da 1ª parcela.</span>'; return; }
+
+  const acr = parseMoeda('gc-acrescimo') || 0;
+  alvo.innerHTML = _htmlPreviewParcelas(_montarParcelas({
+    valor:      parseMoeda('gc-valor') + acr,
+    acrescimo:  acr,
+    vencimento: venc, parcelas: n,
+    intervalo:  document.getElementById('gc-parcela-int')?.value || 'mensal',
+  }));
+}
+
 function modoIntegracaoProducao() {
   // Fluxo de aprovação (rascunho → Integrações Pendentes) é o padrão permanente.
   // O antigo toggle "Modo Teste/Produção" foi removido. Recebimento sempre gera
@@ -8515,7 +8699,7 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
 
   // Busca dados do pedido (forma_pagamento + itens + acréscimo para quando _pedidosGrupos estiver vazio)
   const { data: pedRows } = await sb.from('cmp_compras')
-    .select('forma_pagamento,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome,acrescimo')
+    .select('forma_pagamento,parcelas,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome,acrescimo')
     .eq('pedido_num', pedido_num);
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
@@ -8544,6 +8728,13 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   }
   const elFP = document.getElementById('gc-forma-pgto-label');
   if (elFP) elFP.textContent = formaPgto || '—';
+
+  // Adiantamento é sempre à vista; NF normal herda as parcelas do pedido
+  _preencherSelectParcelas('gc-parcelas', tipo === 'adiantamento' ? 1 : (pedRow0.parcelas || 1));
+  const gcIntSel = document.getElementById('gc-parcela-int');
+  if (gcIntSel) gcIntSel.value = 'mensal';
+  document.getElementById('gc-parcelas')?.closest('.col-md-2')?.classList.toggle('d-none', tipo === 'adiantamento');
+  renderPreviewParcelasGC();
   const prefixoObs = tipo === 'adiantamento' ? 'Adiantamento Pedido' : 'Pedido';
   document.getElementById('gc-obs').value = formaPgto
     ? `${prefixoObs} ${pedido_num} — ${formaPgto}`
@@ -8679,6 +8870,8 @@ async function confirmarGerarConta() {
   const acrescimo_val = parseMoeda('gc-acrescimo') || 0;
   const valor         = nota + acrescimo_val;  // total = nota + acréscimo
   const vencimento    = document.getElementById('gc-vencimento').value;
+  const parcelasGC    = Math.max(1, parseInt(document.getElementById('gc-parcelas')?.value, 10) || 1);
+  const parcelaIntGC  = document.getElementById('gc-parcela-int')?.value || 'mensal';
   const nf_numero     = document.getElementById('gc-nf').value.trim() || null;
   const obs           = document.getElementById('gc-obs').value.trim();
   const forn_nome     = document.getElementById('gc-fornecedor-label').textContent;
@@ -8709,7 +8902,8 @@ async function confirmarGerarConta() {
   } else {
     // Fluxo NF normal (padrão)
     const { data: conta } = await sb.from('cmp_contas_pagar')
-      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
+      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente',
+                 parcelas: parcelasGC, parcela_intervalo: parcelaIntGC }],
               { onConflict: 'pedido_num', ignoreDuplicates: false })
       .select().single();
     await gerarContaFinanceiro({
@@ -8719,6 +8913,7 @@ async function confirmarGerarConta() {
       obs: obs || `Pedido ${pedido_num}`,
       temRateio, rateioItensResolvidos, unidade_id,
       campo_id_destino: 'lancamento_id',
+      parcelas: parcelasGC, parcelaIntervalo: parcelaIntGC,
     });
   }
 
@@ -8852,6 +9047,7 @@ async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf)
     .select('id').single();
 
   await gerarContaFinanceiro({
+    parcelas: conta?.parcelas || 1, parcelaIntervalo: conta?.parcela_intervalo || 'mensal',
     pedido_num, vencimento: venc, valor: totalAcumulado, acrescimo: 0,
     fornecedor_id: ref?.fornecedor_id || null,
     fornecedor_nome: ref?.fornecedor_nome || '',
@@ -8870,7 +9066,7 @@ async function finalizarPedidoRegular(pedido_num) {
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
   const { data: conta } = await sb.from('cmp_contas_pagar')
-    .select('id,lancamento_id,vencimento').eq('pedido_num', pedido_num).maybeSingle();
+    .select('id,lancamento_id,vencimento,parcelas,parcela_intervalo').eq('pedido_num', pedido_num).maybeSingle();
 
   if (!conta?.lancamento_id) {
     const { data: refItem } = await sb.from('cmp_compras')
@@ -8945,7 +9141,7 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo = 0, fornecedor_id,
   fornecedor_nome, plano_conta, nf_numero, conta_id, obs, temRateio = false, rateioItensResolvidos = [], unidade_id = null,
-  campo_id_destino = 'lancamento_id' }) {
+  campo_id_destino = 'lancamento_id', parcelas = 1, parcelaIntervalo = 'mensal' }) {
 
   const producao = modoIntegracaoProducao();
 
@@ -8963,6 +9159,11 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
   const rateioItens = temRateio
     ? rateioItensResolvidos.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: '' }))
     : [];
+
+  // 1x (padrão) devolve uma parcela só — o fluxo antigo, inteiro.
+  const parcs = _montarParcelas({
+    valor, acrescimo, vencimento, parcelas, intervalo: parcelaIntervalo, rateioItens,
+  });
 
   const dadosBase = {
     descricao:      `Pedido ${pedido_num} — ${fornecedor_nome}`,
@@ -8993,25 +9194,39 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
     if (existente?.length) { toast(`Rascunho para ${pedido_num} já existe no financeiro.`, 'erro'); return; }
 
     const { data_pagamento: _, tem_rateio: tr, ...dadosRascunho } = { data_pagamento: null, ...dadosBase };
-    const { data: rasc, error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
-      ...dadosRascunho,
-      tem_rateio: temRateio,
-      pedido_num,
-      conta_id: conta_id || null,
-    }]).select('id').single();
-    if (errRasc) { toast('Erro ao salvar rascunho: ' + errRasc.message, 'erro'); return; }
 
-    // Grava itens de rateio do rascunho
-    if (temRateio && rasc?.id && rateioItens.length) {
-      const { error: errRateio } = await sb.from('rascunho_rateio_itens').insert(
-        rateioItens.map(r => ({ ...r, rascunho_id: rasc.id }))
-      );
-      if (errRateio) { toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro'); return; }
-    } else if (temRateio) {
-      toast('Aviso: nenhum item de rateio encontrado para gravar.', 'erro'); return;
+    // Um rascunho por parcela — o financeiro aprova cada um no valor e vencimento dele.
+    for (const p of parcs) {
+      const { data: rasc, error: errRasc } = await sb.from('lancamentos_rascunho').insert([{
+        ...dadosRascunho,
+        descricao:   _descParcela(dadosBase.descricao, p),
+        observacoes: _obsParcela(dadosBase.observacoes, p),
+        valor:       p.nota,
+        acrescimo:   p.acrescimo,
+        vencimento:  p.vencimento,
+        tem_rateio:  temRateio,
+        pedido_num,
+        conta_id: conta_id || null,
+      }]).select('id').single();
+      if (errRasc) {
+        toast(`Erro ao salvar rascunho${p.de > 1 ? ` da parcela ${p.num}/${p.de}` : ''}: ` + errRasc.message, 'erro');
+        return;
+      }
+
+      // Grava itens de rateio do rascunho
+      if (temRateio && rasc?.id && p.rateioItens.length) {
+        const { error: errRateio } = await sb.from('rascunho_rateio_itens').insert(
+          p.rateioItens.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '', rascunho_id: rasc.id }))
+        );
+        if (errRateio) { toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro'); return; }
+      } else if (temRateio) {
+        toast('Aviso: nenhum item de rateio encontrado para gravar.', 'erro'); return;
+      }
     }
 
-    toast(`🧪 Rascunho enviado ao financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
+    toast(parcs.length > 1
+      ? `🧪 ${parcs.length} parcelas enviadas ao financeiro! ${brl(valor)} — 1ª venc. ${parcs[0].vencimento.split('-').reverse().join('/')}`
+      : `🧪 Rascunho enviado ao financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
     return;
   }
 
@@ -9019,25 +9234,40 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
   const { data: lancExist } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
   if (lancExist?.length) { toast(`Lançamento para ${pedido_num} já existe no financeiro.`, 'erro'); return; }
 
-  const { data: lanc, error } = await sb.from('lancamentos').insert([{
-    ...dadosBase, data_pagamento: null,
-  }]).select('id').single();
-  if (error) { toast('Erro ao gerar no financeiro: ' + error.message, 'erro'); return; }
+  let primeiroLancId = null;
+  for (const p of parcs) {
+    const { data: lanc, error } = await sb.from('lancamentos').insert([{
+      ...dadosBase, data_pagamento: null,
+      descricao:   _descParcela(dadosBase.descricao, p),
+      observacoes: _obsParcela(dadosBase.observacoes, p),
+      valor:       p.nota,
+      acrescimo:   p.acrescimo,
+      vencimento:  p.vencimento,
+    }]).select('id').single();
+    if (error) {
+      toast(`Erro ao gerar no financeiro${p.de > 1 ? ` (parcela ${p.num}/${p.de})` : ''}: ` + error.message, 'erro');
+      return;
+    }
+    if (!primeiroLancId) primeiroLancId = lanc?.id || null;
 
-  // Grava rateio_itens
-  if (temRateio && lanc?.id && rateioItens.length) {
-    const { error: errRateio } = await sb.from('rateio_itens').insert(
-      rateioItens.map(r => ({ ...r, lancamento_id: lanc.id }))
-    );
-    if (errRateio) toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro');
+    // Grava rateio_itens
+    if (temRateio && lanc?.id && p.rateioItens.length) {
+      const { error: errRateio } = await sb.from('rateio_itens').insert(
+        p.rateioItens.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '', lancamento_id: lanc.id }))
+      );
+      if (errRateio) toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro');
+    }
   }
 
-  // Registra o id do lançamento no campo correto (lancamento_id ou adiantamento_lancamento_id)
-  if (conta_id && lanc?.id) {
-    await sb.from('cmp_contas_pagar').update({ [campo_id_destino]: lanc.id }).eq('id', conta_id);
+  // Registra o id no campo correto (lancamento_id ou adiantamento_lancamento_id).
+  // Parcelado: aponta para a 1ª parcela.
+  if (conta_id && primeiroLancId) {
+    await sb.from('cmp_contas_pagar').update({ [campo_id_destino]: primeiroLancId }).eq('id', conta_id);
   }
 
-  toast(`✅ Conta gerada no financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
+  toast(parcs.length > 1
+    ? `✅ ${parcs.length} parcelas geradas no financeiro! ${brl(valor)} — 1ª venc. ${parcs[0].vencimento.split('-').reverse().join('/')}`
+    : `✅ Conta gerada no financeiro! ${brl(valor)} — venc. ${vencimento.split('-').reverse().join('/')}`, 'ok');
 }
 
 
