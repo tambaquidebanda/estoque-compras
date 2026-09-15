@@ -262,6 +262,12 @@
     <div>
       <label class="campo-lbl">📆 Vencimento *</label>
       <input type="date" id="rec-venc" onchange="renderPreviewParcelasMob()">
+      <div style="display:flex;gap:.3rem;margin-top:.35rem;flex-wrap:wrap">
+        <button type="button" style="flex:1;min-width:3.4rem;padding:.4rem 0;font-size:.78rem;border:1px solid currentColor;border-radius:8px;background:transparent;color:var(--txt2);opacity:.9" onclick="_atalhoVenc('rec-venc', 0, 'rec-data')">À vista</button>
+        <button type="button" style="flex:1;min-width:3.4rem;padding:.4rem 0;font-size:.78rem;border:1px solid currentColor;border-radius:8px;background:transparent;color:var(--txt2);opacity:.9" onclick="_atalhoVenc('rec-venc', 7, 'rec-data')">7 dias</button>
+        <button type="button" style="flex:1;min-width:3.4rem;padding:.4rem 0;font-size:.78rem;border:1px solid currentColor;border-radius:8px;background:transparent;color:var(--txt2);opacity:.9" onclick="_atalhoVenc('rec-venc', 15, 'rec-data')">15 dias</button>
+        <button type="button" style="flex:1;min-width:3.4rem;padding:.4rem 0;font-size:.78rem;border:1px solid currentColor;border-radius:8px;background:transparent;color:var(--txt2);opacity:.9" onclick="_atalhoVenc('rec-venc', 30, 'rec-data')">30 dias</button>
+      </div>
     </div>
     <div>
       <label class="campo-lbl">🔢 Parcelas</label>
@@ -746,7 +752,8 @@ async function abrirPedido(pedido_num) {
   document.getElementById('ped-titulo').textContent = `Pedido ${pedido_num}`;
   document.getElementById('ped-info').textContent = itens[0].fornecedor_nome || '';
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  // hojeLocal(), nao toISOString(): em UTC, depois das 20h de Manaus o campo ja vinha com amanha
+  const hoje = hojeLocal();
   document.getElementById('rec-data').value      = hoje;
   document.getElementById('rec-venc').value      = '';
   document.getElementById('rec-nf').value        = '';
@@ -1019,6 +1026,41 @@ function _dataComAnoValido(iso) {
   const ano = parseInt(String(iso || '').slice(0, 4), 10);
   return ano >= 2020 && ano <= new Date().getFullYear() + 5;
 }
+
+// As tres camadas contra data errada — gemeas das do app.js (mesma logica, mesmos nomes).
+// Camada 1: ano de dois digitos vira 20xx ao SAIR do campo ("26" -> 2026). No blur, nunca
+// durante a digitacao, porque cada digito do ano ja dispara change com ano parcial.
+function _corrigirAnoCurto(el) {
+  const m = /^00(\d{2})-(\d{2})-(\d{2})$/.exec(el.value || '');
+  if (!m) return;
+  el.value = `20${m[1]}-${m[2]}-${m[3]}`;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+// Camada 2: limites no campo — o calendario nao oferece ano fora da faixa.
+function _prepararCampoData(id) {
+  const el = document.getElementById(id);
+  if (!el || el.dataset.anoPreparado) return;
+  el.min = '2020-01-01';
+  el.max = `${new Date().getFullYear() + 5}-12-31`;
+  el.addEventListener('blur', () => _corrigirAnoCurto(el));
+  el.dataset.anoPreparado = '1';
+}
+// Camada 3: atalhos de vencimento, a partir da data do recebimento (ou de hoje).
+function _atalhoVenc(idCampo, dias, idBase) {
+  const el = document.getElementById(idCampo);
+  if (!el) return;
+  const baseCampo = idBase ? document.getElementById(idBase)?.value : '';
+  const base = _dataComAnoValido(baseCampo) ? baseCampo : hojeLocal();
+  const [a, m, d] = base.split('-').map(Number);
+  const dt = new Date(a, m - 1, d + dias);
+  el.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+(function _prepararCamposDataRecebimento() {
+  const preparar = () => ['rec-data', 'rec-venc'].forEach(_prepararCampoData);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', preparar);
+  else preparar();
+})();
 
 // ── CONFIRMAR ────────────────────────────────────────────────────
 async function confirmarRecebimento() {

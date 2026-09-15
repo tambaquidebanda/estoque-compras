@@ -3377,6 +3377,12 @@
           <div class="col-md-2">
             <label class="form-label fw-semibold">📅 Vencimento <span id="receb-venc-hint" class="text-muted fw-normal"></span></label>
             <input type="date" class="form-control" id="receb-vencimento" onchange="renderPreviewParcelas()">
+            <div class="d-flex flex-wrap gap-1 mt-1">
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="Vencimento na data do recebimento" onclick="_atalhoVenc('receb-vencimento', 0, 'receb-data-rec')">À vista</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="7 dias após a data do recebimento" onclick="_atalhoVenc('receb-vencimento', 7, 'receb-data-rec')">7 dias</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="15 dias após a data do recebimento" onclick="_atalhoVenc('receb-vencimento', 15, 'receb-data-rec')">15 dias</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="30 dias após a data do recebimento" onclick="_atalhoVenc('receb-vencimento', 30, 'receb-data-rec')">30 dias</button>
+            </div>
           </div>
           <div class="col-md-2">
             <label class="form-label fw-semibold">🔢 Parcelas</label>
@@ -3648,6 +3654,12 @@
           <div class="col-md-2">
             <label class="form-label fw-semibold">Vencimento *</label>
             <input type="date" class="form-control" id="gc-vencimento" onchange="renderPreviewParcelasGC()">
+            <div class="d-flex flex-wrap gap-1 mt-1">
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="Vencimento hoje" onclick="_atalhoVenc('gc-vencimento', 0)">À vista</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="7 dias a partir de hoje" onclick="_atalhoVenc('gc-vencimento', 7)">7 dias</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="15 dias a partir de hoje" onclick="_atalhoVenc('gc-vencimento', 15)">15 dias</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" style="font-size:.72rem" title="30 dias a partir de hoje" onclick="_atalhoVenc('gc-vencimento', 30)">30 dias</button>
+            </div>
           </div>
           <div class="col-md-2">
             <label class="form-label fw-semibold">🔢 Parcelas</label>

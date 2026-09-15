@@ -6056,7 +6056,8 @@ async function abrirModalReceber(pedido_num) {
 
   document.getElementById('receb-pedido-num-hidden').value = pedido_num;
   document.getElementById('receb-ped-num').textContent     = pedido_num;
-  document.getElementById('receb-data-rec').value          = new Date().toISOString().split('T')[0];
+  // hojeLocal(), nao toISOString(): em UTC, depois das 20h de Manaus o campo ja vinha com amanha
+  document.getElementById('receb-data-rec').value          = hojeLocal();
   document.getElementById('receb-vencimento').value        = '';
   // Parcelas: vem do que foi combinado no pedido; o estoquista confirma aqui
   _preencherSelectParcelas('receb-parcelas', itens[0]?.parcelas || 1);
@@ -6171,6 +6172,46 @@ function _dataComAnoValido(iso) {
   const ano = parseInt(String(iso || '').slice(0, 4), 10);
   return ano >= 2020 && ano <= new Date().getFullYear() + 5;
 }
+
+// As tres camadas contra data errada nos campos do recebimento e do Gerar Conta.
+// A _dataComAnoValido() acima continua como ultima barreira, na hora de confirmar.
+//
+// Camada 1 — ano de dois digitos vira 20xx quando a pessoa SAI do campo ("26" -> 2026).
+// Corrige no blur e nunca durante a digitacao: no Chrome cada digito do ano ja dispara
+// change com ano parcial (digitou "2" -> 0002), e corrigir ali embaralharia quem digita 2026.
+function _corrigirAnoCurto(el) {
+  const m = /^00(\d{2})-(\d{2})-(\d{2})$/.exec(el.value || '');
+  if (!m) return;
+  el.value = `20${m[1]}-${m[2]}-${m[3]}`;
+  el.dispatchEvent(new Event('change', { bubbles: true }));   // atualiza a previa das parcelas
+}
+// Camada 2 — limites no proprio campo: o calendario nao oferece ano fora da faixa.
+function _prepararCampoData(id) {
+  const el = document.getElementById(id);
+  if (!el || el.dataset.anoPreparado) return;
+  el.min = '2020-01-01';
+  el.max = `${new Date().getFullYear() + 5}-12-31`;
+  el.addEventListener('blur', () => _corrigirAnoCurto(el));
+  el.dataset.anoPreparado = '1';
+}
+// Camada 3 — atalhos de vencimento. Conta a partir da data do recebimento quando ha uma
+// (o prazo do boleto corre da entrega, e o recebimento pode ser lancado com data antiga),
+// senao a partir de hoje. Soma dias pelo calendario local, sem passar por UTC.
+function _atalhoVenc(idCampo, dias, idBase) {
+  const el = document.getElementById(idCampo);
+  if (!el) return;
+  const baseCampo = idBase ? document.getElementById(idBase)?.value : '';
+  const base = _dataComAnoValido(baseCampo) ? baseCampo : hojeLocal();
+  const [a, m, d] = base.split('-').map(Number);
+  const dt = new Date(a, m - 1, d + dias);
+  el.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+(function _prepararCamposDataRecebimento() {
+  const preparar = () => ['receb-data-rec', 'receb-vencimento', 'gc-vencimento'].forEach(_prepararCampoData);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', preparar);
+  else preparar();
+})();
 
 async function confirmarRecebimento() {
   const pedido_num  = document.getElementById('receb-pedido-num-hidden').value;
