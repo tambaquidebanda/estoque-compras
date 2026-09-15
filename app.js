@@ -7589,11 +7589,21 @@ async function devolverPedidoAoEstoque(pedido_num) {
   // 6. Estorno do estoque, por ultimo. O recebimento creditou o ESTOQUE_LOJA na
   // unidade de USO; o estorno desfaz na mesma unidade, com quantidade negativa e o
   // MESMO tipo, para a soma do razao por tipo fechar em zero.
+  if (!cProdutosFT.length) await carregarProdutosFT();
   for (const it of itensReceb) {
-    if (!it.produto_id || !(it.qtd_recebida > 0)) continue;
-    const _uso = await _emUnidadeDeUso(it.produto_id, +it.qtd_recebida, it.valor_unitario);
+    if (!(it.qtd_recebida > 0)) continue;
+    // O CREDITO do recebimento casa por produto_id E, quando ele vem nulo, por nome.
+    // O estorno TEM de usar o MESMO criterio: olhando so o produto_id, um item
+    // gravado sem vinculo teria sido creditado no saldo e nao seria estornado — e o
+    // saldo dobraria no recebimento seguinte. Nao e hipotese: o recebimento do
+    // #00990 em 15/09/2026 gravou os 3 itens com produto_id nulo e creditou o
+    // ESTOQUE_LOJA por nome.
+    const pid = it.produto_id
+      || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
+    if (!pid) continue;
+    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
     await movimentar({
-      produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'recebimento',
+      produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento',
       quantidade: -_uso.quantidade, custo_unit: _uso.custo_unit || 0,
       motivo: `Estorno do recebimento ${pedido_num} — pedido devolvido ao estoque`,
       origem: 'estorno_recebimento', ref_tabela: 'cmp_recebimento_itens', ref_id: it.id,
