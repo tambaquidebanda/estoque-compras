@@ -1400,6 +1400,13 @@ async function finalizarPedido() {
   }));
 
   if (_pedidoEditando) {
+    // Reconfere antes de apagar: a tela de edicao pode ter ficado aberta enquanto o
+    // pedido era recebido (no celular, por exemplo).
+    if (await _pedidoTemRecebimento(_pedidoEditando, 'salvar a edição')) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+      return;
+    }
     await sb.from('cmp_compras').delete().eq('pedido_num', _pedidoEditando);
   }
 
@@ -1706,6 +1713,8 @@ function limparFiltrosHist() {
 }
 
 async function excluirCompra(id) {
+  const { data: _linha } = await sb.from('cmp_compras').select('pedido_num').eq('id', id).maybeSingle();
+  if (_linha?.pedido_num && await _pedidoTemRecebimento(_linha.pedido_num, 'excluir esta linha')) return;
   if (!confirm('Excluir este lançamento de compra?')) return;
   const { error } = await sb.from('cmp_compras').delete().eq('id', id);
   if (error) { toast('Não foi possível excluir.', 'erro'); return; }
@@ -5993,9 +6002,35 @@ async function renderPendentes() {
   }).join('');
 }
 
+// TRAVA: pedido que ja teve recebimento nao pode ser apagado, dividido nem
+// regravado pela edicao. Mexer nas linhas de cmp_compras NAO tira do estoque o que
+// o recebimento creditou: o pedido some e o saldo fica inflado sem ninguem ver.
+// Caso real, #00990 em 15/09/2026: o Rejeitar do financeiro voltou os itens para
+// pendente sem estornar o saldo, a tela liberou a lixeira e a mesma nota ficou
+// tres vezes no ESTOQUE_LOJA.
+// Confere o CABECALHO do recebimento, mesmo sem itens — e exatamente o rastro que
+// o Rejeitar deixa. Erro na consulta BLOQUEIA: na duvida, nao apaga.
+async function _pedidoTemRecebimento(pedido_num, verbo) {
+  const { data, error } = await sb.from('cmp_recebimentos')
+    .select('id').eq('pedido_num', pedido_num).limit(1);
+  if (error) {
+    toast(`Não foi possível conferir se ${pedido_num} já foi recebido (${error.message}). Nada foi alterado.`, 'erro');
+    return true;
+  }
+  if (data?.length) {
+    toast(`${pedido_num} já teve recebimento no estoque. Use primeiro ↩️ Devolver, na tela de Compras — ele estorna o saldo. Depois disso você pode ${verbo}.`, 'erro');
+    return true;
+  }
+  return false;
+}
+
 async function excluirPedidoReceb(pedido_num) {
-  // Verificação de segurança: bloqueia se já existe lançamento no financeiro
-  const { data: lanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).maybeSingle();
+  if (await _pedidoTemRecebimento(pedido_num, 'excluir')) return;
+  // Verificação de segurança: bloqueia se já existe lançamento no financeiro.
+  // limit(1), nao maybeSingle(): pedido parcelado tem varias linhas e o
+  // maybeSingle devolvia erro com data nula — e a trava deixava passar.
+  const { data: _lancs } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+  const lanc = _lancs?.[0];
   if (lanc) {
     toast('Pedido já enviado ao financeiro — exclua o lançamento lá primeiro.', 'erro');
     return;
@@ -7260,7 +7295,11 @@ async function carregarCompras() {
           title="Fechar pedido — dispensar itens não entregues">🏁 Fechar Pedido</button>`
       : '';
 
-    const podeEditar   = !g.recebido && !enviado;
+    // Cabecalho de recebimento (mesmo sem itens) tambem desabilita editar/dividir/
+    // excluir. E so aviso visual: somaRecebMap vem de consulta que pode truncar em
+    // 1000 linhas — a trava de verdade e _pedidoTemRecebimento(), dentro de cada acao.
+    const temRecebCab  = somaRecebMap[g.pedido_num] !== undefined;
+    const podeEditar   = !g.recebido && !enviado && !temRecebCab;
     // "Devolver ao Estoque" aparece para qualquer pedido que já saiu do estado
     // "só pendente": recebido, com recebimento gravado, com item dispensado ou com
     // conta no financeiro. Cobre inclusive o pedido travado (tudo dispensado), em que
@@ -7269,9 +7308,11 @@ async function carregarCompras() {
     const podeDevolver = g.recebido || temReceb || g._temDispensado || contaSet.has(g.pedido_num);
     const editarTitle  = g.recebido ? 'Pedido já recebido'
       : enviado ? 'Pedido enviado ao financeiro'
+      : temRecebCab ? 'Pedido já teve recebimento — use Devolver primeiro'
       : orfaoSet.has(g.pedido_num) ? 'O lançamento deste pedido foi excluído no financeiro — edição liberada'
       : 'Editar pedido';
-    const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
+    const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro'
+      : temRecebCab ? 'Pedido já teve recebimento — use Devolver primeiro' : 'Excluir pedido';
     const somaReceb    = somaRecebMap[g.pedido_num] || 0;
     const cpValor      = valorRecebMap[g.pedido_num] || 0;
     const divergeReceb = g.recebido && cpValor > 0 && Math.abs(somaReceb - cpValor) > 0.01;
@@ -7357,7 +7398,10 @@ function limparFiltrosCompras() {
 }
 
 async function excluirPedidoCompras(pedido_num) {
-  const { data: lanc } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).maybeSingle();
+  if (await _pedidoTemRecebimento(pedido_num, 'excluir')) return;
+  // limit(1), nao maybeSingle(): com parcelas o maybeSingle falhava e liberava.
+  const { data: _lancs } = await sb.from('lancamentos').select('id').eq('numero_pedido', pedido_num).limit(1);
+  const lanc = _lancs?.[0];
   if (lanc) {
     toast('Pedido já enviado ao financeiro — exclua o lançamento lá primeiro.', 'erro');
     return;
@@ -7377,6 +7421,9 @@ let _divItens = [];
 let _divPedidoNum = null;
 
 async function dividirPedido(pedido_num) {
+  // Dividir apaga o pedido original e cria dois novos: com recebimento gravado,
+  // o recebimento ficaria preso a um numero de pedido que nao existe mais.
+  if (await _pedidoTemRecebimento(pedido_num, 'dividir')) return;
   if (!cUnidades.length) await carregarCaches();
 
   const { data: itens } = await sb.from('cmp_compras')
@@ -7478,6 +7525,8 @@ async function confirmarDivisao() {
   if (!rowsA.length && !rowsB.length) { aviso.textContent = 'Nenhum item com quantidade maior que zero.'; aviso.classList.remove('d-none'); return; }
 
   // Exclui pedido original e insere os dois novos
+  // Reconfere na hora de apagar: o modal pode ter ficado aberto enquanto alguem recebia.
+  if (await _pedidoTemRecebimento(_divPedidoNum, 'dividir')) return;
   await sb.from('cmp_compras').delete().eq('pedido_num', _divPedidoNum);
   if (rowsA.length) await sb.from('cmp_compras').insert(rowsA);
   if (rowsB.length) await sb.from('cmp_compras').insert(rowsB);
@@ -7533,11 +7582,17 @@ async function devolverPedidoAoEstoque(pedido_num) {
     itensReceb = data || [];
   }
 
-  const qtdEstoque = itensReceb.filter(i => i.produto_id && i.qtd_recebida > 0).length;
+  // Conta tambem item sem produto_id: o estorno resolve por nome, igual ao credito.
+  const qtdEstoque = itensReceb.filter(i => i.qtd_recebida > 0).length;
+  // Recebimento sem NENHUM item e o rastro do Rejeitar do financeiro: ele apagou os
+  // itens e deixou o saldo creditado. Sem os itens nao ha como saber o que estornar —
+  // o Devolver limpa o cabecalho, mas o saldo precisa ser conferido a parte.
+  const recebSemItens = recebs.length > 0 && itensReceb.length === 0;
   const linhas = [`Devolver o pedido ${pedido_num} ao estoque?`, '',
     'Os itens voltam para pendente com a quantidade original do pedido, prontos para receber de novo.', ''];
   if (recebs.length) linhas.push(`• desfaz ${recebs.length} recebimento(s) — ${brl(recebs.reduce((s, r) => s + (parseFloat(r.total_recebido) || 0), 0))}`);
   if (qtdEstoque)    linhas.push(`• estorna do estoque ${qtdEstoque} item(ns) que tinham entrado`);
+  if (recebSemItens) linhas.push(`• ⚠️ ATENÇÃO: o recebimento está sem itens (provavelmente rejeitado no financeiro). O que entrou no estoque NÃO será estornado — confira o saldo depois.`);
   if (contas.length) linhas.push(`• remove ${contas.length} conta(s) a pagar`);
   if (lancs.length)  linhas.push(`• EXCLUI do financeiro ${lancs.length} lançamento(s): ${lancs.map(l => brl(l.valor)).join(', ')}`);
   if (rascs.length)  linhas.push(`• remove ${rascs.length} rascunho(s) de Integrações Pendentes`);
@@ -7629,6 +7684,10 @@ async function devolverPedidoAoEstoque(pedido_num) {
 async function reabrirPedido(pedido_num) { return devolverPedidoAoEstoque(pedido_num); }
 
 async function editarPedido(pedido_num) {
+  // Salvar a edicao apaga TODAS as linhas do pedido e grava de novo com ids novos:
+  // com recebimento gravado, os itens do recebimento ficariam apontando para linhas
+  // que nao existem mais e o saldo creditado continuaria la.
+  if (await _pedidoTemRecebimento(pedido_num, 'editar')) return;
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
     .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,parcelas,bonificado')
