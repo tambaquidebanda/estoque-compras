@@ -1011,6 +1011,15 @@ function atualizarTotalGeral() {
   renderPreviewParcelasMob();
 }
 
+// Campo de data no celular aceita ano de dois digitos: "26" vira 0026-09-15. O banco
+// aceita, e a conta some de qualquer filtro por periodo do financeiro sem ter sido
+// excluida. Caso real: #01316 e #01287, recebidos por esta tela em 11/09/2026.
+// Aceita so ano entre 2020 e o ano atual + 5. Gemea de _dataComAnoValido() no app.js.
+function _dataComAnoValido(iso) {
+  const ano = parseInt(String(iso || '').slice(0, 4), 10);
+  return ano >= 2020 && ano <= new Date().getFullYear() + 5;
+}
+
 // ── CONFIRMAR ────────────────────────────────────────────────────
 async function confirmarRecebimento() {
   const btn       = document.getElementById('btn-confirmar');
@@ -1023,6 +1032,8 @@ async function confirmarRecebimento() {
 
   if (!dataRec) { toast('Informe a data do recebimento.', 'err'); return; }
   if (!venc)    { toast('Informe a data de vencimento.', 'err'); return; }
+  if (!_dataComAnoValido(dataRec)) { toast(`A data do recebimento está com o ano errado (${dataRec.split('-').reverse().join('/')}). Confira o ano.`, 'err'); return; }
+  if (!_dataComAnoValido(venc))    { toast(`O vencimento está com o ano errado (${venc.split('-').reverse().join('/')}). Confira o ano.`, 'err'); return; }
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spin"></span> Salvando...';

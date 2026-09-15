@@ -6163,6 +6163,15 @@ function calcTotalReceb() {
   renderPreviewParcelas();
 }
 
+// Campo de data digitado pode sair com ano de dois digitos: "26" vira 0026-09-15.
+// O banco aceita, e a conta some de qualquer filtro por periodo do financeiro sem
+// ter sido excluida. Caso real: #01316 e #01287, recebidos em 11/09/2026.
+// Aceita so ano entre 2020 e o ano atual + 5.
+function _dataComAnoValido(iso) {
+  const ano = parseInt(String(iso || '').slice(0, 4), 10);
+  return ano >= 2020 && ano <= new Date().getFullYear() + 5;
+}
+
 async function confirmarRecebimento() {
   const pedido_num  = document.getElementById('receb-pedido-num-hidden').value;
   const dataRec     = document.getElementById('receb-data-rec').value;
@@ -6173,6 +6182,8 @@ async function confirmarRecebimento() {
   if (!dataRec)     { toast('Informe a data do recebimento.', 'erro'); return; }
   if (!responsavel) { toast('Informe o responsável.', 'erro'); return; }
   if (!vencimento)  { toast('Informe a data de vencimento.', 'erro'); return; }
+  if (!_dataComAnoValido(dataRec))    { toast(`A data do recebimento está com o ano errado (${dataRec.split('-').reverse().join('/')}). Confira o ano.`, 'erro'); return; }
+  if (!_dataComAnoValido(vencimento)) { toast(`O vencimento está com o ano errado (${vencimento.split('-').reverse().join('/')}). Confira o ano.`, 'erro'); return; }
 
   const acrescimo     = parseMoeda('receb-acrescimo');
 
@@ -9070,6 +9081,7 @@ async function confirmarGerarConta() {
 
   if (!nota || nota <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
+  if (!_dataComAnoValido(vencimento)) { toast(`O vencimento está com o ano errado (${vencimento.split('-').reverse().join('/')}). Confira o ano.`, 'erro'); return; }
 
   const temRateio             = !document.getElementById('gc-rateio-section').classList.contains('d-none');
   const plano_conta           = temRateio ? null : document.getElementById('gc-plano-label').textContent;
