@@ -7078,13 +7078,14 @@ async function carregarCompras() {
       pedido_num: key, data: c.data, data_entrega: c.data_entrega,
       forn: c.fornecedor_nome, comp: c.comprador, fornecedor_id: c.fornecedor_id || '',
       setor: c.setor || '', itens: [], total: 0, acrescimo: parseFloat(c.acrescimo) || 0,
-      _temPendente: false, _temRecebido: false
+      _temPendente: false, _temRecebido: false, _temDispensado: false
     };
     grupos[key].itens.push(c);
     grupos[key].total += (c.quantidade||0) * (c.custo_unit||0);
     const st = c.status_receb;
     if (st === 'recebido') grupos[key]._temRecebido = true;
     else if (st !== 'dispensado' && st !== 'cancelado') grupos[key]._temPendente = true;
+    if (st === 'dispensado' || st === 'cancelado') grupos[key]._temDispensado = true;
   });
 
   // Pedido concluído = nenhum item pendente e ao menos um recebido
@@ -7099,19 +7100,37 @@ async function carregarCompras() {
   const lancSet     = new Set();
   const rascunhoSet = new Set();
   const adiantSet   = new Set(); // pedidos com adiantamento_lancamento_id (advance separado)
+  const orfaoSet    = new Set(); // conta aponta para lançamento que não existe mais
+  const contaSet    = new Set(); // pedidos que têm linha em cmp_contas_pagar
   const valorRecebMap = {}; // pedido_num → valor efetivamente recebido (cmp_contas_pagar.valor)
   const somaRecebMap  = {}; // pedido_num → soma de todos os cmp_recebimentos.total_recebido
   if (numeros.length) {
     const [resLanc, resRasc, resContas, resReceb] = await Promise.all([
-      sb.from('lancamentos').select('numero_pedido').in('numero_pedido', numeros),
+      sb.from('lancamentos').select('id,numero_pedido').in('numero_pedido', numeros),
       sb.from('lancamentos_rascunho').select('pedido_num').in('pedido_num', numeros),
       sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,adiantamento_lancamento_id,valor').in('pedido_num', numeros),
       sb.from('cmp_recebimentos').select('pedido_num,total_recebido').in('pedido_num', numeros),
     ]);
     (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
+
+    // O vínculo cmp_contas_pagar.lancamento_id SOBREVIVE ao lançamento: excluir a conta
+    // no financeiro não limpa esse campo. A tela confiava só no campo preenchido, então
+    // o pedido ficava eternamente "enviado ao financeiro" — sem Editar (que exige não
+    // enviado) e sem Reabrir (que exige recebido). Foi o beco do #00990 em 15/09/2026,
+    // que só saiu com SQL na mão. Agora confere se o lançamento apontado ainda existe.
+    const idsVinc = [...new Set((resContas.data || []).map(c => c.lancamento_id).filter(Boolean))];
+    const idsVivos = new Set();
+    if (idsVinc.length) {
+      const { data: vivos } = await sb.from('lancamentos').select('id').in('id', idsVinc);
+      (vivos || []).forEach(l => idsVivos.add(l.id));
+    }
     (resContas.data || []).forEach(c => {
-      if (c.lancamento_id)              lancSet.add(c.pedido_num);
+      contaSet.add(c.pedido_num);
+      if (c.lancamento_id) {
+        if (idsVivos.has(c.lancamento_id)) lancSet.add(c.pedido_num);
+        else                               orfaoSet.add(c.pedido_num);
+      }
       if (c.adiantamento_lancamento_id) adiantSet.add(c.pedido_num);
       if (c.valor > 0) valorRecebMap[c.pedido_num] = c.valor;
     });
@@ -7232,8 +7251,16 @@ async function carregarCompras() {
       : '';
 
     const podeEditar   = !g.recebido && !enviado;
-    const podeReabrir  = g.recebido && !aguardando;
-    const editarTitle  = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Editar pedido';
+    // "Devolver ao Estoque" aparece para qualquer pedido que já saiu do estado
+    // "só pendente": recebido, com recebimento gravado, com item dispensado ou com
+    // conta no financeiro. Cobre inclusive o pedido travado (tudo dispensado), em que
+    // nem Editar nem o antigo Reabrir apareciam.
+    const temReceb     = somaRecebMap[g.pedido_num] !== undefined;
+    const podeDevolver = g.recebido || temReceb || g._temDispensado || contaSet.has(g.pedido_num);
+    const editarTitle  = g.recebido ? 'Pedido já recebido'
+      : enviado ? 'Pedido enviado ao financeiro'
+      : orfaoSet.has(g.pedido_num) ? 'O lançamento deste pedido foi excluído no financeiro — edição liberada'
+      : 'Editar pedido';
     const excluirTitle = g.recebido ? 'Pedido já recebido' : enviado ? 'Pedido enviado ao financeiro' : 'Excluir pedido';
     const somaReceb    = somaRecebMap[g.pedido_num] || 0;
     const cpValor      = valorRecebMap[g.pedido_num] || 0;
@@ -7261,9 +7288,9 @@ async function carregarCompras() {
       </td>
       <td class="text-center">
         <div class="d-flex gap-2 justify-content-center align-items-center" onclick="event.stopPropagation()">
-          ${podeReabrir ? `
-          <span data-bs-toggle="tooltip" data-bs-title="Reabrir para edição">
-            <button class="btn btn-sm btn-outline-warning py-1 px-2" onclick="event.stopPropagation();reabrirPedido('${g.pedido_num}')" style="white-space:nowrap"><i class="bi bi-arrow-counterclockwise"></i> Reabrir</button>
+          ${podeDevolver ? `
+          <span data-bs-toggle="tooltip" data-bs-title="Desfaz o recebimento e o que ele gerou no financeiro, devolvendo o pedido para edição">
+            <button class="btn btn-sm btn-outline-warning py-1 px-2" onclick="event.stopPropagation();devolverPedidoAoEstoque('${g.pedido_num}')" style="white-space:nowrap"><i class="bi bi-arrow-counterclockwise"></i> Devolver</button>
           </span>` : ''}
           <span data-bs-toggle="tooltip" data-bs-title="${editarTitle}">
             <button class="btn btn-sm py-1 px-2 ${podeEditar ? 'btn-outline-primary' : 'btn-outline-secondary'}" ${podeEditar ? `onclick="editarPedido('${g.pedido_num}')"` : 'disabled'} style="white-space:nowrap;pointer-events:${podeEditar?'auto':'none'}"><i class="bi bi-pencil-fill"></i> Editar</button>
@@ -7450,51 +7477,136 @@ async function confirmarDivisao() {
   carregarCompras();
 }
 
-async function reabrirPedido(pedido_num) {
-  const { data: contaExiste } = await sb.from('cmp_contas_pagar').select('id').eq('pedido_num', pedido_num).maybeSingle();
-  const aviso = contaExiste
-    ? `Reabrir pedido ${pedido_num}?\n\nO recebimento e o vínculo com o financeiro (Contas a Pagar) serão removidos. O pedido voltará para pendente, liberando a edição.\n\nSe o lançamento já foi aprovado no financeiro, exclua-o de lá também.`
-    : `Reabrir pedido ${pedido_num}?\n\nO recebimento será desfeito e o pedido voltará para pendente, liberando a edição.`;
-  if (!confirm(aviso)) return;
+// DEVOLVER AO ESTOQUE — desfaz o recebimento do pedido E o que ele gerou no
+// financeiro, devolvendo os itens para pendente com a quantidade ORIGINAL.
+//
+// Substitui o antigo "Reabrir", que exigia pedido recebido e nao mexia no
+// financeiro. Um pedido ja enviado ficava sem saida: Editar exige "nao enviado",
+// Reabrir exigia "recebido", e um pedido fechado com todos os itens dispensados
+// (#00990, 15/09/2026) nao atendia nenhum dos dois — so saiu com SQL na mao.
+//
+// ORDEM DOS PASSOS, e o porque de cada um:
+//  - rateio_itens antes de lancamentos: e' chave estrangeira para o lancamento.
+//  - cmp_contas_pagar antes de cmp_recebimentos: cmp_contas_pagar.recebimento_id
+//    aponta para o recebimento e o banco recusa a ordem inversa. Em 2026 essa
+//    ordem errada deixou 28 cabecalhos orfaos em 19 pedidos.
+//  - o estorno do estoque fica por ULTIMO, com os itens ja lidos na memoria: se
+//    algum passo do financeiro falhar, o saldo nao foi tocado e nada fica pela
+//    metade. Cada passo confere o erro e PARA no primeiro que falhar.
+async function devolverPedidoAoEstoque(pedido_num) {
+  // 1. Levanta tudo que esta pendurado no pedido
+  const [rLanc, rRasc, rConta, rReceb] = await Promise.all([
+    sb.from('lancamentos').select('id,valor,status,vencimento').eq('numero_pedido', pedido_num),
+    sb.from('lancamentos_rascunho').select('id,valor').eq('pedido_num', pedido_num),
+    sb.from('cmp_contas_pagar').select('id,valor,lancamento_id').eq('pedido_num', pedido_num),
+    sb.from('cmp_recebimentos').select('id,total_recebido').eq('pedido_num', pedido_num),
+  ]);
+  const lancs  = rLanc.data  || [], rascs  = rRasc.data  || [];
+  const contas = rConta.data || [], recebs = rReceb.data || [];
 
-  // ORDEM IMPORTA: cmp_contas_pagar.recebimento_id e' chave estrangeira para
-  // cmp_recebimentos.id. Apagar o recebimento com a conta ainda apontando para ele
-  // e' recusado pelo banco. Antes esta funcao apagava nessa ordem errada e nao
-  // conferia erro nenhum: o cabecalho do recebimento sobrevivia sem itens, a conta
-  // era apagada e o pedido voltava para pendente — o pedido reaparecia na fila de
-  // recebimento como se nunca tivesse entrado, ja pago no financeiro. Foram 28
-  // cabecalhos orfaos em 19 pedidos entre julho e agosto de 2026.
-  //
-  // Agora cada passo confere o erro e PARA no primeiro que falhar, para nao deixar
-  // o pedido pela metade. Se parar no meio, o estado continua consistente: o que ja
-  // saiu, saiu; o que nao saiu, continua la; e o pedido segue como estava.
+  // TRAVA: parcela paga nao volta. Desfazer aqui deixaria dinheiro pago sem pedido.
+  const pagos = lancs.filter(l => l.status === 'pago');
+  if (pagos.length) {
+    const vlr = brl(pagos.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0));
+    toast(`${pedido_num} já foi pago no financeiro (${pagos.length === 1 ? '1 lançamento' : pagos.length + ' parcelas'}, ${vlr}). Estorne o pagamento lá antes de devolver.`, 'erro');
+    return;
+  }
+
+  // Itens dos recebimentos: lidos ANTES de apagar. Deles saem o estorno do estoque
+  // e a quantidade original de cada item.
+  let itensReceb = [];
+  if (recebs.length) {
+    const { data, error } = await sb.from('cmp_recebimento_itens')
+      .select('id,compra_id,produto,produto_id,qtd_pedida,qtd_recebida,valor_unitario')
+      .in('recebimento_id', recebs.map(r => r.id));
+    if (error) { toast('Não foi possível ler os itens do recebimento: ' + error.message, 'erro'); return; }
+    itensReceb = data || [];
+  }
+
+  const qtdEstoque = itensReceb.filter(i => i.produto_id && i.qtd_recebida > 0).length;
+  const linhas = [`Devolver o pedido ${pedido_num} ao estoque?`, '',
+    'Os itens voltam para pendente com a quantidade original do pedido, prontos para receber de novo.', ''];
+  if (recebs.length) linhas.push(`• desfaz ${recebs.length} recebimento(s) — ${brl(recebs.reduce((s, r) => s + (parseFloat(r.total_recebido) || 0), 0))}`);
+  if (qtdEstoque)    linhas.push(`• estorna do estoque ${qtdEstoque} item(ns) que tinham entrado`);
+  if (contas.length) linhas.push(`• remove ${contas.length} conta(s) a pagar`);
+  if (lancs.length)  linhas.push(`• EXCLUI do financeiro ${lancs.length} lançamento(s): ${lancs.map(l => brl(l.valor)).join(', ')}`);
+  if (rascs.length)  linhas.push(`• remove ${rascs.length} rascunho(s) de Integrações Pendentes`);
+  linhas.push('', 'Esta ação não pode ser desfeita.');
+  if (!confirm(linhas.join('\n'))) return;
+
   const falha = (etapa, err) => {
-    toast(`Nao foi possivel reabrir ${pedido_num}: falhou ao ${etapa} (${err.message}). Nada foi alterado pela metade — tente de novo ou chame o suporte.`, 'erro');
+    toast(`Não foi possível devolver ${pedido_num}: falhou ao ${etapa} (${err.message}). Nada foi alterado pela metade — tente de novo ou chame o suporte.`, 'erro');
     carregarCompras();
   };
 
-  // 1. a conta a pagar sai primeiro: e' ela que prende o recebimento
+  // 2. Financeiro: rateio primeiro (FK), depois os lancamentos e os rascunhos
+  if (lancs.length) {
+    const ids = lancs.map(l => l.id);
+    const { error: errRat } = await sb.from('rateio_itens').delete().in('lancamento_id', ids);
+    if (errRat) return falha('remover o rateio do lançamento', errRat);
+    const { error: errLanc } = await sb.from('lancamentos').delete().in('id', ids);
+    if (errLanc) return falha('excluir o lançamento do financeiro', errLanc);
+  }
+  if (rascs.length) {
+    const { error } = await sb.from('lancamentos_rascunho').delete().eq('pedido_num', pedido_num);
+    if (error) return falha('excluir o rascunho', error);
+  }
+
+  // 3. A conta a pagar sai antes do recebimento (ela e' quem prende o recebimento)
   const { error: errConta } = await sb.from('cmp_contas_pagar').delete().eq('pedido_num', pedido_num);
   if (errConta) return falha('remover a conta a pagar', errConta);
 
-  // 2. itens e cabecalho do recebimento
-  const { data: recebimentos, error: errBusca } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
-  if (errBusca) return falha('buscar os recebimentos', errBusca);
-  if (recebimentos?.length) {
-    const ids = recebimentos.map(r => r.id);
+  // 4. Itens e cabecalho do recebimento
+  if (recebs.length) {
+    const ids = recebs.map(r => r.id);
     const { error: errItens } = await sb.from('cmp_recebimento_itens').delete().in('recebimento_id', ids);
     if (errItens) return falha('remover os itens do recebimento', errItens);
     const { error: errReceb } = await sb.from('cmp_recebimentos').delete().in('id', ids);
     if (errReceb) return falha('remover o recebimento', errReceb);
   }
 
-  // 3. so agora os itens voltam para pendente
-  const { error: errCompras } = await sb.from('cmp_compras').update({ status_receb: 'pendente' }).eq('pedido_num', pedido_num);
+  // 5. Itens voltam para pendente com a quantidade ORIGINAL.
+  // O recebimento MEXE na quantidade do pedido: parcial grava o restante, total grava
+  // o que entrou de fato. A quantidade original sobrevive em qtd_pedida do item do
+  // recebimento — e com varios recebimentos parciais a MAIOR delas e' a do pedido
+  // inteiro (o 1o recebimento viu o pedido cheio). Sem isso, devolver um pedido que
+  // recebeu 12 de 36 deixa o pedido valendo 24.
+  const { error: errCompras } = await sb.from('cmp_compras')
+    .update({ status_receb: 'pendente' }).eq('pedido_num', pedido_num);
   if (errCompras) return falha('voltar os itens para pendente', errCompras);
 
-  toast(`Pedido ${pedido_num} reaberto. Edite e receba novamente.`, 'ok');
+  const qtdOriginal = new Map();
+  for (const it of itensReceb) {
+    if (!it.compra_id) continue;
+    const q = Number(it.qtd_pedida) || 0;
+    if (q > (qtdOriginal.get(it.compra_id) || 0)) qtdOriginal.set(it.compra_id, q);
+  }
+  for (const [compra_id, qtd] of qtdOriginal) {
+    if (!(qtd > 0)) continue;
+    await sb.from('cmp_compras').update({ quantidade: qtd }).eq('id', compra_id);
+  }
+
+  // 6. Estorno do estoque, por ultimo. O recebimento creditou o ESTOQUE_LOJA na
+  // unidade de USO; o estorno desfaz na mesma unidade, com quantidade negativa e o
+  // MESMO tipo, para a soma do razao por tipo fechar em zero.
+  for (const it of itensReceb) {
+    if (!it.produto_id || !(it.qtd_recebida > 0)) continue;
+    const _uso = await _emUnidadeDeUso(it.produto_id, +it.qtd_recebida, it.valor_unitario);
+    await movimentar({
+      produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'recebimento',
+      quantidade: -_uso.quantidade, custo_unit: _uso.custo_unit || 0,
+      motivo: `Estorno do recebimento ${pedido_num} — pedido devolvido ao estoque`,
+      origem: 'estorno_recebimento', ref_tabela: 'cmp_recebimento_itens', ref_id: it.id,
+    });
+  }
+
+  toast(`${pedido_num} devolvido ao estoque. Edite e receba novamente.`, 'ok');
   carregarCompras();
 }
+
+// Nome antigo mantido: havia chamadas diretas de reabrirPedido no console durante
+// os consertos manuais de agosto e setembro.
+async function reabrirPedido(pedido_num) { return devolverPedidoAoEstoque(pedido_num); }
 
 async function editarPedido(pedido_num) {
   // Busca itens do pedido
