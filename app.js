@@ -7121,15 +7121,25 @@ async function carregarCompras() {
     // que só saiu com SQL na mão. Agora confere se o lançamento apontado ainda existe.
     const idsVinc = [...new Set((resContas.data || []).map(c => c.lancamento_id).filter(Boolean))];
     const idsVivos = new Set();
-    if (idsVinc.length) {
-      const { data: vivos } = await sb.from('lancamentos').select('id').in('id', idsVinc);
+    let checagemOk = true;
+    // EM LOTES DE 100, e nao de uma vez: .in('id', ...) vira querystring, e com os ~1.000
+    // vinculos de uma janela larga a URL passa de 37 mil caracteres e o PostgREST responde
+    // 400. A lista voltava VAZIA e, sem a trava abaixo, todo pedido com lancamento viraria
+    // "orfao" — liberando o Editar em pedido que esta no financeiro. Medido em 15/09/2026.
+    for (let i = 0; i < idsVinc.length; i += 100) {
+      const { data: vivos, error } = await sb.from('lancamentos')
+        .select('id').in('id', idsVinc.slice(i, i + 100));
+      if (error) { checagemOk = false; break; }
       (vivos || []).forEach(l => idsVivos.add(l.id));
     }
     (resContas.data || []).forEach(c => {
       contaSet.add(c.pedido_num);
       if (c.lancamento_id) {
-        if (idsVivos.has(c.lancamento_id)) lancSet.add(c.pedido_num);
-        else                               orfaoSet.add(c.pedido_num);
+        // Se a checagem falhou, trata como VIVO (comportamento antigo). Um falso orfao
+        // libera a edicao de um pedido que esta no financeiro; manter a trava a mais e
+        // o erro barato, e o botao Devolver continua disponivel de qualquer forma.
+        if (!checagemOk || idsVivos.has(c.lancamento_id)) lancSet.add(c.pedido_num);
+        else                                              orfaoSet.add(c.pedido_num);
       }
       if (c.adiantamento_lancamento_id) adiantSet.add(c.pedido_num);
       if (c.valor > 0) valorRecebMap[c.pedido_num] = c.valor;
