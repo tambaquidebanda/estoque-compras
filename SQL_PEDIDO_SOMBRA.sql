@@ -98,17 +98,46 @@ SELECT count(*) AS colunas
 
 
 -- ============================================================================
--- PASSO 4 - depois de o script rodar, o placar por setor e noite.
---           "bate" = ate 1 unidade. So itens comparaveis (sem as 3 marcas).
+-- PASSO 4 - O PLACAR. Rode quando quiser ver como a sombra esta indo.
+--
+-- "bate" = diferenca de ate 1 unidade. Entram so os itens comparaveis: fora os
+-- de unidade nao curada, os contados em dois grupos na mesma noite e os que
+-- vieram zerados (linha em branco). V1 = ancora de ontem (termometro do dia).
+-- V2 = ancora de 7 a 10 dias antes; e o V2 que decide se um setor passa.
 -- ============================================================================
--- SELECT noite, setor,
---        count(*)                                                        AS itens,
---        round(100.0 * avg((abs(v1_sombra - pedido_real) <= 1)::int), 0) AS v1_bate_pct,
---        round(100.0 * avg((abs(v1_sombra - pedido_real) < 0.0001)::int), 0) AS v1_exato_pct,
---        round(100.0 * avg((abs(v2_sombra - pedido_real) <= 1)::int)
---              FILTER (WHERE v2_ancora_data IS NOT NULL), 0)             AS v2_bate_pct
---   FROM pdv_pedido_sombra
---  WHERE NOT unidade_nao_curada AND NOT dois_grupos AND NOT contado_zero
---    AND padrao > 0 AND v1_ancora_data IS NOT NULL
---  GROUP BY noite, setor
---  ORDER BY noite DESC, setor;
+SELECT noite, setor,
+       count(*)                                                            AS itens,
+       round(100.0 * avg((abs(v1_sombra - pedido_real) <= 1)::int))        AS v1_itens_pct,
+       round(100.0 * avg((abs(v1_sombra - pedido_real) < 0.0001)::int))    AS v1_exato_pct,
+       round(100.0 * sum(CASE WHEN abs(v1_sombra - pedido_real) <= 1
+                              THEN pedido_real * custo_unit ELSE 0 END)
+                   / nullif(sum(pedido_real * custo_unit), 0))             AS v1_valor_pct,
+       count(*) FILTER (WHERE v2_sombra IS NOT NULL)                       AS itens_v2,
+       round(100.0 * avg((abs(v2_sombra - pedido_real) <= 1)::int)
+             FILTER (WHERE v2_sombra IS NOT NULL))                         AS v2_itens_pct,
+       round(100.0 * sum(CASE WHEN v2_sombra IS NOT NULL
+                               AND abs(v2_sombra - pedido_real) <= 1
+                              THEN pedido_real * custo_unit ELSE 0 END)
+                   / nullif(sum(CASE WHEN v2_sombra IS NOT NULL
+                                     THEN pedido_real * custo_unit ELSE 0 END), 0))
+                                                                           AS v2_valor_pct
+  FROM pdv_pedido_sombra
+ WHERE NOT unidade_nao_curada AND NOT dois_grupos AND NOT contado_zero
+   AND padrao > 0 AND v1_sombra IS NOT NULL
+ GROUP BY noite, setor
+ ORDER BY noite DESC, setor;
+
+
+-- ============================================================================
+-- PASSO 5 - ONDE A SOMBRA ERRA MAIS, em R$. E a fila de consertos: cada linha
+-- do topo costuma ser um problema conhecido de processo, nao de calculo.
+-- ============================================================================
+SELECT noite, setor, nome,
+       pedido_real, v1_sombra,
+       round((abs(v1_sombra - pedido_real) * custo_unit)::numeric, 2) AS diferenca_rs
+  FROM pdv_pedido_sombra
+ WHERE NOT unidade_nao_curada AND NOT dois_grupos AND NOT contado_zero
+   AND padrao > 0 AND v1_sombra IS NOT NULL
+   AND abs(v1_sombra - pedido_real) > 1
+ ORDER BY diferenca_rs DESC
+ LIMIT 30;
