@@ -101,8 +101,11 @@ SELECT count(*) AS colunas
 -- PASSO 4 - O PLACAR. Rode quando quiser ver como a sombra esta indo.
 --
 -- "bate" = diferenca de ate 1 unidade. Entram so os itens comparaveis: fora os
--- de unidade nao curada, os contados em dois grupos na mesma noite e os que
--- vieram zerados (linha em branco). V1 = ancora de ontem (termometro do dia).
+-- de unidade nao curada, os contados em dois grupos na mesma noite, os que
+-- vieram zerados (linha em branco) e aqueles em que o SALDO DO MODELO ficou
+-- NEGATIVO - nesses o modelo viu sair mais do que viu entrar, ou seja, perdeu
+-- um lancamento, e comparar seria cobrar do setor um erro de registro.
+-- V1 = ancora de ontem (termometro do dia).
 -- V2 = ancora de 7 a 10 dias antes; e o V2 que decide se um setor passa.
 -- ============================================================================
 SELECT noite, setor,
@@ -123,7 +126,7 @@ SELECT noite, setor,
                                                                            AS v2_valor_pct
   FROM pdv_pedido_sombra
  WHERE NOT unidade_nao_curada AND NOT dois_grupos AND NOT contado_zero
-   AND padrao > 0 AND v1_sombra IS NOT NULL
+   AND padrao > 0 AND v1_sombra IS NOT NULL AND v1_saldo >= 0
  GROUP BY noite, setor
  ORDER BY noite DESC, setor;
 
@@ -134,7 +137,8 @@ SELECT noite, setor,
 -- ============================================================================
 SELECT noite, setor, nome,
        pedido_real, v1_sombra,
-       round((abs(v1_sombra - pedido_real) * custo_unit)::numeric, 2) AS diferenca_rs
+       round((abs(v1_sombra - pedido_real) * custo_unit)::numeric, 2) AS diferenca_rs,
+       (v1_saldo < 0)                                                 AS falta_entrada
   FROM pdv_pedido_sombra
  WHERE NOT unidade_nao_curada AND NOT dois_grupos AND NOT contado_zero
    AND padrao > 0 AND v1_sombra IS NOT NULL

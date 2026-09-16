@@ -11481,7 +11481,14 @@ const _psNum = v => Number(v) || 0;
 // Linha comparável: sem as três marcas e com padrão de verdade. Item sem padrão
 // nunca gera pedido, então "acertar" nele é acertar zero contra zero — infla o
 // placar sem dizer nada.
-const _psLimpa = l => !l.unidade_nao_curada && !l.dois_grupos && !l.contado_zero && _psNum(l.padrao) > 0;
+// SALDO NEGATIVO = O MODELO PERDEU UM LANCAMENTO, nao e divergencia do setor.
+// Quando `*_saldo` da negativo, a venda comeu mais do que o modelo viu entrar:
+// falta uma entrada (ou sobra uma saida) no periodo. Comparar esse item com a
+// contagem seria cobrar do setor um erro de registro. Nao e coluna no banco -
+// e derivada, porque o saldo ja esta gravado.
+const _psModeloNeg = (l, v) => l[v + '_saldo'] != null && _psNum(l[v + '_saldo']) < 0;
+const _psLimpa = (l, v = 'v1') => !l.unidade_nao_curada && !l.dois_grupos && !l.contado_zero
+  && _psNum(l.padrao) > 0 && !_psModeloNeg(l, v);
 const _psSombra = (l, v) => l[v + '_sombra'];
 const _psBate = (l, v) => _psSombra(l, v) !== null && Math.abs(_psNum(_psSombra(l, v)) - _psNum(l.pedido_real)) <= PS_TOL + 1e-9;
 const _psRs = l => _psNum(l.pedido_real) * _psNum(l.custo_unit);
@@ -11493,7 +11500,7 @@ async function carregarPedidoSombra() {
   tbSet.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Carregando…</td></tr>';
 
   const cols = 'noite,setor,grupo,produto_id,nome,contado,padrao,pedido_real,custo_unit,'
-             + 'v1_ancora_data,v1_sombra,v2_ancora_data,v2_sombra,'
+             + 'v1_ancora_data,v1_saldo,v1_sombra,v2_ancora_data,v2_saldo,v2_sombra,'
              + 'unidade_nao_curada,dois_grupos,contado_zero';
   try {
     // n = 0 é "Tudo". O corte é pela noite, não por criado_em: reprocessar uma
@@ -11519,10 +11526,9 @@ async function carregarPedidoSombra() {
 
 // Placar de um conjunto de linhas, nas duas variantes.
 function _psPlacar(linhas) {
-  const limpas = linhas.filter(_psLimpa);
-  const r = { itens: limpas.length, noites: new Set(linhas.map(l => l.noite)).size };
+  const r = { noites: new Set(linhas.map(l => l.noite)).size };
   for (const v of ['v1', 'v2']) {
-    const com = limpas.filter(l => _psSombra(l, v) !== null);
+    const com = linhas.filter(l => _psLimpa(l, v) && _psSombra(l, v) !== null);
     const rs = com.reduce((s, l) => s + _psRs(l), 0);
     const bateRs = com.filter(l => _psBate(l, v)).reduce((s, l) => s + _psRs(l), 0);
     r[v] = {
@@ -11534,8 +11540,9 @@ function _psPlacar(linhas) {
     };
   }
   // quanto do dinheiro pedido está em linha que a medição não sabe julgar
+  r.itens = r.v1.n;   // o placar da tela conta o mesmo que o log do robo
   const totalRs = linhas.reduce((s, l) => s + _psRs(l), 0);
-  const foraRs = linhas.filter(l => !_psLimpa(l)).reduce((s, l) => s + _psRs(l), 0);
+  const foraRs = linhas.filter(l => !_psLimpa(l, 'v2')).reduce((s, l) => s + _psRs(l), 0);
   r.foraPct = totalRs > 0 ? 100 * foraRs / totalRs : 0;
   return r;
 }
@@ -11544,7 +11551,7 @@ function _psPlacar(linhas) {
 // dizer QUAL deles está faltando em vez de só "ainda não".
 function _psCriterio(linhas) {
   const porNoite = {};
-  linhas.filter(_psLimpa).forEach(l => {
+  linhas.filter(l => _psLimpa(l, 'v2')).forEach(l => {
     if (_psSombra(l, 'v2') === null) return;
     const a = porNoite[l.noite] || (porNoite[l.noite] = { rs: 0, bateRs: 0 });
     a.rs += _psRs(l);
@@ -11557,7 +11564,7 @@ function _psCriterio(linhas) {
   // V2 na maioria das noites em que foi contado — um item caro que só acerta de
   // vez em quando continua sendo o que vai faltar na prateleira.
   const porItem = {};
-  linhas.filter(l => _psLimpa(l) && _psSombra(l, 'v2') !== null).forEach(l => {
+  linhas.filter(l => _psLimpa(l, 'v2') && _psSombra(l, 'v2') !== null).forEach(l => {
     const a = porItem[l.produto_id] || (porItem[l.produto_id] = { nome: l.nome, rs: 0, n: 0, bate: 0 });
     a.rs += _psRs(l); a.n++; a.bate += _psBate(l, 'v2') ? 1 : 0;
   });
@@ -11669,7 +11676,8 @@ function _pintarPedidoSombra() {
   const MOSTRA = 300;
   const selos = l => (l.unidade_nao_curada ? ' <span class="badge bg-warning text-dark">un?</span>' : '')
     + (l.dois_grupos ? ' <span class="badge bg-secondary">2 grupos</span>' : '')
-    + (l.contado_zero ? ' <span class="badge bg-secondary">em branco?</span>' : '');
+    + (l.contado_zero ? ' <span class="badge bg-secondary">em branco?</span>' : '')
+    + (_psModeloNeg(l, v) ? ` <span class="badge bg-danger" title="O modelo viu sair mais do que viu entrar (saldo ${_psNum(l[v + '_saldo']).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}). Falta registrar uma entrada, ou sobra uma saída. Fica fora do placar.">falta entrada?</span>` : '');
   tbFila.innerHTML = !fila.length
     ? `<tr><td colspan="9" class="text-center text-muted py-4">${_psLinhas.length ? 'Nada fora do lugar com estes filtros.' : 'Nada medido ainda.'}</td></tr>`
     : fila.slice(0, MOSTRA).map(l => `<tr>
@@ -11701,14 +11709,16 @@ function exportarPedidoSombra() {
   const aoa = [
     [`Pedido sombra - ${_psNoites} noite(s) - comparando por ${v.toUpperCase()}`],
     ['Insumo', 'Setor', 'Grupo', 'Noite', 'Padrao', 'Contado', 'Pediu', 'Sombra diz', 'Diferenca', 'Em R$',
-     'Ancora', 'Unidade nao curada', 'Dois grupos', 'Contado zero'],
+     'Ancora', 'Saldo do modelo', 'Modelo negativo', 'Unidade nao curada', 'Dois grupos', 'Contado zero'],
     ...linhas.map(l => [l.nome, l.setor, l.grupo, l.noite, _psNum(l.padrao), _psNum(l.contado),
       _psNum(l.pedido_real), _psNum(_psSombra(l, v)), l._dif, l._rs, l[v + '_ancora_data'] || '',
+      _psNum(l[v + '_saldo']), _psModeloNeg(l, v) ? 'sim' : '',
       l.unidade_nao_curada ? 'sim' : '', l.dois_grupos ? 'sim' : '', l.contado_zero ? 'sim' : '']),
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 38 }, { wch: 15 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-                 { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 13 }, { wch: 13 }];
+                 { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 15 }, { wch: 16 },
+                 { wch: 18 }, { wch: 13 }, { wch: 13 }];
   for (let r = 2; r < aoa.length; r++) {
     const c = ws[XLSX.utils.encode_cell({ r, c: 9 })];
     if (c) c.z = 'R$ #,##0.00';

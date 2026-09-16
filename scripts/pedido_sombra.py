@@ -29,6 +29,8 @@ Tres marcas separam o que nao e comparacao justa (a tela mostra a parte):
     unidade_nao_curada  fator_conversao != 1: o time conta na unidade de costume
     dois_grupos         mesmo item contado em dois grupos na mesma noite
     contado_zero        linha em branco vira zero e pede o padrao inteiro
+E ha uma quarta, DERIVADA (nao e coluna): `*_saldo` negativo. O modelo viu sair
+mais do que viu entrar, entao ele perdeu um lancamento - nao da para comparar.
 
 Reaproveita o comparativo_diario.py (contagem, entradas e modelo ja com a data
 corrigida para Manaus) - a medicao da sombra e a do comparativo precisam contar
@@ -142,7 +144,13 @@ def main():
         return float((P.get(pid) or {}).get('fator_conversao') or 1) or 1
 
     def rodar(setor, pid, ancora, noite):
-        """saldo do modelo andando da ancora ate a noite: (qtd ancora, entradas, consumo, saldo)."""
+        """saldo do modelo andando da ancora ate a noite: (qtd ancora, entradas, consumo, saldo).
+
+        O saldo pode dar NEGATIVO - a venda comeu mais do que o modelo viu entrar,
+        que e o retrato de produto saindo do estoque sem registro. O saldo negativo
+        fica gravado como esta, porque e ele que denuncia o problema; quem trata o
+        sinal e o `pedido_sombra` abaixo.
+        """
         base = cont[(setor, pid, ancora)]
         e = c = 0.0
         dia = d(ancora) + datetime.timedelta(days=1)
@@ -188,10 +196,19 @@ def main():
                               ('v2', ancora_v2(setor, pid, noite))):
                 if ancora:
                     base, e, c, saldo = rodar(setor, pid, ancora, noite)
+                    # PEDIDO NUNCA PASSA DO PADRAO. O padrao E o nivel de estoque alvo:
+                    # o pedido real e max(0, padrao - contado) e contado nunca e
+                    # negativo, entao ele para no padrao. Sem o max(0, saldo) aqui, um
+                    # saldo de -167 virava pedido de 227 num item de padrao 60 - numero
+                    # que nenhum setor pediria. Em 12-15/09 isso inflou a fila de
+                    # consertos em R$ 76 mil de R$ 104 mil. O saldo negativo continua
+                    # gravado em `{v}_saldo`, e a tela marca e tira essas linhas do
+                    # placar: onde o modelo vai a negativo ele nao esta comparando com
+                    # a contagem, esta avisando que perdeu uma entrada ou uma saida.
                     row.update({f'{v}_ancora_data': ancora, f'{v}_ancora_qtd': round(base, 4),
                                 f'{v}_entradas': round(e, 4), f'{v}_consumo': round(c, 4),
                                 f'{v}_saldo': round(saldo, 4),
-                                f'{v}_sombra': round(max(0.0, padrao - saldo), 4)})
+                                f'{v}_sombra': round(max(0.0, padrao - max(0.0, saldo)), 4)})
                 else:
                     row.update({f'{v}_ancora_data': None, f'{v}_ancora_qtd': None, f'{v}_entradas': None,
                                 f'{v}_consumo': None, f'{v}_saldo': None, f'{v}_sombra': None})
@@ -199,7 +216,7 @@ def main():
 
             # placar do log: so item comparavel
             limpo = (padrao > 0 and not row['unidade_nao_curada'] and not row['dois_grupos']
-                     and not row['contado_zero'])
+                     and not row['contado_zero'] and not (row['v1_saldo'] or 0) < 0)
             if limpo and row['v1_sombra'] is not None:
                 p = placar[setor]
                 dif = abs(row['v1_sombra'] - row['pedido_real'])
