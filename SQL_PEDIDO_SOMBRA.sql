@@ -90,7 +90,7 @@ CREATE POLICY pdv_pedido_sombra_all ON pdv_pedido_sombra
 
 
 -- ============================================================================
--- PASSO 3 - CONFERENCIA. Deve listar 28 colunas.
+-- PASSO 3 - CONFERENCIA. Deve listar 26 colunas.
 -- ============================================================================
 SELECT count(*) AS colunas
   FROM information_schema.columns
