@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'saude-fichas'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'pedido-sombra', 'saude-fichas'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -245,6 +245,7 @@ function ir(nome, el) {
   if (nome === 'sem-giro')        carregarSemGiro();
   if (nome === 'acuracidade')     carregarAcuracidade();
   if (nome === 'paralelo')        carregarParalelo();
+  if (nome === 'pedido-sombra')   carregarPedidoSombra();
   if (nome === 'saude-fichas')    carregarSaudeFichas();
 }
 
@@ -11453,6 +11454,268 @@ function exportarParalelo() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contagem x Venda');
   XLSX.writeFile(wb, `contagem-x-venda_${_parDia}.xlsx`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PEDIDO SOMBRA — fase 1 da baixa automática
+//
+// Lê `pdv_pedido_sombra`, que o robô da madrugada grava depois da baixa. Aqui
+// NÃO se recalcula pedido nenhum: a conta tem uma implementação só, a do
+// scripts/pedido_sombra.py. Uma segunda implementação em JS divergiria da do
+// Python sem ninguém notar — mesma decisão da tela Contagem × Venda.
+//
+// A pergunta da tela é uma só: EM QUAL SETOR JÁ DÁ PARA PARAR DE CONTAR TODO
+// DIA. Por isso o V2 (âncora de 7 a 10 dias) manda, e não o V1 (âncora de
+// ontem): V1 é termômetro, sempre acerta mais, e liberar um setor por ele seria
+// liberar por um número que a rotina semanal não reproduz.
+// ════════════════════════════════════════════════════════════════════════════
+
+const PS_TOL = 1;            // "bate" = até 1 unidade (decisão do Wagner, 15/09/2026)
+const PS_CRIT = { noites: 14, ok: 10, valor: 85, top: 10, foraMax: 10 };
+const PS_MIN_ITENS = 5;      // abaixo disso por noite, a porcentagem do setor é ruído
+
+let _psLinhas = [];          // tudo que foi lido no período
+let _psNoites = 0;
+
+const _psNum = v => Number(v) || 0;
+// Linha comparável: sem as três marcas e com padrão de verdade. Item sem padrão
+// nunca gera pedido, então "acertar" nele é acertar zero contra zero — infla o
+// placar sem dizer nada.
+const _psLimpa = l => !l.unidade_nao_curada && !l.dois_grupos && !l.contado_zero && _psNum(l.padrao) > 0;
+const _psSombra = (l, v) => l[v + '_sombra'];
+const _psBate = (l, v) => _psSombra(l, v) !== null && Math.abs(_psNum(_psSombra(l, v)) - _psNum(l.pedido_real)) <= PS_TOL + 1e-9;
+const _psRs = l => _psNum(l.pedido_real) * _psNum(l.custo_unit);
+
+async function carregarPedidoSombra() {
+  const tbSet = document.getElementById('lst-ps-setor');
+  const tbFila = document.getElementById('lst-ps-fila');
+  const n = Number(document.getElementById('ps-noites')?.value ?? 14);
+  tbSet.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Carregando…</td></tr>';
+
+  const cols = 'noite,setor,grupo,produto_id,nome,contado,padrao,pedido_real,custo_unit,'
+             + 'v1_ancora_data,v1_sombra,v2_ancora_data,v2_sombra,'
+             + 'unidade_nao_curada,dois_grupos,contado_zero';
+  try {
+    // n = 0 é "Tudo". O corte é pela noite, não por criado_em: reprocessar uma
+    // noite antiga reescreve as linhas dela e mudaria o período sem querer.
+    _psLinhas = await _fetchAllPaged('pdv_pedido_sombra', cols,
+      q => (n > 0 ? q.gte('noite', _parSomaDias(hojeLocal(), -n)) : q));
+  } catch (e) {
+    console.error('pedido sombra:', e);
+    _psLinhas = [];
+    tbSet.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Não consegui ler a medição.</td></tr>';
+    tbFila.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">—</td></tr>';
+    return;
+  }
+
+  const setores = [...new Set(_psLinhas.map(l => l.setor))].sort();
+  const sel = document.getElementById('ps-setor');
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os setores</option>'
+    + setores.map(x => `<option${x === atual ? ' selected' : ''}>${esc(x)}</option>`).join('');
+  _psNoites = new Set(_psLinhas.map(l => l.noite)).size;
+  _pintarPedidoSombra();
+}
+
+// Placar de um conjunto de linhas, nas duas variantes.
+function _psPlacar(linhas) {
+  const limpas = linhas.filter(_psLimpa);
+  const r = { itens: limpas.length, noites: new Set(linhas.map(l => l.noite)).size };
+  for (const v of ['v1', 'v2']) {
+    const com = limpas.filter(l => _psSombra(l, v) !== null);
+    const rs = com.reduce((s, l) => s + _psRs(l), 0);
+    const bateRs = com.filter(l => _psBate(l, v)).reduce((s, l) => s + _psRs(l), 0);
+    r[v] = {
+      n: com.length,
+      itens: com.length ? 100 * com.filter(l => _psBate(l, v)).length / com.length : null,
+      exato: com.length ? 100 * com.filter(l => _psSombra(l, v) !== null
+        && Math.abs(_psNum(_psSombra(l, v)) - _psNum(l.pedido_real)) < 1e-6).length / com.length : null,
+      valor: rs > 0 ? 100 * bateRs / rs : null,
+    };
+  }
+  // quanto do dinheiro pedido está em linha que a medição não sabe julgar
+  const totalRs = linhas.reduce((s, l) => s + _psRs(l), 0);
+  const foraRs = linhas.filter(l => !_psLimpa(l)).reduce((s, l) => s + _psRs(l), 0);
+  r.foraPct = totalRs > 0 ? 100 * foraRs / totalRs : 0;
+  return r;
+}
+
+// O critério da fase 2, medido. Os quatro pedaços separados, para a tela poder
+// dizer QUAL deles está faltando em vez de só "ainda não".
+function _psCriterio(linhas) {
+  const porNoite = {};
+  linhas.filter(_psLimpa).forEach(l => {
+    if (_psSombra(l, 'v2') === null) return;
+    const a = porNoite[l.noite] || (porNoite[l.noite] = { rs: 0, bateRs: 0 });
+    a.rs += _psRs(l);
+    if (_psBate(l, 'v2')) a.bateRs += _psRs(l);
+  });
+  const noites = Object.keys(porNoite).length;
+  const noitesOk = Object.values(porNoite).filter(a => a.rs > 0 && 100 * a.bateRs / a.rs >= PS_CRIT.valor).length;
+
+  // TOP 10: os itens que mais pesam em dinheiro no período. "Dentro" = bateu no
+  // V2 na maioria das noites em que foi contado — um item caro que só acerta de
+  // vez em quando continua sendo o que vai faltar na prateleira.
+  const porItem = {};
+  linhas.filter(l => _psLimpa(l) && _psSombra(l, 'v2') !== null).forEach(l => {
+    const a = porItem[l.produto_id] || (porItem[l.produto_id] = { nome: l.nome, rs: 0, n: 0, bate: 0 });
+    a.rs += _psRs(l); a.n++; a.bate += _psBate(l, 'v2') ? 1 : 0;
+  });
+  const top = Object.values(porItem).sort((a, b) => b.rs - a.rs).slice(0, PS_CRIT.top);
+  const topOk = top.filter(a => a.bate * 2 >= a.n).length;
+
+  const fora = _psPlacar(linhas).foraPct;
+  return {
+    noites, noitesOk, top: topOk, topDe: top.length, fora,
+    passa: noites >= PS_CRIT.noites && noitesOk >= PS_CRIT.ok
+           && top.length === PS_CRIT.top && topOk === PS_CRIT.top && fora <= PS_CRIT.foraMax,
+  };
+}
+
+function _psSelo(c) {
+  if (c.passa) return '<span class="badge bg-success">Pronto para a fase 2</span>';
+  const falta = [];
+  if (c.noites < PS_CRIT.noites) falta.push(`faltam ${PS_CRIT.noites - c.noites} noites`);
+  if (c.noitesOk < PS_CRIT.ok)   falta.push(`${c.noitesOk} de ${PS_CRIT.ok} noites no valor`);
+  if (c.topDe && c.top < c.topDe) falta.push(`top 10: ${c.top} de ${c.topDe}`);
+  if (c.fora > PS_CRIT.foraMax)  falta.push(`${pct(c.fora)} fora da conta`);
+  return `<span class="badge bg-secondary" title="${esc(falta.join(' · '))}">${esc(falta[0] || 'medindo')}</span>`;
+}
+
+function _psFiltradas() {
+  const setor = document.getElementById('ps-setor')?.value || '';
+  const v     = document.getElementById('ps-variante')?.value || 'v2';
+  const soDiv = document.getElementById('ps-so-div')?.checked;
+  const busca = norm(document.getElementById('ps-busca')?.value || '');
+  return _psLinhas
+    .filter(l => _psSombra(l, v) !== null)
+    .filter(l => !setor || l.setor === setor)
+    .filter(l => !soDiv || !_psBate(l, v))
+    .filter(l => !busca || norm(l.nome || '').includes(busca))
+    .map(l => ({ ...l, _dif: _psNum(_psSombra(l, v)) - _psNum(l.pedido_real),
+                 _rs: Math.abs(_psNum(_psSombra(l, v)) - _psNum(l.pedido_real)) * _psNum(l.custo_unit) }))
+    .sort((a, b) => b._rs - a._rs);
+}
+
+function _pintarPedidoSombra() {
+  const tbSet = document.getElementById('lst-ps-setor');
+  const tbFila = document.getElementById('lst-ps-fila');
+  if (!tbSet) return;
+  const v = document.getElementById('ps-variante')?.value || 'v2';
+  const setorSel = document.getElementById('ps-setor')?.value || '';
+
+  document.getElementById('ps-contador').textContent =
+    _psLinhas.length ? `${_psNoites} noite(s) medida(s) · ${_psLinhas.length} linhas` : '';
+
+  // AVISO: a tela nasce vazia até o robô rodar uma vez. Vazio sem explicação
+  // parece defeito — e aqui o estado normal, no começo, é justamente vazio.
+  const aviso = document.getElementById('ps-aviso');
+  aviso.innerHTML = _psLinhas.length ? '' :
+    `<div class="alert alert-secondary d-flex gap-2 py-2 px-3 mb-3" role="status">
+       <i class="bi bi-hourglass-split mt-1"></i>
+       <div class="small"><strong>Nenhuma noite medida ainda neste período.</strong>
+         A medição roda de madrugada, junto com o robô da baixa, e grava a noite anterior.
+         Se acabou de começar, escolha <em>Tudo</em> no período ou volte amanhã.</div>
+     </div>`;
+
+  // KPIs sobre o conjunto TODO (ou só o setor escolhido), nunca sobre a busca:
+  // o placar não pode mudar porque alguém digitou algo no campo de procurar.
+  const base = setorSel ? _psLinhas.filter(l => l.setor === setorSel) : _psLinhas;
+  const p = _psPlacar(base);
+  const c = _psCriterio(base);
+  document.getElementById('ps-kpis').innerHTML = !base.length ? ''
+    : _relKpiChip('Noites medidas', `${p.noites} de ${PS_CRIT.noites}`, p.noites >= PS_CRIT.noites ? '#16a34a' : '#0d6efd')
+    + _relKpiChip('Itens comparáveis', String(p.itens), '#0d6efd')
+    + _relKpiChip('V1 bate (termômetro)', p.v1.itens === null ? '—' : pct(p.v1.itens), '#6b7280')
+    + _relKpiChip('V2 bate (decide)', p.v2.itens === null ? '—' : pct(p.v2.itens),
+        (p.v2.itens ?? 0) >= 80 ? '#16a34a' : '#b45309')
+    + _relKpiChip('V2 no valor', p.v2.valor === null ? '—' : pct(p.v2.valor),
+        (p.v2.valor ?? 0) >= PS_CRIT.valor ? '#16a34a' : '#b45309')
+    + _relKpiChip('Noites no critério', `${c.noitesOk} de ${PS_CRIT.ok}`, c.noitesOk >= PS_CRIT.ok ? '#16a34a' : '#b45309')
+    + _relKpiChip('Fora da conta (R$)', pct(c.fora), c.fora <= PS_CRIT.foraMax ? '#16a34a' : '#6b7280');
+
+  // ── tabela por setor ──
+  const setores = [...new Set(_psLinhas.map(l => l.setor))];
+  // AMOSTRA PEQUENA VAI PARA O FIM. Setor com 2 itens comparáveis por noite
+  // acerta 100% por sorte e apareceria acima do BAR, que mede 86. Ordenar por
+  // porcentagem sem olhar o tamanho da amostra transforma ruído em ranking.
+  const linhasSet = setores.map(s => {
+    const ls = _psLinhas.filter(l => l.setor === s);
+    const noites = new Set(ls.map(l => l.noite)).size;
+    const p = _psPlacar(ls);
+    return { setor: s, p, c: _psCriterio(ls), noites,
+             porNoite: noites ? p.itens / noites : 0, magro: noites ? p.itens / noites < PS_MIN_ITENS : true };
+  }).sort((a, b) => (a.magro - b.magro) || ((b.p.v2.valor ?? -1) - (a.p.v2.valor ?? -1)));
+
+  const cor = (x, bom) => x === null ? '' : ` style="color:${x >= bom ? '#16a34a' : '#b45309'};font-weight:600"`;
+  tbSet.innerHTML = !linhasSet.length
+    ? '<tr><td colspan="9" class="text-center text-muted py-4">Nada medido ainda.</td></tr>'
+    : linhasSet.map(r => `<tr${r.setor === setorSel ? ' class="table-active"' : (r.magro ? ' class="text-muted"' : '')}>
+        <td><a href="#" onclick="_psIrSetor('${esc(r.setor)}');return false">${esc(r.setor)}</a></td>
+        <td class="text-center">${r.noites}</td>
+        <td class="text-end">${Math.round(r.porNoite)}${r.magro ? ' <i class="bi bi-exclamation-triangle text-warning" title="Amostra pequena: com menos de ' + PS_MIN_ITENS + ' itens por noite a porcentagem oscila demais para significar alguma coisa."></i>' : ''}</td>
+        <td class="text-end text-muted">${r.p.v1.itens === null ? '—' : pct(r.p.v1.itens)}</td>
+        <td class="text-end text-muted">${r.p.v1.exato === null ? '—' : pct(r.p.v1.exato)}</td>
+        <td class="text-end text-muted">${r.p.v1.valor === null ? '—' : pct(r.p.v1.valor)}</td>
+        <td class="text-end"${cor(r.p.v2.itens, 80)}>${r.p.v2.itens === null ? '—' : pct(r.p.v2.itens)}</td>
+        <td class="text-end"${cor(r.p.v2.valor, PS_CRIT.valor)}>${r.p.v2.valor === null ? '—' : pct(r.p.v2.valor)}</td>
+        <td class="text-center">${r.magro ? '<span class="badge bg-light text-secondary border">amostra pequena</span>' : _psSelo(r.c)}</td>
+      </tr>`).join('');
+
+  // ── fila de consertos ──
+  const fila = _psFiltradas();
+  document.getElementById('ps-fila-contador').textContent =
+    fila.length ? `${fila.length} linha(s) · ${brl(fila.reduce((s, l) => s + l._rs, 0))} de diferença` : '';
+  const MOSTRA = 300;
+  const selos = l => (l.unidade_nao_curada ? ' <span class="badge bg-warning text-dark">un?</span>' : '')
+    + (l.dois_grupos ? ' <span class="badge bg-secondary">2 grupos</span>' : '')
+    + (l.contado_zero ? ' <span class="badge bg-secondary">em branco?</span>' : '');
+  tbFila.innerHTML = !fila.length
+    ? `<tr><td colspan="9" class="text-center text-muted py-4">${_psLinhas.length ? 'Nada fora do lugar com estes filtros.' : 'Nada medido ainda.'}</td></tr>`
+    : fila.slice(0, MOSTRA).map(l => `<tr>
+        <td>${esc(l.nome || '—')}${selos(l)}</td>
+        <td class="text-muted small">${esc(l.setor)}</td>
+        <td class="text-center small">${_dataBR(l.noite)}</td>
+        <td class="text-end text-muted">${_psNum(l.padrao).toLocaleString('pt-BR')}</td>
+        <td class="text-end text-muted">${_psNum(l.contado).toLocaleString('pt-BR')}</td>
+        <td class="text-end">${_psNum(l.pedido_real).toLocaleString('pt-BR')}</td>
+        <td class="text-end">${_psNum(_psSombra(l, v)).toLocaleString('pt-BR')}</td>
+        <td class="text-end" style="color:${Math.abs(l._dif) <= PS_TOL ? '#16a34a' : (l._dif > 0 ? '#b45309' : '#0d6efd')}">
+          ${l._dif > 0 ? '+' : ''}${l._dif.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
+        <td class="text-end">${brl(l._rs)}</td>
+      </tr>`).join('')
+      + (fila.length > MOSTRA ? `<tr><td colspan="9" class="text-center text-muted small py-2">
+           Mostrando as ${MOSTRA} maiores de ${fila.length}. O Excel leva a lista inteira.</td></tr>` : '');
+}
+
+function _psIrSetor(s) {
+  const sel = document.getElementById('ps-setor');
+  sel.value = sel.value === s ? '' : s;
+  _pintarPedidoSombra();
+}
+
+function exportarPedidoSombra() {
+  const linhas = _psFiltradas();
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  const v = document.getElementById('ps-variante')?.value || 'v2';
+  const aoa = [
+    [`Pedido sombra - ${_psNoites} noite(s) - comparando por ${v.toUpperCase()}`],
+    ['Insumo', 'Setor', 'Grupo', 'Noite', 'Padrao', 'Contado', 'Pediu', 'Sombra diz', 'Diferenca', 'Em R$',
+     'Ancora', 'Unidade nao curada', 'Dois grupos', 'Contado zero'],
+    ...linhas.map(l => [l.nome, l.setor, l.grupo, l.noite, _psNum(l.padrao), _psNum(l.contado),
+      _psNum(l.pedido_real), _psNum(_psSombra(l, v)), l._dif, l._rs, l[v + '_ancora_data'] || '',
+      l.unidade_nao_curada ? 'sim' : '', l.dois_grupos ? 'sim' : '', l.contado_zero ? 'sim' : '']),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 38 }, { wch: 15 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+                 { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 13 }, { wch: 13 }];
+  for (let r = 2; r < aoa.length; r++) {
+    const c = ws[XLSX.utils.encode_cell({ r, c: 9 })];
+    if (c) c.z = 'R$ #,##0.00';
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedido Sombra');
+  XLSX.writeFile(wb, `pedido-sombra_${v}_${hojeLocal()}.xlsx`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

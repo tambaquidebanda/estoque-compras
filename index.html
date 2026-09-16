@@ -170,6 +170,9 @@
         <a href="#" onclick="ir('paralelo',this)">
           <i class="bi bi-arrow-left-right"></i> Contagem × Venda
         </a>
+        <a href="#" onclick="ir('pedido-sombra',this)">
+          <i class="bi bi-moon-stars"></i> Pedido Sombra
+        </a>
         <a href="#" onclick="ir('saude-fichas',this)">
           <i class="bi bi-heart-pulse"></i> Saúde das Fichas
         </a>
@@ -2701,6 +2704,146 @@
             Os filtros de <strong>setor</strong> e de <strong>divergência</strong> não valem aqui: preparo
             não tem setor. Estes números são só da <strong>Loja Centro</strong>, que é a única loja
             que o robô processa.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ PEDIDO SOMBRA (fase 1 da baixa automática) ══════════════
+         Só LÊ pdv_pedido_sombra, gravada pelo robô da madrugada. A conta do
+         pedido tem UMA implementação, a do Python (scripts/pedido_sombra.py);
+         refazer aqui criaria uma segunda que ia divergir sem ninguém notar —
+         mesma decisão da tela Contagem × Venda. -->
+    <section id="pg-pedido-sombra" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-moon-stars"></i> Pedido Sombra</h1>
+        <span class="text-muted small" id="ps-contador"></span>
+      </div>
+      <p class="text-muted small mb-3" style="max-width:78ch">
+        Todas as madrugadas o sistema calcula, <strong>só pela venda</strong>, o pedido que cada setor
+        faria — e guarda ao lado do pedido que saiu da contagem. Ninguém usa esse número ainda:
+        ele existe para responder <strong>em qual setor já dá para parar de contar todo dia</strong>.
+        Setor que passar no critério passa a receber pelo sugerido e a contar uma vez por semana.
+      </p>
+
+      <div id="ps-aviso"></div>
+      <div class="d-flex flex-wrap gap-2 mb-3" id="ps-kpis"></div>
+
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1" for="ps-noites">Período</label>
+          <select class="form-select form-select-sm" id="ps-noites" onchange="carregarPedidoSombra()" style="width:150px">
+            <option value="7">7 noites</option>
+            <option value="14" selected>14 noites</option>
+            <option value="30">30 noites</option>
+            <option value="0">Tudo</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="ps-setor">Setor</label>
+          <select class="form-select form-select-sm" id="ps-setor" onchange="_pintarPedidoSombra()" style="width:180px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="ps-variante">Comparar por</label>
+          <select class="form-select form-select-sm" id="ps-variante" onchange="_pintarPedidoSombra()" style="width:230px"
+                  title="V1 usa a contagem de ontem como ponto de partida. V2 usa uma contagem de 7 a 10 dias atrás — é o V2 que simula a contagem semanal e decide se um setor passa.">
+            <option value="v2" selected>V2 — âncora semanal (decide)</option>
+            <option value="v1">V1 — âncora de ontem (termômetro)</option>
+          </select>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="ps-so-div" checked onchange="_pintarPedidoSombra()">
+          <label class="form-check-label small text-muted" for="ps-so-div">Só os que não bateram</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="ps-busca" placeholder="Buscar insumo..." oninput="_pintarPedidoSombra()" style="width:190px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarPedidoSombra()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="px-3 pt-3">
+          <h2 class="h6 mb-1"><i class="bi bi-trophy"></i> Quem está perto de passar</h2>
+          <p class="text-muted small mb-2" style="max-width:78ch">
+            Um setor passa para a fase 2 com <strong>14 noites medidas</strong>, o V2 acertando
+            <strong>85% do valor em 10 delas</strong>, os <strong>10 maiores itens em R$ dentro</strong>
+            e <strong>no máximo 10% do valor fora da conta</strong>. Os quatro juntos, não um deles.
+          </p>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Setor</th>
+                <th class="text-center">Noites</th>
+                <th class="text-end">Itens/noite</th>
+                <th class="text-end" title="Itens em que a sombra ficou a até 1 unidade do pedido real">V1 itens</th>
+                <th class="text-end" title="Itens em que a sombra deu exatamente o mesmo número">V1 exato</th>
+                <th class="text-end" title="Quanto do dinheiro pedido está em itens que bateram">V1 valor</th>
+                <th class="text-end">V2 itens</th>
+                <th class="text-end">V2 valor</th>
+                <th class="text-center">Situação</th>
+              </tr>
+            </thead>
+            <tbody id="lst-ps-setor">
+              <tr><td colspan="9" class="text-center text-muted py-4">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Bate</strong> = a sombra ficou a até 1 unidade do pedido real.
+            <strong>V1</strong> parte da contagem de ontem: é o termômetro do dia, e sempre acerta mais.
+            <strong>V2</strong> parte de uma contagem de 7 a 10 dias atrás — é ele que simula a semana
+            e o único que decide. A distância entre os dois é o tamanho do trabalho que falta.
+            Ficam <strong>fora da conta</strong> as linhas com unidade não curada, item contado em dois
+            grupos na mesma noite e linha em branco (contado zero): elas não são comparação justa.
+          </small>
+        </div>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden mt-4">
+        <div class="d-flex justify-content-between align-items-center px-3 pt-3 flex-wrap gap-2">
+          <h2 class="h6 mb-0"><i class="bi bi-tools"></i> A fila de consertos</h2>
+          <span class="text-muted small" id="ps-fila-contador"></span>
+        </div>
+        <p class="text-muted small px-3 mt-1 mb-2" style="max-width:78ch">
+          Onde a sombra mais erra, em dinheiro. Cada linha do topo costuma ser um problema de
+          <strong>rotina</strong>, não de cálculo: produto que sai do estoque sem pedido, contagem
+          digitada sem medir, padrão desatualizado. Consertar o topo desta lista é o que faz o
+          setor passar.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width:230px">Insumo</th>
+                <th>Setor</th>
+                <th class="text-center">Noite</th>
+                <th class="text-end">Padrão</th>
+                <th class="text-end">Contado</th>
+                <th class="text-end">Pediu</th>
+                <th class="text-end">Sombra diz</th>
+                <th class="text-end">Diferença</th>
+                <th class="text-end">Em R$</th>
+              </tr>
+            </thead>
+            <tbody id="lst-ps-fila">
+              <tr><td colspan="9" class="text-center text-muted py-4">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Pediu</strong> é o pedido que a contagem gerou naquela noite.
+            <strong>Sombra diz</strong> é o que teria saído pela venda, na variante escolhida acima.
+            <span class="badge bg-warning text-dark">un?</span> unidade não curada ·
+            <span class="badge bg-secondary">2 grupos</span> item contado em dois grupos ·
+            <span class="badge bg-secondary">em branco?</span> contado zero — os três ficam
+            <strong>fora do placar</strong>, mas aparecem aqui porque também precisam de conserto.
+            Sem âncora na variante escolhida a linha não entra: o item não foi contado no intervalo
+            que aquela variante exige.
           </small>
         </div>
       </div>
