@@ -83,7 +83,8 @@ concurrency:
 jobs:
   baixa:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, e nao 10: o pedido sombra roda no mesmo job, depois do robo.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -98,3 +99,19 @@ jobs:
           BAIXA_UNIDADE_PDV: ${{ secrets.BAIXA_UNIDADE_PDV }}
           BAIXA_START_DATE: ${{ secrets.BAIXA_START_DATE || '2026-09-08' }}
         run: python scripts/baixa_estoque_pdv.py
+
+      # FASE 1 DA BAIXA AUTOMATICA (15/09/2026) - pedido sombra. So MEDE: grava em
+      # pdv_pedido_sombra o pedido que cada setor faria pela venda, ao lado do que
+      # saiu da contagem. Nao cria pedido, nao mexe em saldo.
+      # continue-on-error: medicao nunca derruba a baixa. if: always(): mesmo que o
+      # robo recuse o dia, a sombra ainda recupera noites anteriores que faltaram
+      # (e pula sozinha a noite cuja venda o robo ainda nao lancou).
+      - name: Pedido sombra (fase 1 — só medição)
+        if: always()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SOMBRA_INICIO: '2026-09-12'
+          SOMBRA_DIAS: '3'
+        run: python scripts/pedido_sombra.py
