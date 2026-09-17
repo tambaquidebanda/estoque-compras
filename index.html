@@ -173,6 +173,9 @@
         <a href="#" onclick="ir('pedido-sombra',this)">
           <i class="bi bi-moon-stars"></i> Pedido Sombra
         </a>
+        <a href="#" onclick="ir('conferencia-dia',this)">
+          <i class="bi bi-clipboard2-pulse"></i> Conferência do Dia
+        </a>
         <a href="#" onclick="ir('saude-fichas',this)">
           <i class="bi bi-heart-pulse"></i> Saúde das Fichas
         </a>
@@ -2848,6 +2851,85 @@
             e o último costuma ser o mais grave: é produto saindo do estoque sem passar por pedido.
             Sem âncora na variante escolhida a linha não entra: o item não foi contado no intervalo
             que aquela variante exige.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         CONFERENCIA DO DIA — a bancada de conserto.
+         O Pedido Sombra responde "qual setor ja pode parar de contar". Esta tela
+         responde a outra pergunta, a que vem antes: "o que esta errado, e o que eu
+         faco". Uma noite por vez, item a item, com a conta aberta e o diagnostico.
+         Mesma fonte (pdv_pedido_sombra), zero recalculo em JS.
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <section id="pg-conferencia-dia" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-clipboard2-pulse"></i> Conferência do Dia</h1>
+        <span class="text-muted small" id="cd-contador"></span>
+      </div>
+      <p class="text-muted small mb-3" style="max-width:82ch">
+        A conta de cada noite, aberta: <strong>o que o setor tinha na contagem anterior, o que entrou,
+        o que a venda consumiu</strong> — e quanto deveria ter sobrado. Ao lado, o que o setor contou.
+        Onde os dois não fecham, a tela diz <strong>o que aconteceu e o que fazer</strong>.
+        É esta conta que vai virar o pedido automático: quando ela fechar sozinha, a contagem
+        diária deixa de ser necessária.
+      </p>
+
+      <div id="cd-aviso"></div>
+      <div class="d-flex flex-wrap gap-2 mb-3" id="cd-kpis"></div>
+
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1" for="cd-noite">Noite</label>
+          <select class="form-select form-select-sm" id="cd-noite" onchange="_pintarConferenciaDia()" style="width:170px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="cd-setor">Setor</label>
+          <select class="form-select form-select-sm" id="cd-setor" onchange="_pintarConferenciaDia()" style="width:180px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="cd-diag">Problema</label>
+          <select class="form-select form-select-sm" id="cd-diag" onchange="_pintarConferenciaDia()" style="width:250px"></select>
+        </div>
+        <div class="form-check ms-1 mb-1">
+          <input class="form-check-input" type="checkbox" id="cd-so-erro" checked onchange="_pintarConferenciaDia()">
+          <label class="form-check-label small text-muted" for="cd-so-erro">Só o que não fechou</label>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="cd-busca" placeholder="Buscar insumo..." oninput="_pintarConferenciaDia()" style="width:190px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarConferenciaDia()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width:230px">Insumo</th>
+                <th>Setor</th>
+                <th class="text-end" title="A contagem da noite anterior — o ponto de partida">Tinha</th>
+                <th class="text-end" title="Recebimento e pedido interno que entraram no setor">Entrou</th>
+                <th class="text-end" title="O que a ficha técnica baixou pela venda do dia">Venda</th>
+                <th class="text-end" title="Tinha + entrou − venda">Deveria ter</th>
+                <th class="text-end">Contou</th>
+                <th class="text-end">Difere</th>
+                <th class="text-end">Em R$</th>
+                <th style="min-width:300px">O que aconteceu — e o que fazer</th>
+              </tr>
+            </thead>
+            <tbody id="lst-cd"></tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            Clique no insumo para ver <strong>todas as noites dele</strong>, uma embaixo da outra —
+            é olhando a série que o problema se revela (entrou 136 e contou 11 não é acaso).
+            <strong>Fecha</strong> = diferença de até 1 unidade. Os números estão todos na
+            <strong>unidade de uso</strong> do cadastro; a contagem é o único lugar do sistema que
+            não declara unidade, e é por isso que <span class="badge bg-warning text-dark">un?</span>
+            existe.
           </small>
         </div>
       </div>

@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'pedido-sombra', 'saude-fichas'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'pedido-sombra', 'conferencia-dia', 'saude-fichas'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -246,6 +246,7 @@ function ir(nome, el) {
   if (nome === 'acuracidade')     carregarAcuracidade();
   if (nome === 'paralelo')        carregarParalelo();
   if (nome === 'pedido-sombra')   carregarPedidoSombra();
+  if (nome === 'conferencia-dia') carregarConferenciaDia();
   if (nome === 'saude-fichas')    carregarSaudeFichas();
 }
 
@@ -11726,6 +11727,268 @@ function exportarPedidoSombra() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Pedido Sombra');
   XLSX.writeFile(wb, `pedido-sombra_${v}_${hojeLocal()}.xlsx`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONFERÊNCIA DO DIA — a bancada de conserto
+//
+// O Pedido Sombra responde "em qual setor já dá para parar de contar". Esta tela
+// responde a pergunta que vem ANTES: "o que está errado hoje, e o que eu faço".
+//
+// A conta é a mesma do robô, e vem pronta do banco — aqui não se recalcula nada:
+//   tinha (contagem de ontem) + entrou − venda = deveria ter
+// contra o que o setor contou. Onde os dois não fecham, a linha ganha um
+// DIAGNÓSTICO e uma SUGESTÃO. A ordem do diagnóstico importa: vai do mais
+// grosseiro para o mais fino, e o primeiro que casa manda. Sem essa ordem, uma
+// linha em branco também seria "sumiu sem venda" e a sugestão sairia errada.
+// ════════════════════════════════════════════════════════════════════════════
+
+const CD_TOL = 1;   // "fecha" = até 1 unidade, mesma tolerância do placar
+
+let _cdLinhas = [];
+let _cdNoites = [];
+
+const _cdFmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+const _cdN = v => Number(v) || 0;
+const _cdTem = l => l.v1_ancora_data != null && l.v1_saldo != null;
+const _cdDeveria = l => _cdN(l.v1_saldo);
+const _cdDif = l => _cdN(l.contado) - _cdDeveria(l);
+const _cdRs = l => Math.abs(_cdDif(l)) * _cdN(l.custo_unit);
+
+// O diagnóstico e a sugestão andam juntos: dizer "não fechou" sem dizer o que
+// fazer devolve o problema para quem perguntou.
+function _cdDiagnostico(l) {
+  const ent = _cdN(l.v1_entradas), dev = _cdDeveria(l), dif = _cdDif(l), fator = l._fator || 1;
+  if (!_cdTem(l)) return {
+    chave: 'sem-ancora', cor: 'secondary', titulo: 'Sem contagem na noite anterior',
+    acao: 'Sem ponto de partida não dá para conferir esta noite. Se o setor não contou ontem, a linha volta sozinha amanhã.' };
+
+  if (l.contado_zero) return {
+    chave: 'em-branco', cor: 'warning', titulo: 'Contagem em branco virou zero',
+    acao: `O campo ficou vazio e o sistema leu 0 — por isso o pedido saiu no padrão inteiro (${_cdFmt(l.padrao)}). `
+        + 'Confirmar com o setor se acabou mesmo ou se a linha não foi contada.' };
+
+  if (ent > 0 && dif <= -Math.max(1, ent * 0.5)) return {
+    chave: 'entrou-sumiu', cor: 'danger', titulo: `Entrou ${_cdFmt(ent)} e a contagem não viu`,
+    acao: fator !== 1
+      ? `Duas saídas: ou a contagem está em outra unidade (o cadastro diz 1 ${l._uc} = ${_cdFmt(fator)} ${l._uu}), `
+        + 'ou a mercadoria não chegou ao setor no dia lançado. Perguntar ao setor quantas embalagens receberam.'
+      : 'Ou a mercadoria não chegou ao setor no dia em que a entrada foi lançada, ou saiu de novo sem registro. '
+        + 'Conferir a data da liberação do pedido interno.' };
+
+  if (dev < 0) return {
+    chave: 'saldo-negativo', cor: 'danger', titulo: 'A venda comeu mais do que entrou',
+    acao: 'O modelo perdeu um lançamento: falta registrar uma entrada, ou sobra uma saída. '
+        + 'Não é erro do setor — é erro de registro, e por isso esta linha fica fora do placar.' };
+
+  if (Math.abs(dif) <= CD_TOL) return {
+    chave: 'fecha', cor: 'success', titulo: 'Fecha', acao: '' };
+
+  if (dif > 0) return {
+    chave: 'sobrou', cor: 'info', titulo: `Contou ${_cdFmt(dif)} a mais do que podia ter`,
+    acao: 'Entrada que não foi registrada (transferência, compra direta, devolução), '
+        + 'ou a contagem de ontem estava abaixo do real. Olhar o pedido interno do dia.' };
+
+  return {
+    chave: 'sumiu', cor: 'danger', titulo: `Faltam ${_cdFmt(-dif)} que a venda não explica`,
+    acao: fator !== 1
+      ? `Saiu do setor sem venda. Antes de tratar como perda, confirmar a unidade: o cadastro diz 1 ${l._uc} = ${_cdFmt(fator)} ${l._uu}.`
+      : 'Saiu do setor sem venda e sem saída registrada: perda, consumo interno, ou uma ficha que não desconta este insumo.' };
+}
+
+
+async function carregarConferenciaDia() {
+  const tb = document.getElementById('lst-cd');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Carregando…</td></tr>';
+
+  const cols = 'noite,setor,grupo,produto_id,nome,contado,padrao,pedido_real,custo_unit,'
+             + 'v1_ancora_data,v1_ancora_qtd,v1_entradas,v1_consumo,v1_saldo,'
+             + 'unidade_nao_curada,dois_grupos,contado_zero';
+  _cdLinhas = await _fetchAllPaged('pdv_pedido_sombra', cols, q => q);
+
+  // unidade do cadastro: é ela que transforma "não fechou" em "a unidade está trocada"
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const porId = new Map(cProdutosFT.map(p => [p.id, p]));
+  _cdLinhas.forEach(l => {
+    const p = porId.get(l.produto_id) || {};
+    l._fator = Number(p.fator_conversao) || 1;
+    l._uc = (p.unidade_comp || '?').trim();
+    l._uu = (p.unidade_uso || '?').trim();
+    l._diag = _cdDiagnostico(l);
+  });
+
+  _cdNoites = [...new Set(_cdLinhas.map(l => l.noite))].sort().reverse();
+  const selN = document.getElementById('cd-noite');
+  selN.innerHTML = _cdNoites.map(n => `<option value="${n}">${_dataBR(n)}</option>`).join('')
+                 || '<option value="">—</option>';
+
+  const setores = [...new Set(_cdLinhas.map(l => l.setor))].sort();
+  document.getElementById('cd-setor').innerHTML =
+    '<option value="">Todos os setores</option>' + setores.map(s => `<option>${esc(s)}</option>`).join('');
+
+  const diags = [['', 'Todos'], ['em-branco', 'Contagem em branco'], ['entrou-sumiu', 'Entrou e não apareceu'],
+                 ['saldo-negativo', 'Venda comeu mais do que entrou'], ['sumiu', 'Faltou sem explicação'],
+                 ['sobrou', 'Sobrou sem entrada'], ['sem-ancora', 'Sem contagem anterior'], ['fecha', 'Fecha']];
+  document.getElementById('cd-diag').innerHTML =
+    diags.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+
+  document.getElementById('cd-aviso').innerHTML = _cdLinhas.length ? '' :
+    `<div class="alert alert-secondary d-flex gap-2 py-2 px-3 mb-3" role="status">
+       <i class="bi bi-hourglass-split mt-1"></i>
+       <div><strong>Nada medido ainda.</strong> O robô grava a conferência toda madrugada,
+       depois da baixa. A primeira noite aparece aqui na manhã seguinte.</div>
+     </div>`;
+
+  _pintarConferenciaDia();
+}
+
+function _cdFiltradas() {
+  const noite = document.getElementById('cd-noite')?.value || '';
+  const setor = document.getElementById('cd-setor')?.value || '';
+  const diag  = document.getElementById('cd-diag')?.value || '';
+  const soErro = document.getElementById('cd-so-erro')?.checked;
+  const busca = norm(document.getElementById('cd-busca')?.value || '');
+  return _cdLinhas
+    .filter(l => l.noite === noite)
+    .filter(l => !setor || l.setor === setor)
+    .filter(l => !diag || l._diag.chave === diag)
+    .filter(l => !soErro || l._diag.chave !== 'fecha')
+    .filter(l => !busca || norm(l.nome || '').includes(busca))
+    .sort((a, b) => _cdRs(b) - _cdRs(a));
+}
+
+function _pintarConferenciaDia() {
+  const tb = document.getElementById('lst-cd');
+  if (!tb) return;
+  const noite = document.getElementById('cd-noite')?.value || '';
+  const daNoite = _cdLinhas.filter(l => l.noite === noite);
+
+  // KPIs: a leitura da noite em cinco números
+  const comConta = daNoite.filter(_cdTem);
+  const fecha = comConta.filter(l => l._diag.chave === 'fecha').length;
+  const rsErro = daNoite.filter(l => l._diag.chave !== 'fecha').reduce((s, l) => s + _cdRs(l), 0);
+  const branco = daNoite.filter(l => l._diag.chave === 'em-branco').length;
+  const grave  = daNoite.filter(l => ['entrou-sumiu', 'saldo-negativo'].includes(l._diag.chave)).length;
+  const kpi = (lbl, val, cor, hint) => `
+    <div class="border rounded px-3 py-2 ${cor}" title="${esc(hint || '')}">
+      <div class="small text-muted">${lbl}</div>
+      <div class="fs-5 fw-semibold">${val}</div>
+    </div>`;
+  document.getElementById('cd-kpis').innerHTML = !daNoite.length ? '' : [
+    kpi('Itens na noite', daNoite.length, 'bg-light'),
+    kpi('Fecham', comConta.length ? `${fecha} <span class="fs-6 text-muted">de ${comConta.length}</span>` : '—',
+        fecha * 2 >= comConta.length ? 'border-success' : 'border-warning',
+        'Diferença de até 1 unidade entre o que deveria ter e o que foi contado'),
+    kpi('Em divergência', brl(rsErro), 'border-danger', 'Soma da diferença em dinheiro das linhas que não fecharam'),
+    kpi('Linhas em branco', branco, branco ? 'border-warning' : 'bg-light',
+        'Campo vazio virou zero: o pedido sai no padrão inteiro'),
+    kpi('Erro de registro', grave, grave ? 'border-danger' : 'bg-light',
+        'Entrou e não apareceu, ou a venda comeu mais do que entrou'),
+  ].join('');
+
+  document.getElementById('cd-contador').textContent =
+    _cdLinhas.length ? `${_cdNoites.length} noite(s) medida(s) · ${_cdLinhas.length} linhas` : '';
+
+  const linhas = _cdFiltradas();
+  const selos = l => (l.unidade_nao_curada ? ` <span class="badge bg-warning text-dark" title="Compra em ${esc(l._uc)}, uso em ${esc(l._uu)} — 1 ${esc(l._uc)} = ${_cdFmt(l._fator)} ${esc(l._uu)}. Ninguém confirmou em qual delas o setor conta.">un?</span>` : '')
+                  + (l.dois_grupos ? ' <span class="badge bg-secondary">2 grupos</span>' : '');
+
+  tb.innerHTML = !linhas.length
+    ? `<tr><td colspan="10" class="text-center text-muted py-4">${
+         daNoite.length ? 'Nada fora do lugar com estes filtros.' : 'Nada medido nesta noite.'}</td></tr>`
+    : linhas.map(l => {
+        const d = l._diag, dif = _cdDif(l);
+        return `<tr class="${d.chave === 'fecha' ? '' : 'table-' + (d.cor === 'danger' ? 'danger' : d.cor === 'warning' ? 'warning' : 'light')}">
+        <td><a href="#" class="text-decoration-none fw-semibold" onclick="_cdHistorico('${l.produto_id}','${esc(l.setor)}');return false;"
+               title="Ver todas as noites deste insumo">${esc(l.nome || '—')}</a>${selos(l)}</td>
+        <td class="text-muted small">${esc(l.setor)}</td>
+        <td class="text-end">${_cdTem(l) ? _cdFmt(l.v1_ancora_qtd) : '—'}</td>
+        <td class="text-end ${_cdN(l.v1_entradas) > 0 ? 'fw-semibold' : 'text-muted'}">${_cdTem(l) ? _cdFmt(l.v1_entradas) : '—'}</td>
+        <td class="text-end">${_cdTem(l) ? _cdFmt(l.v1_consumo) : '—'}</td>
+        <td class="text-end fw-semibold">${_cdTem(l) ? _cdFmt(_cdDeveria(l)) : '—'}</td>
+        <td class="text-end fw-semibold">${_cdFmt(l.contado)}</td>
+        <td class="text-end ${dif < 0 ? 'text-danger' : dif > 0 ? 'text-primary' : 'text-muted'}">${_cdTem(l) ? (dif > 0 ? '+' : '') + _cdFmt(dif) : '—'}</td>
+        <td class="text-end">${_cdTem(l) && d.chave !== 'fecha' ? brl(_cdRs(l)) : '—'}</td>
+        <td><span class="badge bg-${d.cor} ${d.cor === 'warning' ? 'text-dark' : ''}">${esc(d.titulo)}</span>
+            ${d.acao ? `<div class="small text-muted mt-1">${esc(d.acao)}</div>` : ''}</td>
+      </tr>`;
+      }).join('');
+}
+
+// A série do insumo — a visão que resolveu o taperebá: uma noite embaixo da outra.
+// Um número sozinho não acusa nada; a sequência, sim.
+function _cdHistorico(produto_id, setor) {
+  const ls = _cdLinhas.filter(l => l.produto_id === produto_id && l.setor === setor)
+                      .sort((a, b) => a.noite.localeCompare(b.noite));
+  if (!ls.length) return;
+  const l0 = ls[0];
+  const cad = l0._fator !== 1 ? `1 ${l0._uc} = ${_cdFmt(l0._fator)} ${l0._uu}` : `unidade ${l0._uu}`;
+  const corpo = ls.map(l => {
+    const d = l._diag;
+    return `<tr>
+      <td>${_dataBR(l.noite)}</td>
+      <td class="text-end">${_cdTem(l) ? _cdFmt(l.v1_ancora_qtd) : '—'}</td>
+      <td class="text-end">${_cdTem(l) ? _cdFmt(l.v1_entradas) : '—'}</td>
+      <td class="text-end">${_cdTem(l) ? _cdFmt(l.v1_consumo) : '—'}</td>
+      <td class="text-end fw-semibold">${_cdTem(l) ? _cdFmt(_cdDeveria(l)) : '—'}</td>
+      <td class="text-end fw-semibold">${_cdFmt(l.contado)}</td>
+      <td class="text-end ${_cdDif(l) < 0 ? 'text-danger' : ''}">${_cdTem(l) ? _cdFmt(_cdDif(l)) : '—'}</td>
+      <td><span class="badge bg-${d.cor} ${d.cor === 'warning' ? 'text-dark' : ''}">${esc(d.titulo)}</span></td>
+    </tr>`;
+  }).join('');
+  _cdModal(`${esc(l0.nome)} — ${esc(setor)}`, `
+    <p class="text-muted small mb-2">Cadastro: <strong>${esc(cad)}</strong> ·
+       padrão ${_cdFmt(l0.padrao)} · custo ${brl(l0.custo_unit)} por ${esc(l0._uu)}</p>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Noite</th><th class="text-end">Tinha</th><th class="text-end">Entrou</th>
+        <th class="text-end">Venda</th><th class="text-end">Deveria ter</th><th class="text-end">Contou</th>
+        <th class="text-end">Difere</th><th>O que aconteceu</th></tr></thead>
+      <tbody>${corpo}</tbody></table></div>`);
+}
+
+function _cdModal(titulo, html) {
+  let el = document.getElementById('modal-cd');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'modal-cd';
+    el.className = 'modal fade';
+    el.innerHTML = `<div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="modal-cd-titulo"></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="modal-cd-corpo"></div></div></div>`;
+    document.body.appendChild(el);
+  }
+  document.getElementById('modal-cd-titulo').innerHTML = titulo;
+  document.getElementById('modal-cd-corpo').innerHTML = html;
+  new bootstrap.Modal(el).show();
+}
+
+function exportarConferenciaDia() {
+  const linhas = _cdFiltradas();
+  if (!linhas.length) { toast('Nada para exportar.', 'erro'); return; }
+  const noite = document.getElementById('cd-noite')?.value || '';
+  const aoa = [
+    [`Conferencia do dia - noite de ${_dataBR(noite)}`],
+    ['Insumo', 'Setor', 'Grupo', 'Cadastro diz', 'Tinha', 'Entrou', 'Venda consumiu', 'Deveria ter',
+     'Contou', 'Diferenca', 'Em R$', 'Padrao', 'Pediu', 'O que aconteceu', 'O que fazer'],
+    ...linhas.map(l => [l.nome, l.setor, l.grupo || '',
+      l._fator !== 1 ? `1 ${l._uc} = ${l._fator} ${l._uu}` : l._uu,
+      _cdTem(l) ? _cdN(l.v1_ancora_qtd) : '', _cdTem(l) ? _cdN(l.v1_entradas) : '',
+      _cdTem(l) ? _cdN(l.v1_consumo) : '', _cdTem(l) ? _cdDeveria(l) : '',
+      _cdN(l.contado), _cdTem(l) ? _cdDif(l) : '', _cdTem(l) ? _cdRs(l) : '',
+      _cdN(l.padrao), _cdN(l.pedido_real), l._diag.titulo, l._diag.acao]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 36 }, { wch: 15 }, { wch: 16 }, { wch: 20 }, { wch: 10 }, { wch: 10 }, { wch: 14 },
+                 { wch: 12 }, { wch: 10 }, { wch: 11 }, { wch: 13 }, { wch: 9 }, { wch: 9 }, { wch: 34 }, { wch: 80 }];
+  for (let r = 2; r < aoa.length; r++) {
+    const c = ws[XLSX.utils.encode_cell({ r, c: 10 })];
+    if (c) c.z = 'R$ #,##0.00';
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Conferencia do dia');
+  XLSX.writeFile(wb, `conferencia-do-dia_${noite}.xlsx`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
