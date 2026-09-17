@@ -141,7 +141,13 @@ body {
   transition: max-height .25s ease;
   background: rgba(0,0,0,.18);
 }
-.nav-submenu.aberto { max-height: 400px; }
+/* O max-height so existe para a animacao abrir/fechar. O valor era 400px e o
+   grupo Relatorios passou disso (12 itens = 488px): com overflow hidden, os
+   ultimos sumiam da tela sem aviso nenhum - nem scroll, nem corte visivel.
+   Foi o que engoliu a Conferencia do Dia em 17/09/2026.
+   Agora o teto cabe ~20 itens E o estado aberto rola: se um dia estourar de
+   novo, o menu ganha barra de rolagem em vez de esconder item em silencio. */
+.nav-submenu.aberto { max-height: 820px; overflow-y: auto; }
 
 .nav-submenu a {
   padding-left: 2.4rem !important;
