@@ -403,7 +403,13 @@ function isCompExterna(forn) {
   return String(forn || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim() === 'comprador externo';
 }
 
-async function enviarDespesaCompExternoMobile({ pedido_num, conta_id, itensReceb, itensOriginais, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, nf }) {
+// Mesmos IDs do desktop (app.js). O comprador externo compra com o PIX do Nubank;
+// Santander nunca e banco de despesa dele — e a conta da empresa, de onde sai a
+// transferencia para o Nubank.
+const BANCO_NUBANK_ID_MOB = 'c342ece3-9015-40d6-a5ce-72c668f17395';
+const BANCO_CAIXA_ID_MOB  = '5f8f152e-8ef7-47ad-8df3-b251f4225a1f';
+
+async function enviarDespesaCompExternoMobile({ pedido_num, conta_id, itensReceb, itensOriginais, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, nf, banco_id, unidade_id }) {
   const totalItens = Math.max(0, totalRecebido - acrescimo);
 
   // Agrupa por plano_conta
@@ -431,8 +437,14 @@ async function enviarDespesaCompExternoMobile({ pedido_num, conta_id, itensReceb
     acrescimo:      acrescimo,
     vencimento,
     tipo:           'pagar',
-    status:         'pago',
-    data_pagamento: dataRec,
+    // Despesa de comprador externo entra SEMPRE pendente, em qualquer banco — mesma
+    // regra do desktop (app.js enviarDespesaCompExterno, commits 49f88e9 e 6d0c4d6).
+    // Nascer "pago" pulava a aprovacao/retirada do dinheiro no financeiro e deixava
+    // o lancamento fora da conciliacao, que so enxerga pendente.
+    status:         'pendente',
+    data_pagamento: null,
+    banco_id:       banco_id || BANCO_NUBANK_ID_MOB,
+    unidade_id:     unidade_id || null,
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
     numero_pedido:  pedido_num,
@@ -466,6 +478,40 @@ async function _totalRecebComItem(pedido_num) {
 }
 
 async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
+  // ANTI-DUPLICATA — o pedido ja tem lancamento no financeiro? Entao a despesa dele
+  // ja existe: so amarra a conta nela e sai.
+  //
+  // A trava de cima (`!contaFinal.lancamento_id`) nao basta. Quando o pagamento e em
+  // DINHEIRO, quem cria o lancamento e o financeiro, pelo botao "Pagamento em Dinheiro
+  // — Caixa" ("Adiantamento Pedido #X — Dinheiro"), e ele nao escreve de volta em
+  // `cmp_contas_pagar` — nem em `lancamento_id`, nem em `adiantamento_lancamento_id`.
+  // Do lado do estoque os dois campos ficam nulos, nada trava, e o recebimento cria
+  // uma SEGUNDA despesa do mesmo pedido. Foi assim que sairam 34 copias entre
+  // 01/08 e 16/09/2026 (R$ 8.384 de despesa em dobro no DRE), todas com a assinatura
+  // desta tela: pago, sem banco e sem unidade. Conferir por `numero_pedido` pega o
+  // caso do dinheiro tambem, porque esse campo sempre existe.
+  const { data: jaLanc } = await sb.from('lancamentos')
+    .select('id').eq('numero_pedido', pedido_num).limit(1);
+  if (jaLanc?.length) {
+    await sb.from('cmp_contas_pagar').update({ lancamento_id: jaLanc[0].id }).eq('id', conta.id);
+    return;
+  }
+
+  // Banco da despesa: o do adiantamento, quando houve um. Sem adiantamento, Nubank —
+  // que e o cartao com que o comprador externo compra. (Mesma regra do desktop.)
+  let bancoDespesa = BANCO_NUBANK_ID_MOB;
+  if (conta.adiantamento_lancamento_id) {
+    const { data: adLanc } = await sb.from('lancamentos')
+      .select('banco_id,status').eq('id', conta.adiantamento_lancamento_id).maybeSingle();
+    // Adiantamento ja PAGO em dinheiro = a saida do pedido ja aconteceu no Caixa.
+    // Vincula esse pagamento como a conta do pedido em vez de criar outra despesa.
+    if (adLanc?.status === 'pago' && adLanc.banco_id === BANCO_CAIXA_ID_MOB) {
+      await sb.from('cmp_contas_pagar').update({ lancamento_id: conta.adiantamento_lancamento_id }).eq('id', conta.id);
+      return;
+    }
+    if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
+  }
+
   const totalAcum = await _totalRecebComItem(pedido_num);
 
   const { data: recebIds } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
@@ -473,6 +519,15 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
     .select('*').in('recebimento_id', (recebIds||[]).map(r => r.id));
   const { data: itensOrig } = await sb.from('cmp_compras')
     .select('id,plano_conta').eq('pedido_num', pedido_num);
+
+  // Unidade da despesa: a do item do pedido, igual ao gerarContaFinanceiroMobile.
+  // Sem ela o lancamento fica fora do DRE filtrado por unidade e so aparece no
+  // consolidado.
+  let unidade_id = null;
+  if (ref?.unidade_uso) {
+    const { data: uni } = await sb.from('unidades').select('id').ilike('nome', ref.unidade_uso).maybeSingle();
+    unidade_id = uni?.id || null;
+  }
 
   const dataRec = hojeLocal();
   const venc = conta.vencimento || dataRec;
@@ -484,6 +539,7 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
     totalRecebido: totalAcum, acrescimo: 0,
     dataRec, vencimento: venc,
     fornecedor_id: ref?.fornecedor_id || null, nf: null,
+    banco_id: bancoDespesa, unidade_id,
   });
 }
 
@@ -546,7 +602,7 @@ async function finalizarPedidoCompExtMob(pedido_num) {
   if (conta.lancamento_id) { toast('Pedido já foi enviado ao financeiro.', 'err'); return; }
 
   const { data: refItem } = await sb.from('cmp_compras')
-    .select('fornecedor_nome,fornecedor_id').eq('pedido_num', pedido_num).limit(1).maybeSingle();
+    .select('fornecedor_nome,fornecedor_id,unidade_uso').eq('pedido_num', pedido_num).limit(1).maybeSingle();
 
   await _executarFinalizarCompExtMob(pedido_num, conta, refItem);
   toast(`${pedido_num} finalizado e enviado ao financeiro! ✅`, 'ok');
