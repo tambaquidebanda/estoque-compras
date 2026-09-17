@@ -336,8 +336,15 @@ let _pedidoAtual = null;
 // e por isso o erro vinha em blocos de uma noite inteira - parecia um segundo
 // caminho no codigo, e nao era: e sempre este.
 function hojeLocal() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // MANAUS, nao o relogio do aparelho. `new Date()` + getDate() devolve o dia do
+  // fuso em que o celular esta configurado: na noite de 15/09/2026 o Kevin gravou
+  // 15/09 as 22:27 e o Yefecson gravou 16/09 as 22:28, mesma noite, aparelhos
+  // diferentes. Foram 138 de 356 inventarios errados desde 01/09 - e o que fez a
+  // contagem da churrasqueira sumir do dia 15 e a equipe levar bronca por um erro
+  // que nao era dela. en-CA devolve YYYY-MM-DD ja no fuso pedido.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Manaus', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 
 function mostrar(id) {

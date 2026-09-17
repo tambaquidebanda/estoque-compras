@@ -362,8 +362,15 @@ function toggleFormCad(key) {
 // e por isso o erro vinha em blocos de uma noite inteira - parecia um segundo
 // caminho no codigo, e nao era: e sempre este.
 function hojeLocal() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // MANAUS, nao o relogio do aparelho. `new Date()` + getDate() devolve o dia do
+  // fuso em que o celular esta configurado: na noite de 15/09/2026 o Kevin gravou
+  // 15/09 as 22:27 e o Yefecson gravou 16/09 as 22:28, mesma noite, aparelhos
+  // diferentes. Foram 138 de 356 inventarios errados desde 01/09 - e o que fez a
+  // contagem da churrasqueira sumir do dia 15 e a equipe levar bronca por um erro
+  // que nao era dela. en-CA devolve YYYY-MM-DD ja no fuso pedido.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Manaus', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 function setHoje(id) {
   const el = document.getElementById(id);
@@ -11743,11 +11750,19 @@ function exportarPedidoSombra() {
 // linha em branco também seria "sumiu sem venda" e a sugestão sairia errada.
 // ════════════════════════════════════════════════════════════════════════════
 
-const CD_TOL = 1;   // "fecha" = até 1 unidade, mesma tolerância do placar
+const CD_TOL = 1;           // "fecha" = até 1 unidade, mesma tolerância do placar
+const CD_JANELA_PED = 3;    // dias: pedido mais velho que isso não explica o buraco de hoje
+const CD_ALARME_MOSTRA = 6; // itens listados no alarme antes do "e mais N"
 
 let _cdLinhas = [];
 let _cdNoites = [];
 
+let _cdPend = new Map();
+const _cdNoites0 = ls => ls.length ? ls.map(l => l.noite).sort()[0] : null;
+// hora SEMPRE em Manaus - o relogio do servidor e do aparelho nao mandam aqui
+const _cdDiaManaus = ts => ts ? new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Manaus' }) : '';
+const _cdHoraManaus = ts => ts ? new Date(ts).toLocaleString('pt-BR',
+  { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 const _cdFmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 const _cdN = v => Number(v) || 0;
 const _cdTem = l => l.v1_ancora_data != null && l.v1_saldo != null;
@@ -11759,35 +11774,54 @@ const _cdRs = l => Math.abs(_cdDif(l)) * _cdN(l.custo_unit);
 // fazer devolve o problema para quem perguntou.
 function _cdDiagnostico(l) {
   const ent = _cdN(l.v1_entradas), dev = _cdDeveria(l), dif = _cdDif(l), fator = l._fator || 1;
+  const pend = l._pendentes || [];          // pedido liberado e nao recebido deste item
+  const _lista = ps => ps.map(p =>
+    `${p.num} (${p.tipo === 'emergencia' ? 'emergência' : 'normal'}, ${_cdFmt(p.qtd)} liberado${p.hora ? ' em ' + p.hora : ''}${p.quem ? ' por ' + p.quem : ''})`).join(' e ');
+  const cita = () => _lista(pend);
+  const citaAntigos = () => _lista((l._antigos || []).slice(0, 2));
+
   if (!_cdTem(l)) return {
     chave: 'sem-ancora', cor: 'secondary', titulo: 'Sem contagem na noite anterior',
     acao: 'Sem ponto de partida não dá para conferir esta noite. Se o setor não contou ontem, a linha volta sozinha amanhã.' };
 
   if (l.contado_zero) return {
-    chave: 'em-branco', cor: 'warning', titulo: 'Contagem em branco virou zero',
+    chave: 'em-branco', cor: 'warning', titulo: 'Ninguém digitou esta linha',
     acao: `O campo ficou vazio e o sistema leu 0 — por isso o pedido saiu no padrão inteiro (${_cdFmt(l.padrao)}). `
-        + 'Confirmar com o setor se acabou mesmo ou se a linha não foi contada.' };
+        + 'Confirmar com quem contou se acabou mesmo ou se a linha passou batida.' };
+
+  // SALDO NEGATIVO = entrou mercadoria que o sistema nao viu. O nome disso nao e
+  // "a venda comeu mais do que entrou" (que faz pensar em erro de contagem): e a
+  // quantidade que apareceu sem registro. E quando existe pedido liberado e nao
+  // recebido deste item, o sistema SABE qual foi - entao diz o numero.
+  if (dev < -CD_TOL) return {
+    chave: 'entrada-sem-registro', cor: 'danger',
+    titulo: `Entraram ${_cdFmt(dif)} sem registro`,
+    acao: pend.length
+      ? `${cita()} — e ninguém confirmou o recebimento. Confirmar o recebimento fecha esta linha. `
+        + 'A contagem do setor está certa; o que falta é o passo de receber.'
+      : (l._antigos || []).length
+        ? `Nenhum pedido liberado nos últimos ${CD_JANELA_PED} dias. Mas ${citaAntigos()} continua liberado e `
+          + 'nunca recebido — parado desde então, sumindo do saldo do setor todo dia. É a explicação mais provável.'
+        : 'Nenhum pedido liberado em aberto para este item: a mercadoria entrou por fora '
+          + '(transferência, compra direta, ou entrega sem pedido). Conferir com o estoque.' };
 
   if (ent > 0 && dif <= -Math.max(1, ent * 0.5)) return {
     chave: 'entrou-sumiu', cor: 'danger', titulo: `Entrou ${_cdFmt(ent)} e a contagem não viu`,
     acao: fator !== 1
       ? `Duas saídas: ou a contagem está em outra unidade (o cadastro diz 1 ${l._uc} = ${_cdFmt(fator)} ${l._uu}), `
-        + 'ou a mercadoria não chegou ao setor no dia lançado. Perguntar ao setor quantas embalagens receberam.'
+        + 'ou a mercadoria não chegou ao setor no dia lançado. Perguntar quantas embalagens receberam.'
       : 'Ou a mercadoria não chegou ao setor no dia em que a entrada foi lançada, ou saiu de novo sem registro. '
-        + 'Conferir a data da liberação do pedido interno.' };
-
-  if (dev < 0) return {
-    chave: 'saldo-negativo', cor: 'danger', titulo: 'A venda comeu mais do que entrou',
-    acao: 'O modelo perdeu um lançamento: falta registrar uma entrada, ou sobra uma saída. '
-        + 'Não é erro do setor — é erro de registro, e por isso esta linha fica fora do placar.' };
+        + 'Conferir a hora da liberação do pedido interno.' };
 
   if (Math.abs(dif) <= CD_TOL) return {
     chave: 'fecha', cor: 'success', titulo: 'Fecha', acao: '' };
 
   if (dif > 0) return {
     chave: 'sobrou', cor: 'info', titulo: `Contou ${_cdFmt(dif)} a mais do que podia ter`,
-    acao: 'Entrada que não foi registrada (transferência, compra direta, devolução), '
-        + 'ou a contagem de ontem estava abaixo do real. Olhar o pedido interno do dia.' };
+    acao: pend.length
+      ? `${cita()} — liberado e não recebido. É a explicação mais provável: a mercadoria chegou, o registro não.`
+      : 'Entrada que não foi registrada (transferência, compra direta, devolução), '
+        + 'ou a contagem de ontem estava abaixo do real.' };
 
   return {
     chave: 'sumiu', cor: 'danger', titulo: `Faltam ${_cdFmt(-dif)} que a venda não explica`,
@@ -11795,7 +11829,6 @@ function _cdDiagnostico(l) {
       ? `Saiu do setor sem venda. Antes de tratar como perda, confirmar a unidade: o cadastro diz 1 ${l._uc} = ${_cdFmt(fator)} ${l._uu}.`
       : 'Saiu do setor sem venda e sem saída registrada: perda, consumo interno, ou uma ficha que não desconta este insumo.' };
 }
-
 
 async function carregarConferenciaDia() {
   const tb = document.getElementById('lst-cd');
@@ -11815,6 +11848,58 @@ async function carregarConferenciaDia() {
     l._fator = Number(p.fator_conversao) || 1;
     l._uc = (p.unidade_comp || '?').trim();
     l._uu = (p.unidade_uso || '?').trim();
+  });
+
+  // PEDIDO LIBERADO E NAO RECEBIDO — e isto que transforma "falta uma entrada"
+  // em "PED-2589 liberou 40 as 23:33 e ninguem confirmou". Liberar nao mexe no
+  // estoque; so o "receber" gera movimento. Entao todo pedido que ficou no meio
+  // do caminho e mercadoria que saiu fisicamente e o sistema nunca viu.
+  const de = _cdNoites0(_cdLinhas);
+  const peds = de ? await _fetchAllPaged('pedidos_internos',
+    'id,num_pedido,setor,tipo,status,criado_em,liberado_em,recebido_em,responsavel',
+    q => q.gte('criado_em', de).not('liberado_em', 'is', null).is('recebido_em', null)) : [];
+  _cdPend = new Map();
+  if (peds.length) {
+    const byId = new Map(peds.map(p => [p.id, p]));
+    // LOTES DE 100: `.in()` com lista grande estoura o tamanho da URL e o
+    // PostgREST devolve vazio SEM erro — o codigo concluiria "nenhum pedido
+    // pendente", que e o oposto da verdade.
+    const ids = [...byId.keys()];
+    const itens = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await sb.from('pedidos_internos_itens')
+        .select('pedido_id,produto_id,qtd_liberada,qtd_pedida')
+        .in('pedido_id', ids.slice(i, i + 100));
+      if (error) { console.error('conferencia: itens do pedido interno', error.message); break; }
+      itens.push(...(data || []));
+    }
+    itens.forEach(it => {
+      const p = byId.get(it.pedido_id);
+      if (!p || !it.produto_id) return;
+      const k = p.setor + '|' + it.produto_id;
+      if (!_cdPend.has(k)) _cdPend.set(k, []);
+      _cdPend.get(k).push({
+        num: p.num_pedido, tipo: p.tipo, status: p.status,
+        qtd: Number(it.qtd_liberada ?? it.qtd_pedida) || 0,
+        dia: _cdDiaManaus(p.liberado_em),
+        hora: _cdHoraManaus(p.liberado_em),
+        quem: (p.responsavel || '').split(' ')[0] || '',
+      });
+    });
+  }
+  _cdLinhas.forEach(l => {
+    // O pedido explica a noite se foi liberado NAQUELA noite ou antes: a partir
+    // da liberacao a mercadoria ja saiu do estoque. Liberado depois nao explica.
+    const janela = _parSomaDias(l.noite, -CD_JANELA_PED);
+    const abertos = (_cdPend.get(l.setor + '|' + l.produto_id) || [])
+      .filter(p => p.dia && p.dia <= l.noite)
+      .sort((a, b) => b.dia.localeCompare(a.dia));
+    // Recente = liberado dentro da janela: esse explica o buraco DESTA noite.
+    // Antigo = liberado antes: nao explica, mas continua em aberto e some do
+    // saldo do setor todo dia. Dizer "nenhum pedido" quando existe um de 4 dias
+    // atras seria esconder justamente o mais grave.
+    l._pendentes = abertos.filter(p => p.dia >= janela);
+    l._antigos   = abertos.filter(p => p.dia <  janela);
     l._diag = _cdDiagnostico(l);
   });
 
@@ -11862,6 +11947,7 @@ function _pintarConferenciaDia() {
   const tb = document.getElementById('lst-cd');
   if (!tb) return;
   const noite = document.getElementById('cd-noite')?.value || '';
+  const setorSel = document.getElementById('cd-setor')?.value || '';
   const daNoite = _cdLinhas.filter(l => l.noite === noite);
 
   // KPIs: a leitura da noite em cinco números
@@ -11890,6 +11976,8 @@ function _pintarConferenciaDia() {
   document.getElementById('cd-contador').textContent =
     _cdLinhas.length ? `${_cdNoites.length} noite(s) medida(s) · ${_cdLinhas.length} linhas` : '';
 
+  _cdPintarAlarme(daNoite.filter(l => !setorSel || l.setor === setorSel), noite);
+
   const linhas = _cdFiltradas();
   const selos = l => (l.unidade_nao_curada ? ` <span class="badge bg-warning text-dark" title="Compra em ${esc(l._uc)}, uso em ${esc(l._uu)} — 1 ${esc(l._uc)} = ${_cdFmt(l._fator)} ${esc(l._uu)}. Ninguém confirmou em qual delas o setor conta.">un?</span>` : '')
                   + (l.dois_grupos ? ' <span class="badge bg-secondary">2 grupos</span>' : '');
@@ -11914,6 +12002,61 @@ function _pintarConferenciaDia() {
             ${d.acao ? `<div class="small text-muted mt-1">${esc(d.acao)}</div>` : ''}</td>
       </tr>`;
       }).join('');
+}
+
+// ALARME — entrega que saiu do estoque e o sistema nunca viu.
+//
+// Isto NAO pode ficar misturado na lista de divergencias. Uma diferenca de 3
+// unidades e trabalho de conferencia; "o setor vendeu 79 tendo 30 e recebeu
+// zero" e mercadoria perdida de vista, e quase sempre um pedido liberado que
+// ninguem confirmou. Em 16/09/2026 essa mistura fez o Wagner brigar com a
+// equipe por um erro que era de registro, nao de contagem.
+function _cdPintarAlarme(daNoite, noite) {
+  const el = document.getElementById('cd-alarme');
+  if (!el) return;
+  const graves = daNoite.filter(l => l._diag.chave === 'entrada-sem-registro');
+  if (!graves.length) { el.innerHTML = ''; return; }
+
+  const porSetor = {};
+  graves.forEach(l => {
+    const a = porSetor[l.setor] || (porSetor[l.setor] = { itens: [], rs: 0, peds: new Map() });
+    a.itens.push(l); a.rs += _cdRs(l);
+    (l._pendentes || []).forEach(p => a.peds.set(p.num, p));
+    (l._antigos || []).forEach(p => a.peds.set(p.num, p));
+  });
+
+  el.innerHTML = Object.entries(porSetor)
+    .sort((x, y) => y[1].rs - x[1].rs)
+    .map(([setor, a]) => {
+      const peds = [...a.peds.values()].sort((x, y) => (y.dia || '').localeCompare(x.dia || ''));
+      const ord = a.itens.sort((x, y) => _cdRs(y) - _cdRs(x));
+      const resto = Math.max(0, ord.length - CD_ALARME_MOSTRA);
+      const lista = ord.slice(0, CD_ALARME_MOSTRA)
+        .map(l => `<li><strong>${esc(l.nome)}</strong> — tinha ${_cdFmt(l.v1_ancora_qtd)}, `
+                + `a venda consumiu ${_cdFmt(l.v1_consumo)}, contou ${_cdFmt(l.contado)} no fim: `
+                + `<strong>entraram ${_cdFmt(_cdDif(l))}</strong> que ninguém registrou</li>`).join('')
+        + (resto ? `<li class="text-muted">e mais ${resto} insumo(s) na mesma situação — a lista completa está na tabela abaixo</li>` : '');
+      return `<div class="alert alert-danger border-danger mb-3">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi bi-exclamation-octagon-fill fs-4"></i>
+          <div class="flex-grow-1">
+            <h2 class="h6 mb-1">Entrega que o sistema não viu — ${esc(setor)}, noite de ${_dataBR(noite)}</h2>
+            <p class="mb-2 small">O setor vendeu mais do que tinha e ainda sobrou estoque no fim da noite.
+               Isso não é erro de contagem: é mercadoria que chegou sem passar pelo sistema.
+               <strong>${a.itens.length} insumo(s) · ${brl(a.rs)}</strong></p>
+            <ul class="small mb-2">${lista}</ul>
+            ${peds.length
+              ? `<p class="mb-1 small"><strong>O que aconteceu:</strong> ` + peds.map(p =>
+                   `<span class="badge bg-dark">${esc(p.num)}</span> ${p.tipo === 'emergencia' ? 'emergência' : 'pedido normal'}, `
+                 + `liberado ${esc(p.hora)}${p.quem ? ' por ' + esc(p.quem) : ''}, <strong>nunca recebido</strong>`).join(' · ')
+                 + `</p><p class="mb-0 small"><strong>O que fazer:</strong> confirmar o recebimento desse(s) pedido(s).
+                    Liberar não move estoque — só o "receber" move. A contagem do setor está certa.</p>`
+              : `<p class="mb-0 small"><strong>O que fazer:</strong> não há pedido liberado em aberto para estes itens.
+                 A mercadoria entrou por fora — transferência, compra direta ou entrega sem pedido. Conferir com o estoque.</p>`}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
 }
 
 // A série do insumo — a visão que resolveu o taperebá: uma noite embaixo da outra.
