@@ -11495,8 +11495,16 @@ const _psNum = v => Number(v) || 0;
 // contagem seria cobrar do setor um erro de registro. Nao e coluna no banco -
 // e derivada, porque o saldo ja esta gravado.
 const _psModeloNeg = (l, v) => l[v + '_saldo'] != null && _psNum(l[v + '_saldo']) < 0;
+// QUINTA MARCA: item que NENHUMA ficha desconta. Material de consumo (papel,
+// embalagem, limpeza) nao sai por prato vendido, e revenda sem ficha 1:1 marca
+// venda zero. Nos dois casos o modelo ve consumo zero todas as noites: cobrar o
+// placar deles e cobrar o impossivel, e eles ainda puxam o denominador. Medido
+// em 18/09/2026: dos 374 produtos contados, 91 sao MC sem ficha e 20 sao
+// revenda sem ficha - 24% do valor pedido.
+let _psSemFicha = new Set();
+const _psForaDaVenda = l => _psSemFicha.has(l.produto_id);
 const _psLimpa = (l, v = 'v1') => !l.unidade_nao_curada && !l.dois_grupos && !l.contado_zero
-  && _psNum(l.padrao) > 0 && !_psModeloNeg(l, v);
+  && _psNum(l.padrao) > 0 && !_psModeloNeg(l, v) && !_psForaDaVenda(l);
 const _psSombra = (l, v) => l[v + '_sombra'];
 const _psBate = (l, v) => _psSombra(l, v) !== null && Math.abs(_psNum(_psSombra(l, v)) - _psNum(l.pedido_real)) <= PS_TOL + 1e-9;
 const _psRs = l => _psNum(l.pedido_real) * _psNum(l.custo_unit);
@@ -11515,6 +11523,11 @@ async function carregarPedidoSombra() {
     // noite antiga reescreve as linhas dela e mudaria o período sem querer.
     _psLinhas = await _fetchAllPaged('pdv_pedido_sombra', cols,
       q => (n > 0 ? q.gte('noite', _parSomaDias(hojeLocal(), -n)) : q));
+
+    // quem NAO esta em ficha nenhuma sai do placar (ver _psForaDaVenda)
+    const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ingrediente_id');
+    const emFicha = new Set(ings.map(i => i.ingrediente_id).filter(Boolean));
+    _psSemFicha = new Set(_psLinhas.map(l => l.produto_id).filter(pid => pid && !emFicha.has(pid)));
   } catch (e) {
     console.error('pedido sombra:', e);
     _psLinhas = [];
@@ -11533,8 +11546,16 @@ async function carregarPedidoSombra() {
 }
 
 // Placar de um conjunto de linhas, nas duas variantes.
-function _psPlacar(linhas) {
+function _psPlacar(todas) {
+  // O QUE A VENDA NEM PODE EXPLICAR SAI DO UNIVERSO, nao entra como "fora da
+  // conta". Material de consumo nunca vai ser pedido por ficha - deixar ele no
+  // denominador seria criar um criterio que nunca fecha, e nao e defeito de
+  // ninguem. "Fora da conta" continua sendo so o que DEVERIA ser medivel e nao e:
+  // unidade nao curada, dois grupos, linha em branco e saldo negativo.
+  const linhas = todas.filter(l => !_psForaDaVenda(l));
   const r = { noites: new Set(linhas.map(l => l.noite)).size };
+  r.foraDaVendaRs = todas.filter(_psForaDaVenda).reduce((s, l) => s + _psRs(l), 0);
+  r.foraDaVendaN = new Set(todas.filter(_psForaDaVenda).map(l => l.produto_id)).size;
   for (const v of ['v1', 'v2']) {
     const com = linhas.filter(l => _psLimpa(l, v) && _psSombra(l, v) !== null);
     const rs = com.reduce((s, l) => s + _psRs(l), 0);
@@ -11557,7 +11578,8 @@ function _psPlacar(linhas) {
 
 // O critério da fase 2, medido. Os quatro pedaços separados, para a tela poder
 // dizer QUAL deles está faltando em vez de só "ainda não".
-function _psCriterio(linhas) {
+function _psCriterio(todas) {
+  const linhas = todas.filter(l => !_psForaDaVenda(l));
   const porNoite = {};
   linhas.filter(l => _psLimpa(l, 'v2')).forEach(l => {
     if (_psSombra(l, 'v2') === null) return;
@@ -11647,7 +11669,10 @@ function _pintarPedidoSombra() {
     + _relKpiChip('V2 no valor', p.v2.valor === null ? '—' : pct(p.v2.valor),
         (p.v2.valor ?? 0) >= PS_CRIT.valor ? '#16a34a' : '#b45309')
     + _relKpiChip('Noites no critério', `${c.noitesOk} de ${PS_CRIT.ok}`, c.noitesOk >= PS_CRIT.ok ? '#16a34a' : '#b45309')
-    + _relKpiChip('Fora da conta (R$)', pct(c.fora), c.fora <= PS_CRIT.foraMax ? '#16a34a' : '#6b7280');
+    + _relKpiChip('Fora da conta (R$)', pct(c.fora), c.fora <= PS_CRIT.foraMax ? '#16a34a' : '#6b7280')
+    // O que saiu do universo tem que aparecer. Numero que some da conta sem
+    // dizer que saiu e como o placar engana.
+    + _relKpiChip('Fora do alcance da venda', `${p.foraDaVendaN} itens · ${brl(p.foraDaVendaRs)}`, '#6b7280');
 
   // ── tabela por setor ──
   const setores = [...new Set(_psLinhas.map(l => l.setor))];
@@ -11780,14 +11805,35 @@ function _cdDiagnostico(l) {
   const cita = () => _lista(pend);
   const citaAntigos = () => _lista((l._antigos || []).slice(0, 2));
 
-  if (!_cdTem(l)) return {
-    chave: 'sem-ancora', cor: 'secondary', titulo: 'Sem contagem na noite anterior',
-    acao: 'Sem ponto de partida não dá para conferir esta noite. Se o setor não contou ontem, a linha volta sozinha amanhã.' };
-
-  if (l.contado_zero) return {
+  // A LINHA EM BRANCO VALE PARA TODOS — ate o material de consumo precisa ser
+  // digitado. Por isso ela vem antes do corte por universo.
+  if (l.contado_zero && _cdTem(l)) return {
     chave: 'em-branco', cor: 'warning', titulo: 'Ninguém digitou esta linha',
     acao: `O campo ficou vazio e o sistema leu 0 — por isso o pedido saiu no padrão inteiro (${_cdFmt(l.padrao)}). `
         + 'Confirmar com quem contou se acabou mesmo ou se a linha passou batida.' };
+
+  // MATERIAL DE CONSUMO — nao existe ficha que desconte papel, embalagem ou
+  // limpeza. Cobrar a conta da venda aqui e cobrar o impossivel: o modelo ve
+  // consumo zero todo dia. O que serve deste item e a serie de consumo
+  // OBSERVADO, que e a base da media por dia.
+  if (l._universo === 'mc') return {
+    chave: 'mc', cor: 'secondary', titulo: 'Material de consumo — a venda não explica',
+    acao: 'Nenhuma ficha desconta este item (papel, embalagem, limpeza): ele sai pelo uso do dia, não por prato vendido. '
+        + (l._consumoObs != null
+            ? `O consumo observado nesta noite foi ${_cdFmt(l._consumoObs)} — é esta série que alimenta a média por dia.`
+            : 'Sem contagem anterior, nem o consumo observado dá para calcular.') };
+
+  // SEM FICHA E NAO E MC — aqui a conta nao fecha por defeito de cadastro, nao
+  // por rotina do setor. Cerveja, energetico, tonica: revenda que precisa de
+  // ficha 1:1 com o proprio produto.
+  if (l._universo === 'sem-ficha') return {
+    chave: 'sem-ficha', cor: 'warning', titulo: 'Nenhuma ficha desconta este item',
+    acao: 'O item é vendido mas não está em ficha nenhuma, então a venda marca zero e a conta nunca fecha. '
+        + 'Conserto: criar a ficha — revenda é ficha 1:1 com o próprio produto.' };
+
+  if (!_cdTem(l)) return {
+    chave: 'sem-ancora', cor: 'secondary', titulo: 'Sem contagem na noite anterior',
+    acao: 'Sem ponto de partida não dá para conferir esta noite. Se o setor não contou ontem, a linha volta sozinha amanhã.' };
 
   // SALDO NEGATIVO = entrou mercadoria que o sistema nao viu. O nome disso nao e
   // "a venda comeu mais do que entrou" (que faz pensar em erro de contagem): e a
@@ -11843,11 +11889,27 @@ async function carregarConferenciaDia() {
   // unidade do cadastro: é ela que transforma "não fechou" em "a unidade está trocada"
   if (!cProdutosFT.length) await carregarProdutosFT();
   const porId = new Map(cProdutosFT.map(p => [p.id, p]));
+
+  // UNIVERSO — o que a venda pode explicar, e o que não pode.
+  // Material de consumo (papel, embalagem, limpeza) NAO sai por prato vendido:
+  // nenhuma ficha o desconta, entao o modelo ve consumo zero todas as noites e a
+  // conta nunca fecha. Media do universo da contagem em 18/09/2026: 263 produtos
+  // em ficha, 91 MC sem ficha, 20 sem ficha que NAO sao MC (esses sim, ficha
+  // faltando - cerveja, energetico, tonica: revenda sem ficha 1:1).
+  // Misturar os tres num placar so faz o setor parecer pior do que e.
+  const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ingrediente_id');
+  const emFicha = new Set(ings.map(i => i.ingrediente_id).filter(Boolean));
   _cdLinhas.forEach(l => {
     const p = porId.get(l.produto_id) || {};
     l._fator = Number(p.fator_conversao) || 1;
     l._uc = (p.unidade_comp || '?').trim();
     l._uu = (p.unidade_uso || '?').trim();
+    l._tipo = p.tipo || '';
+    l._universo = emFicha.has(l.produto_id) ? 'ficha' : (p.tipo === 'MC' ? 'mc' : 'sem-ficha');
+    // consumo OBSERVADO: tinha + entrou - contou. Nao depende de ficha nenhuma,
+    // e e a materia-prima da futura media por dia do material de consumo.
+    l._consumoObs = _cdTem(l)
+      ? _cdN(l.v1_ancora_qtd) + _cdN(l.v1_entradas) - _cdN(l.contado) : null;
   });
 
   // PEDIDO LIBERADO E NAO RECEBIDO — e isto que transforma "falta uma entrada"
@@ -11932,10 +11994,12 @@ function _cdFiltradas() {
   const noite = document.getElementById('cd-noite')?.value || '';
   const setor = document.getElementById('cd-setor')?.value || '';
   const diag  = document.getElementById('cd-diag')?.value || '';
+  const uni   = document.getElementById('cd-universo')?.value ?? 'ficha';
   const soErro = document.getElementById('cd-so-erro')?.checked;
   const busca = norm(document.getElementById('cd-busca')?.value || '');
   return _cdLinhas
     .filter(l => l.noite === noite)
+    .filter(l => !uni || l._universo === uni)
     .filter(l => !setor || l.setor === setor)
     .filter(l => !diag || l._diag.chave === diag)
     .filter(l => !soErro || l._diag.chave !== 'fecha')
@@ -11948,7 +12012,11 @@ function _pintarConferenciaDia() {
   if (!tb) return;
   const noite = document.getElementById('cd-noite')?.value || '';
   const setorSel = document.getElementById('cd-setor')?.value || '';
-  const daNoite = _cdLinhas.filter(l => l.noite === noite);
+  const uni = document.getElementById('cd-universo')?.value ?? 'ficha';
+  // Os KPIs valem para o universo escolhido. Com "tudo junto" eles voltam a
+  // misturar material de consumo com insumo de ficha — util para ver o tamanho
+  // do todo, ruim para julgar o setor.
+  const daNoite = _cdLinhas.filter(l => l.noite === noite && (!uni || l._universo === uni));
 
   // KPIs: a leitura da noite em cinco números
   const comConta = daNoite.filter(_cdTem);
@@ -11963,9 +12031,15 @@ function _pintarConferenciaDia() {
     </div>`;
   document.getElementById('cd-kpis').innerHTML = !daNoite.length ? '' : [
     kpi('Itens na noite', daNoite.length, 'bg-light'),
-    kpi('Fecham', comConta.length ? `${fecha} <span class="fs-6 text-muted">de ${comConta.length}</span>` : '—',
-        fecha * 2 >= comConta.length ? 'border-success' : 'border-warning',
-        'Diferença de até 1 unidade entre o que deveria ter e o que foi contado'),
+    // "Fecha" so faz sentido onde a venda pode explicar o item. Mostrar
+    // "0 de 61" para material de consumo seria repetir o erro que fez a equipe
+    // levar bronca: um numero verdadeiro lido como acusacao.
+    uni === 'ficha'
+      ? kpi('Fecham', comConta.length ? `${fecha} <span class="fs-6 text-muted">de ${comConta.length}</span>` : '—',
+            fecha * 2 >= comConta.length ? 'border-success' : 'border-warning',
+            'Diferença de até 1 unidade entre o que deveria ter e o que foi contado')
+      : kpi('Fecham', '<span class="fs-6 text-muted">não se aplica</span>', 'bg-light',
+            'A venda não desconta estes itens, então não há conta para fechar'),
     kpi('Em divergência', brl(rsErro), 'border-danger', 'Soma da diferença em dinheiro das linhas que não fecharam'),
     kpi('Linhas em branco', branco, branco ? 'border-warning' : 'bg-light',
         'Campo vazio virou zero: o pedido sai no padrão inteiro'),

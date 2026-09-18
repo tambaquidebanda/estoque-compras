@@ -2799,7 +2799,12 @@
             <strong>V1</strong> parte da contagem de ontem: é o termômetro do dia, e sempre acerta mais.
             <strong>V2</strong> parte de uma contagem de 7 a 10 dias atrás — é ele que simula a semana
             e o único que decide. A distância entre os dois é o tamanho do trabalho que falta.
-            Ficam <strong>fora da conta</strong> as linhas com unidade não curada, item contado em dois
+            <strong>Fora do alcance da venda</strong> são os itens que <em>nenhuma ficha desconta</em> —
+            material de consumo (papel, embalagem, limpeza) e revenda sem ficha 1:1. Para eles a venda
+            marca zero todo dia, então eles <strong>saem do universo</strong>: não entram no placar nem
+            no denominador. Não é defeito de ninguém, é outra conta — a do consumo médio por dia.
+            Já ficam <strong>fora da conta</strong> as linhas que <em>deveriam</em> ser medíveis e não são:
+            unidade não curada, item contado em dois
             grupos na mesma noite, linha em branco (contado zero) e aquelas em que o
             <strong>saldo do modelo ficou negativo</strong> — nessas o modelo viu sair mais do que viu
             entrar, ou seja, perdeu um lançamento. Cobrar isso do setor seria cobrar erro de registro.
@@ -2892,6 +2897,16 @@
         <div>
           <label class="form-label small text-muted mb-1" for="cd-setor">Setor</label>
           <select class="form-select form-select-sm" id="cd-setor" onchange="_pintarConferenciaDia()" style="width:180px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="cd-universo">O que mostrar</label>
+          <select class="form-select form-select-sm" id="cd-universo" onchange="_pintarConferenciaDia()" style="width:250px"
+                  title="Material de consumo (papel, embalagem, limpeza) nao tem ficha que o desconte: a conta pela venda nao se aplica a ele. Misturar os dois faz o setor parecer pior do que e.">
+            <option value="ficha" selected>O que a venda explica</option>
+            <option value="mc">Material de consumo</option>
+            <option value="sem-ficha">Sem ficha — conserto de cadastro</option>
+            <option value="">Tudo junto</option>
+          </select>
         </div>
         <div>
           <label class="form-label small text-muted mb-1" for="cd-diag">Problema</label>
