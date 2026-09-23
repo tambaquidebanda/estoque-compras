@@ -1092,7 +1092,7 @@ function _fatorDe(produto_id) {
 async function carregarProdutos() {
   let todos = [], pag = 0;
   while (true) {
-    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp,tipo,fator_conversao')
+    const { data } = await sb.from('est_produtos').select('id,nome,unidade_comp,unidade_uso,tipo,fator_conversao')
       .eq('ativo', true).range(pag * 1000, pag * 1000 + 999);
     if (!data?.length) break;
     todos = todos.concat(data);
@@ -1342,7 +1342,9 @@ async function selecionarGrupo(grupo) {
     .map(nome => {
       const nomeReal = _mapeamentos[nome] || nome;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nomeReal));
-      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' };
+      // Mesma regra da tela do desktop: o rotulo mostra a unidade de USO. Era ele que
+      // mandava o bar contar garrafa quando dizia "UN". Ver SQL_UNIDADE_LITRO_BAR.sql.
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '' };
     });
 
   // Adições manuais do setor atual
@@ -1351,7 +1353,7 @@ async function selecionarGrupo(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = _todosProdutos.find(p => norm(p.nome) === norm(nome));
-      _grupoProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '' });
+      _grupoProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '' });
       nomesExistentes.add(norm(nome));
     });
   };
@@ -1395,7 +1397,7 @@ function renderProdutos() {
       ${isEL ? '' : `<td class="td-center td-pad">${padTxt}</td>`}
       <td class="td-center">
         <input type="number" class="inp-est" id="est-${i}"
-          min="0" step="1" value="0" inputmode="decimal"
+          min="0" step="any" value="0" inputmode="decimal"
           oninput="calcPedido(${i})">
       </td>
       ${isEL ? '' : `<td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${pedIni}</td>`}
@@ -1774,7 +1776,7 @@ async function abrirLiberarPedido(id) {
       <td style="text-align:center;color:#6c757d;font-size:.8rem">${pad}</td>
       <td style="text-align:center;font-size:.8rem;${estCor}">${estFmt}</td>
       <td style="text-align:center;font-size:.8rem">${it.qtd_pedida??'—'}</td>
-      <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="1" inputmode="decimal" style="width:64px"></td>
+      <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="any" inputmode="decimal" style="width:64px"></td>
     </tr>`;
   }).join('');
 
@@ -1824,7 +1826,7 @@ async function abrirEditarPedidoMob(id) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td>
-    <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${it.qtd_pedida??0}" min="0" step="1" inputmode="decimal"></td>
+    <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${it.qtd_pedida??0}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-editar-mob-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}${ped?.obs?' · '+esc(ped.obs):''}</div>
@@ -1856,7 +1858,7 @@ async function abrirReceberPedido(id) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td>
-    <td><input type="number" class="inp-modal" id="rec-${it.id}" value="${it.qtd_liberada??0}" min="0" step="1" inputmode="decimal"></td>
+    <td><input type="number" class="inp-modal" id="rec-${it.id}" value="${it.qtd_liberada??0}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-receber-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}</div>
@@ -2007,7 +2009,7 @@ function _rowEmergMob(idx) {
     <input type="hidden" id="emerg-id-${idx}">
     <div id="emerg-sel-${idx}" class="prod-sel" style="display:none"></div>
     <label style="margin-top:.4rem">Quantidade</label>
-    <input type="number" id="emerg-qtd-${idx}" min="0" step="1" placeholder="0" inputmode="decimal">
+    <input type="number" id="emerg-qtd-${idx}" min="0" step="any" placeholder="0" inputmode="decimal">
   </div>`;
 }
 

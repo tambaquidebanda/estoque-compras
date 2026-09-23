@@ -3055,7 +3055,10 @@ async function selecionarGrupoInv(grupo) {
       const nomeBusca = mapeamentos[nome] || nome;
       const nomNorm   = norm(nomeBusca.trim());
       const prod      = cProdutosFT.find(p => norm(p.nome.trim()) === nomNorm);
-      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', adicionado: false };
+      // A UNIDADE QUE APARECE AQUI E A DE USO, nao a de compra. O rotulo da tela e a
+      // unica instrucao que quem conta recebe: enquanto dizia "UN" (unidade de compra),
+      // o bar contava garrafa e o sistema guardava litro. Ver SQL_UNIDADE_LITRO_BAR.sql.
+      return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '', adicionado: false };
     });
 
   // Produtos adicionados manualmente via "+"
@@ -3064,7 +3067,7 @@ async function selecionarGrupoInv(grupo) {
     (_invAdicoes[chave] || []).forEach(nome => {
       if (nomesExistentes.has(norm(nome))) return;
       const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nome.trim()));
-      _invProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', adicionado: true });
+      _invProds.push({ nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '', adicionado: true });
       nomesExistentes.add(norm(nome));
     });
   };
@@ -3118,7 +3121,7 @@ function renderInventario() {
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center"
-          id="inv-est-${i}" min="0" step="1" value="0"
+          id="inv-est-${i}" min="0" step="any" value="0"
           style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
       ${isEL ? '' : `<td class="text-center">
@@ -3264,7 +3267,7 @@ async function abrirEditarPadroes() {
         <td class="small">${esc(p.nome)}</td>
         <td class="text-center">
           <input type="number" class="form-control form-control-sm text-center"
-            id="pad-${d}-${pi}" min="0" step="1" value="${val}" placeholder="—" style="width:100px;margin:auto">
+            id="pad-${d}-${pi}" min="0" step="any" value="${val}" placeholder="—" style="width:100px;margin:auto">
         </td>
       </tr>`;
     }).join('');
@@ -3668,14 +3671,14 @@ async function abrirEditarContagem(invId) {
   const rows = (itens || []).map(it => {
     const ped     = Math.max(0, (it.pedido_padrao ?? 0) - (it.estoque ?? 0));
     const prodCad = cProdutosFT.find(p => p.id === it.produto_id);
-    const unidade = prodCad?.unidade_comp || '';
+    const unidade = prodCad?.unidade_uso || prodCad?.unidade_comp || '';
     return `<tr>
       <td>${esc(it.nome)}</td>
       <td class="text-center text-muted small">${esc(unidade || '—')}</td>
       <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
       <td class="text-center" style="width:120px">
         <input type="number" class="form-control form-control-sm text-center"
-          id="cont-est-${it.id}" value="${it.estoque ?? 0}" min="0" step="1"
+          id="cont-est-${it.id}" value="${it.estoque ?? 0}" min="0" step="any"
           oninput="_recalcPed('${it.id}',${it.pedido_padrao ?? 0})">
       </td>
       <td class="text-center fw-bold text-primary" id="cont-ped-${it.id}" style="width:90px">${ped}</td>
@@ -4309,7 +4312,7 @@ async function abrirLiberarPedido(pedidoId) {
       <td class="text-center">${it.qtd_pedida ?? '—'}</td>
       <td class="text-center" style="width:110px">
         <input type="number" class="form-control form-control-sm text-center"
-          id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
+          id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="any">
       </td>
     </tr>`;
   }).join('');
@@ -4366,7 +4369,7 @@ async function abrirEditarPedido(pedidoId) {
     <td>${esc(it.nome)}</td>
     <td class="text-center" style="width:130px">
       <input type="number" class="form-control form-control-sm text-center"
-        id="edit-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="1">
+        id="edit-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="any">
     </td>
   </tr>`).join('');
 
@@ -4624,7 +4627,7 @@ async function abrirReceberPedido(pedidoId) {
     <td class="text-center">${it.qtd_liberada ?? '—'}</td>
     <td class="text-center" style="width:130px">
       <input type="number" class="form-control form-control-sm text-center"
-        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="1">
+        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="any">
     </td>
   </tr>`).join('');
 
@@ -4989,7 +4992,7 @@ function _rowEmerg(idx) {
     </div>
     <div style="width:85px">
       <input type="number" class="form-control form-control-sm text-center" id="emerg-qtd-${idx}"
-        min="1" step="1" placeholder="Qtd">
+        min="0" step="any" placeholder="Qtd">
     </div>
     ${podeDeletar
       ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="removerItemEmerg(${idx})"><i class="bi bi-x"></i></button>`
@@ -13381,7 +13384,7 @@ async function _carregarValorTotalEstoque() {
       const chave = pid || norm(nome);
       if (vistos.has(chave)) continue;   // dedup: mesmo produto em vários grupos
       vistos.add(chave);
-      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {} });
+      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {} });
     }
   }
   const ids = itens.filter(x => x.produto_id).map(x => x.produto_id);
@@ -13479,7 +13482,8 @@ async function selecionarGrupoSaldo(grupo) {
   _saldoList = nomes.map(nome => {
     const nomeBusca = _invMapeamentos[nome] || nome;
     const prod = cProdutosFT.find(p => norm(p.nome.trim()) === norm(nomeBusca.trim()));
-    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, saldo: 0 };
+    // O saldo e guardado em unidade de USO - o rotulo tem que dizer a mesma coisa.
+    return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, saldo: 0 };
   });
 
   // Setores fixos (sempre todos)
