@@ -427,6 +427,8 @@
       <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
       <div class="pill" data-local="Delivery P10" onclick="escolherLocal('Delivery P10')">🛵 Delivery P10</div>
     </div>
+    <div id="aviso-unidade" style="display:none;background:#dc2626;color:#fff;font-weight:700;
+         text-align:center;padding:.5rem;border-radius:8px;margin-bottom:.5rem;font-size:.85rem"></div>
     <div class="info-linha">
       <span>📅</span>
       <input type="date" id="data-inv" class="data-inp">
@@ -535,9 +537,9 @@
 
   <!-- Rodapé Contagem -->
   <div id="rodape-contagem">
-    <button class="btn-enviar" id="btn-enviar" disabled onclick="enviarPedido()">📤 Enviar Pedido</button>
-    <button class="btn-enviar" id="btn-saldo-inicial" disabled onclick="salvarSaldoInicialSetorMob()" style="display:none;background:#6c757d">💾 Saldo Inicial</button>
-    <button class="btn-enviar" id="btn-salvar-saldo" disabled onclick="salvarSaldoContagem()" style="display:none;background:#198754">💾 Salvar Saldo</button>
+    <button class="btn-enviar" id="btn-enviar" data-btn-salvar disabled onclick="enviarPedido()">📤 Enviar Pedido</button>
+    <button class="btn-enviar" id="btn-saldo-inicial" data-btn-salvar disabled onclick="salvarSaldoInicialSetorMob()" style="display:none;background:#6c757d">💾 Saldo Inicial</button>
+    <button class="btn-enviar" id="btn-salvar-saldo" data-btn-salvar disabled onclick="salvarSaldoContagem()" style="display:none;background:#198754">💾 Salvar Saldo</button>
     <button class="btn-emerg" onclick="abrirEmergencia()">🚨</button>
   </div>
 
@@ -859,6 +861,70 @@ async function _conferirContagemFora(itens, setor, local) {
   }
 }
 
+// A UNIDADE ERRADA CONTAMINA A NOITE INTEIRA, NAO UMA CONTAGEM.
+// Noite de 29/08/2026: o Dermival contou BAR/DESTILADOS no Centro as 22:19 e as
+// 22:37 tocou a pilula do Delivery P10 — os 9 grupos seguintes foram todos para
+// o P10. Em 25/07 foi o Kevin: 10 grupos seguidos no P10 e o BAR do Centro ficou
+// sem NENHUMA contagem naquela noite. Os dois estavam no Centro o tempo todo.
+// Nao houve estrago no saldo (o saldo grava com local = setor, sem unidade, entao
+// o numero caiu na linha certa por sorte) — quebrou o historico: o setor aparece
+// como "nao contou" e some dos relatorios.
+//
+// O erro e POR NOITE, nao por contagem: a pilula ficava escolhida e tudo depois
+// herdava. O confirm() que ja existia nao pega, porque a pergunta so aparece na
+// hora de trocar — dali em diante ninguem mais ve nada. Tres travas, e NENHUMA
+// delas pode barrar uma contagem do Centro:
+//   1) a pilula volta para o Centro depois de cada gravacao (_voltarAoCentro) —
+//      o engano custa um grupo, nao a noite inteira;
+//   2) fora do Centro a tela grita: faixa vermelha no topo e o botao passa a
+//      dizer para onde vai (_pintarAvisoUnidade);
+//   3) esta funcao barra a gravacao fora do Centro quando a MESMA pessoa ja
+//      gravou no Centro hoje. Centro e P10 sao predios diferentes: ninguem conta
+//      nos dois na mesma noite. Quem esta de verdade no P10 nunca contou o
+//      Centro antes, entao nunca e barrado.
+async function _conferirUnidadeDaNoite(resp, local, data) {
+  if (!local || local === 'Centro') return true;        // Centro nunca e barrado
+  try {
+    const { data: hoje } = await sb.from('est_inventarios')
+      .select('local,setor,criado_em').eq('data', data).eq('responsavel', resp)
+      .order('criado_em', { ascending: false }).limit(50);
+    const noCentro = (hoje || []).filter(r => r.local === 'Centro');
+    if (!noCentro.length) return true;
+    const h = new Date(noCentro[0].criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    alert(
+      `Esta contagem está indo para ${local}.\n\n` +
+      `Mas você já contou ${noCentro[0].setor} no Centro hoje, às ${h}.\n` +
+      `Centro e ${local} são lugares diferentes — não dá para contar os dois na mesma noite.\n\n` +
+      `Toque em "Centro" no topo da tela e salve de novo.`
+    );
+    return false;
+  } catch (e) {
+    console.error('_conferirUnidadeDaNoite falhou (contagem segue):', e);
+    return true;                                        // a trava nunca pode impedir de contar
+  }
+}
+
+// Depois de gravar, a unidade volta sozinha para o Centro. E a trava 1: quem
+// escolheu errado perde um grupo, nao a noite.
+function _voltarAoCentro() {
+  if (_local !== 'Centro') selecionarLocal('Centro');
+}
+
+// Trava 2: fora do Centro a tela para de parecer normal.
+function _pintarAvisoUnidade() {
+  const fora = _local !== 'Centro';
+  const faixa = document.getElementById('aviso-unidade');
+  if (faixa) {
+    faixa.style.display = fora ? 'block' : 'none';
+    faixa.textContent = fora ? `ATENÇÃO: contando para ${_local} — não é o Centro` : '';
+  }
+  document.querySelectorAll('[data-btn-salvar]').forEach(b => {
+    if (!b.dataset.rotuloBase) b.dataset.rotuloBase = b.textContent;
+    b.textContent = fora ? `${b.dataset.rotuloBase} no ${_local}` : b.dataset.rotuloBase;
+    b.style.background = fora ? '#dc2626' : '';
+  });
+}
+
 async function registrarContagem(rows, opts) {
   const o = opts || {};
   // Mesmo produto duas vezes na mesma contagem: fica com o MAIOR, nunca deixa
@@ -1030,6 +1096,7 @@ function selecionarLocal(l) {
   document.querySelectorAll('.local-pills .pill').forEach(el => {
     el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
   });
+  _pintarAvisoUnidade();
 }
 
 function _aplicarEstruturaLocalMob(local) {
@@ -1280,6 +1347,7 @@ async function salvarSaldoContagem() {
   }));
 
   if (!await _conferirContagemFora(itensCont, 'ESTOQUE DA LOJA', _local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
+  if (!await _conferirUnidadeDaNoite(resp, _local, data)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
 
   if (!await _garantirSessao()) { btn.disabled = false; btn.textContent = '💾 Salvar Saldo'; return; }
 
@@ -1443,6 +1511,7 @@ async function salvarSaldoInicialSetorMob() {
     estoque: parseFloat(document.getElementById(`est-${i}`)?.value) || 0,
   }));
 
+  if (!await _conferirUnidadeDaNoite(resp, _local, data)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
   if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
 
   const num_inv   = await _proximoNumInv();
@@ -1462,6 +1531,7 @@ async function salvarSaldoInicialSetorMob() {
   }
 
   toast(`${num_inv} — saldo inicial de ${_setor} salvo! ✅`, 'ok');
+  _voltarAoCentro();
   if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
 }
 
@@ -1619,6 +1689,7 @@ async function _enviarPedido() {
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
   if (!await _conferirContagemFora(itensCont, _setor, _local)) return;
+  if (!await _conferirUnidadeDaNoite(resp, _local, data)) return;
 
   // Salvar contagem — antes da primeira gravação, conferir se o login ainda vale
   if (!await _garantirSessao()) return;
@@ -1662,6 +1733,7 @@ async function _enviarPedido() {
 }
 
 function limparCampos() {
+  _voltarAoCentro();                       // trava 1: a unidade nao atravessa duas gravacoes
   _grupoProds.forEach((_, i) => {
     const el = document.getElementById(`est-${i}`);
     if (el) el.value = '0';
@@ -2104,6 +2176,7 @@ async function _enviarEmergencia() {
   if (!itens.length) { toast('Adicione ao menos um produto.', 'err'); return; }
 
   const data = hojeLocal();
+  if (!await _conferirUnidadeDaNoite(resp, _local, data)) return;
   const num_pedido = await _proximoNumPedido();
 
   const { data: ped, error: e1 } = await sb.from('pedidos_internos').insert({
@@ -2116,6 +2189,7 @@ async function _enviarEmergencia() {
   await sb.from('pedidos_internos_itens').insert(itens.map(it => ({ ...it, pedido_id: ped.id })));
   fecharModal('modal-emerg');
   toast(`${num_pedido} (emergência) enviado com ${itens.length} item(s)! ✅`, 'ok');
+  _voltarAoCentro();
   return true;
 }
 </script>
