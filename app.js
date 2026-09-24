@@ -9224,6 +9224,26 @@ async function _totalRecebComItem(pedido_num) {
 
 // Núcleo da finalização do Comprador Externo — chamado auto (último item) ou manual (botão Finalizar)
 async function _executarFinalizarCompExt(pedido_num, conta, ref, unidade_id, nf) {
+  // ANTI-DUPLICATA — o pedido já tem lançamento no financeiro? Então a despesa dele
+  // já existe: só amarra a conta nela e sai. (Mesma trava que o celular já tinha em
+  // _executarFinalizarCompExtMob; o desktop estava sem.)
+  //
+  // As duas portas daqui — o auto-finalizar do recebimento e o botão "Finalizar
+  // Pedido" — só olhavam `conta.lancamento_id`. Esse campo fica nulo sempre que quem
+  // criou o lançamento não escreveu de volta em cmp_contas_pagar: o pagamento em
+  // dinheiro feito pelo financeiro, e o próprio recebimento quando o update do
+  // vínculo não passa. Com o campo nulo nada travava, e finalizar de novo criava uma
+  // SEGUNDA despesa do mesmo pedido. Em 24/09/2026 havia 60 contas nesse estado — o
+  // #01439 entre elas, com R$ 1.909,44 prontos para sair em dobro. Conferir por
+  // `numero_pedido` pega todos os casos, porque esse campo sempre existe.
+  const { data: jaLanc } = await sb.from('lancamentos')
+    .select('id').eq('numero_pedido', pedido_num).order('vencimento').limit(1);
+  if (jaLanc?.length) {
+    if (conta?.id) await sb.from('cmp_contas_pagar').update({ lancamento_id: jaLanc[0].id }).eq('id', conta.id);
+    toast(`${pedido_num} já tem despesa no financeiro — vínculo refeito, nada foi duplicado.`, 'ok');
+    return;
+  }
+
   // Total acumulado de todos os recebimentos
   const totalAcumulado = await _totalRecebComItem(pedido_num);
   const acrescimo = parseFloat(_recebItensAbertos?.[0]?.acrescimo) || 0;
