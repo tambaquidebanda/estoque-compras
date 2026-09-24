@@ -176,6 +176,9 @@
         <a href="#" onclick="ir('conferencia-dia',this)">
           <i class="bi bi-clipboard2-pulse"></i> Conferência do Dia
         </a>
+        <a href="#" onclick="ir('venda-contagem',this)">
+          <i class="bi bi-scales"></i> Venda × Contagem
+        </a>
         <a href="#" onclick="ir('saude-fichas',this)">
           <i class="bi bi-heart-pulse"></i> Saúde das Fichas
         </a>
@@ -2950,6 +2953,109 @@
             <strong>unidade de uso</strong> do cadastro; a contagem é o único lugar do sistema que
             não declara unidade, e é por isso que <span class="badge bg-warning text-dark">un?</span>
             existe.
+          </small>
+        </div>
+      </div>
+    </section>
+
+    <!-- VENDA x CONTAGEM — a prova do estoque por insumo, no periodo escolhido.
+         Diferente da Conferencia do Dia, que olha UMA noite por SETOR: aqui loja e
+         setores entram na MESMA conta, e por isso o pedido interno se anula sozinho
+         (e troca de lugar, nao entrada nem saida). Foi o que fez o chopp sair de
+         -530 para -3: o barril fica na loja, e olhar so o bar mostrava um buraco
+         que nao existia. -->
+    <section id="pg-venda-contagem" class="pagina">
+      <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+        <h1 class="mb-0"><i class="bi bi-scales"></i> Venda × Contagem</h1>
+        <span class="text-muted small" id="vc-contador"></span>
+      </div>
+      <p class="text-muted small mb-3" style="max-width:86ch">
+        Tinha tanto, recebeu tanto, vendeu tanto — então <strong>deveria ter</strong> tanto.
+        Ao lado, o que a contagem achou. O saldo soma o <strong>estoque da loja e todos os
+        setores</strong> que contam o insumo, então o pedido interno não entra na conta:
+        ele só muda a mercadoria de lugar dentro do mesmo total.
+      </p>
+
+      <div id="vc-aviso"></div>
+      <div class="d-flex flex-wrap gap-2 mb-3" id="vc-kpis"></div>
+
+      <div class="d-flex align-items-end flex-wrap gap-2 mb-3">
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-unidade">Unidade</label>
+          <select class="form-select form-select-sm" id="vc-unidade" onchange="carregarVendaContagem()" style="width:150px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-ini">De</label>
+          <input type="date" class="form-control form-control-sm" id="vc-ini" onchange="carregarVendaContagem()" style="width:150px">
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-fim">Até</label>
+          <input type="date" class="form-control form-control-sm" id="vc-fim" onchange="carregarVendaContagem()" style="width:150px">
+        </div>
+        <div class="btn-group btn-group-sm mb-1" role="group" aria-label="Atalhos de período">
+          <button type="button" class="btn btn-outline-secondary" onclick="vcPeriodo(5)">5 noites</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="vcPeriodo(7)">7 dias</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="vcPeriodo(15)">15 dias</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="vcPeriodo(30)">30 dias</button>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-setor">Onde é contado</label>
+          <select class="form-select form-select-sm" id="vc-setor" onchange="_pintarVendaContagem()" style="width:180px"></select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-universo">O que mostrar</label>
+          <select class="form-select form-select-sm" id="vc-universo" onchange="_pintarVendaContagem()" style="width:220px"
+                  title="Material de consumo (papel, embalagem, limpeza) nao tem ficha que o desconte: a conta pela venda nao se aplica a ele.">
+            <option value="ficha" selected>O que a venda explica</option>
+            <option value="mc">Material de consumo</option>
+            <option value="">Tudo junto</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label small text-muted mb-1" for="vc-sit">Situação</label>
+          <select class="form-select form-select-sm" id="vc-sit" onchange="_pintarVendaContagem()" style="width:210px">
+            <option value="erro" selected>Só o que não bate</option>
+            <option value="">Tudo</option>
+            <option value="faltou">Faltou no estoque</option>
+            <option value="sobrou">Sobrou no estoque</option>
+            <option value="varia">Ora falta, ora sobra</option>
+            <option value="nao_baixou">O robô não baixou</option>
+            <option value="receb">Recebeu mercadoria</option>
+            <option value="bate">Bate</option>
+          </select>
+        </div>
+        <div class="flex-grow-1"></div>
+        <input type="search" class="form-control form-control-sm" id="vc-busca" placeholder="Buscar insumo..." oninput="_pintarVendaContagem()" style="width:190px">
+        <button class="btn btn-sm btn-outline-success" onclick="exportarVendaContagem()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+      </div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width:230px">Insumo</th>
+                <th class="text-end" title="Soma da ultima contagem de cada lugar antes do periodo">Tinha</th>
+                <th class="text-end" title="Mercadoria que chegou de fornecedor no periodo">Recebeu</th>
+                <th class="text-end" title="Ajuste manual e pedido interno que nao fechou dentro do periodo">Outros</th>
+                <th class="text-end" title="Tinha + recebeu + outros">Disponível</th>
+                <th class="text-end" title="O que a ficha tecnica baixou pelos pratos vendidos">A venda diz</th>
+                <th class="text-end" title="Disponivel menos a venda">Deveria ter</th>
+                <th class="text-end" title="Soma da ultima contagem de cada lugar dentro do periodo">Contou</th>
+                <th class="text-end" title="Contou menos deveria ter. Negativo = faltou">Diferença</th>
+                <th style="min-width:210px">O que parece ser</th>
+              </tr>
+            </thead>
+            <tbody id="lst-vc"></tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 border-top bg-light">
+          <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            Clique no insumo para ver <strong>de onde sai cada número</strong> — lugar por lugar,
+            com a data da contagem que serviu de saldo inicial — e a série <strong>noite a noite</strong>,
+            que é o que separa &ldquo;faltou sempre&rdquo; de &ldquo;ora falta, ora sobra&rdquo;.
+            <strong>Bate</strong> = diferença de até 1 unidade. Tudo na <strong>unidade de uso</strong> do cadastro.
           </small>
         </div>
       </div>

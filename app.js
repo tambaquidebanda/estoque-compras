@@ -214,7 +214,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-config')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-config')?.classList.add('aberto');
   }
-  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'pedido-sombra', 'conferencia-dia', 'saude-fichas'].includes(nome)) {
+  if (['custo-produto', 'rel-fornecedor', 'rel-divergencia', 'curva-abc', 'comp-preco', 'lead-time', 'sem-giro', 'acuracidade', 'paralelo', 'pedido-sombra', 'conferencia-dia', 'venda-contagem', 'saude-fichas'].includes(nome)) {
     document.getElementById('nav-grupo-relatorios')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-relatorios')?.classList.add('aberto');
   }
@@ -247,6 +247,7 @@ function ir(nome, el) {
   if (nome === 'paralelo')        carregarParalelo();
   if (nome === 'pedido-sombra')   carregarPedidoSombra();
   if (nome === 'conferencia-dia') carregarConferenciaDia();
+  if (nome === 'venda-contagem')  carregarVendaContagem();
   if (nome === 'saude-fichas')    carregarSaudeFichas();
 }
 
@@ -14395,4 +14396,454 @@ function _pintarPdvMap() {
       <td><input type="number" step="0.01" min="0" value="${r.fator ?? 1}" class="form-control form-control-sm" style="width:74px" onchange="setPdvFator('${r.id}',this.value)"></td>
     </tr>`;
   }).join('');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// VENDA x CONTAGEM — a prova do estoque por insumo, no periodo escolhido
+//
+// A conta e a do estoque, nao a do consumo:
+//   tinha + recebeu + outros = disponivel
+//   disponivel - venda       = deveria ter
+//   contou - deveria ter     = diferenca      (negativo = faltou)
+//
+// A diferenca para a Conferencia do Dia, que olha UMA noite por SETOR: aqui o
+// saldo soma o ESTOQUE DA LOJA e todos os setores que contam o insumo. Com os
+// dois lados na mesma conta o pedido interno se anula sozinho, porque e troca
+// de lugar dentro do mesmo total. Foi isso que tirou o chopp de -530 para -3:
+// o barril mora na loja, e olhar so o bar mostrava um buraco que nao existia.
+//
+// E por isso tambem que a comparacao e POR INSUMO e nao por (insumo, setor): o
+// robo lanca a venda num setor so (setor_por_insumo), mas o mesmo insumo e
+// contado em varios. O limao e contado no bar, na cozinha e na churrasqueira e
+// a venda dele cai toda na cozinha — a linha do bar aparecia com venda zero.
+// Em 18-22/09/2026 isso afetava 14 insumos.
+// ══════════════════════════════════════════════════════════════════════════
+let _vcLinhas = [], _vcAberto = null, _vcPeriodoTxt = '';
+
+function vcPeriodo(dias) {
+  const fim = _parSomaDias(hojeLocal(), -1);          // ontem: hoje ainda nao foi contado
+  document.getElementById('vc-fim').value = fim;
+  document.getElementById('vc-ini').value = _parSomaDias(fim, -(dias - 1));
+  carregarVendaContagem();
+}
+
+async function carregarVendaContagem() {
+  const tb = document.getElementById('lst-vc');
+  if (!tb) return;
+  const elIni = document.getElementById('vc-ini'), elFim = document.getElementById('vc-fim');
+  if (!elFim.value) elFim.value = _parSomaDias(hojeLocal(), -1);
+  if (!elIni.value) elIni.value = _parSomaDias(elFim.value, -4);
+  let ini = elIni.value, fim = elFim.value;
+  if (ini > fim) { [ini, fim] = [fim, ini]; elIni.value = ini; elFim.value = fim; }
+  _vcPeriodoTxt = `${_dataBR(ini)} a ${_dataBR(fim)}`;
+  tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Carregando…</td></tr>';
+  document.getElementById('vc-aviso').innerHTML = '';
+
+  // 21 dias de folga antes do periodo para achar a contagem ANTERIOR de item que
+  // e contado com pouca frequencia — o ESTOQUE DA LOJA nao conta toda noite.
+  const dIni = _parSomaDias(ini, -21);
+
+  await carregarProdutosFT();
+
+  // um dia a mais de cada lado: quem decide a noite e o criado_em, nao o campo
+  // `data` — ver o erro do fuso em project_data_contagem_utc.
+  const invs = (await _fetchAllPaged('est_inventarios', 'id,setor,data,criado_em,local',
+    q => q.gte('data', _parSomaDias(dIni, -1)).lte('data', _parSomaDias(fim, 1))))
+    .map(i => ({ ...i, dia: i.criado_em ? _parDiaManaus(i.criado_em) : i.data }))
+    .filter(i => i.dia >= dIni && i.dia <= fim);
+
+  const unidades = [...new Set(invs.map(i => i.local).filter(Boolean))].sort();
+  const selU = document.getElementById('vc-unidade');
+  const unAtual = selU.value || (unidades.includes('Centro') ? 'Centro' : unidades[0] || '');
+  selU.innerHTML = unidades.map(u => `<option${u === unAtual ? ' selected' : ''}>${esc(u)}</option>`).join('')
+                || '<option value="">—</option>';
+  const unidade = selU.value || unAtual;
+
+  const doGrupo = invs.filter(i => i.local === unidade);
+  if (!doGrupo.length) {
+    _vcLinhas = []; _pintarVendaContagem();
+    tb.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Nenhuma contagem de ${esc(unidade)} entre ${_dataBR(ini)} e ${_dataBR(fim)}.</td></tr>`;
+    return;
+  }
+
+  const cab = Object.fromEntries(doGrupo.map(i => [i.id, i]));
+  const itens = await _fetchAllPaged('est_inventario_itens', 'inventario_id,produto_id,total',
+    q => q.in('inventario_id', Object.keys(cab)));
+
+  // Ultima contagem de cada (setor, produto, dia). Recontagem do mesmo dia vence;
+  // produto repetido dentro da MESMA contagem fica com o MAIOR, igual ao
+  // registrarContagem() — sem isso a linha em branco mandava ler 0.
+  const cont = {}, quando = {};
+  itens.forEach(x => {
+    if (!x.produto_id) return;
+    const h = cab[x.inventario_id]; if (!h) return;
+    const k = `${h.setor}|${x.produto_id}|${h.dia}`;
+    const v = Number(x.total) || 0;
+    if (!(k in quando) || h.criado_em > quando[k]) { quando[k] = h.criado_em; cont[k] = v; }
+    else if (h.criado_em === quando[k]) { cont[k] = Math.max(cont[k], v); }
+  });
+
+  // ancora e fechamento de cada (setor, produto): a ultima contagem ANTES do
+  // periodo e a ultima DENTRO dele. Sem as duas o insumo nao entra — medir com
+  // uma ponta so daria diferenca inventada.
+  const lugares = {};   // produto_id -> { setor -> {de,ate,t0,t1,tinha,contou} }
+  Object.keys(cont).forEach(k => {
+    const [setor, pid, d] = k.split('|');
+    const L = (lugares[pid] ||= {});
+    const p = (L[setor] ||= { de: null, ate: null, t0: 0, t1: 0, tinha: 0, contou: 0 });
+    if (d < ini) { if (!p.de || d > p.de) { p.de = d; p.tinha = cont[k]; p.t0 = Date.parse(quando[k]); } }
+    else if (d <= fim) { if (!p.ate || d > p.ate) { p.ate = d; p.contou = cont[k]; p.t1 = Date.parse(quando[k]); } }
+  });
+
+  // Movimentos. Entradas vao pelo HORARIO da contagem, nao pelo dia: a emergencia
+  // recebida as 23:58, depois da contagem das 22h, pertence a janela seguinte.
+  const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo,quantidade,criado_em',
+    q => q.gte('data', dIni).lte('data', _parSomaDias(fim, 1)));
+  const porLocal = {}, venda = {}, vistos = new Set();
+  movs.forEach(m => {
+    if (!m.produto_id) return;
+    if (m.tipo === 'venda_pensera') {
+      (venda[m.produto_id] ||= []).push({ d: m.data, q: Math.abs(Number(m.quantidade) || 0) });
+      return;
+    }
+    if (!['recebimento', 'devolucao', 'ajuste', 'pedido_interno_entrada', 'pedido_interno_saida'].includes(m.tipo)) return;
+    // COPIAS: ate 10/09/2026 o mesmo pedido interno entrava ate 6x no mesmo minuto.
+    if (m.tipo === 'pedido_interno_entrada') {
+      const c = `${m.local}|${m.produto_id}|${m.quantidade}|${String(m.criado_em).slice(0, 16)}`;
+      if (vistos.has(c)) return;
+      vistos.add(c);
+    }
+    (porLocal[`${m.local}|${m.produto_id}`] ||= []).push(
+      { t: Date.parse(m.criado_em), tipo: m.tipo, q: Number(m.quantidade) || 0 });
+  });
+
+  // O nome do local no razao nao e o mesmo da tela de contagem.
+  const localDoSetor = s => (s === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : s);
+
+  // universo: quem esta em ficha (a venda pode explicar) e quem esta no PDV
+  const ings = await _fetchAllPaged('est_ficha_ingredientes', 'ficha_id,ingrediente_id');
+  const fichas = await _fetchAllPaged('est_fichas_tecnicas', 'id,produto_id');
+  const mapa = await _fetchAllPaged('pdv_map', 'produto_id');
+  const emFicha = new Set(ings.map(i => i.ingrediente_id).filter(Boolean));
+  const noPdv = new Set(mapa.map(m => m.produto_id).filter(Boolean));
+  const prodDaFicha = Object.fromEntries(fichas.map(f => [f.id, f.produto_id]));
+  const paisDe = {}, filhosDe = {};
+  ings.forEach(i => {
+    const pai = prodDaFicha[i.ficha_id];
+    if (!pai || !i.ingrediente_id) return;
+    (paisDe[i.ingrediente_id] ||= new Set()).add(pai);
+    (filhosDe[pai] ||= new Set()).add(i.ingrediente_id);
+  });
+  const comVenda = new Set(Object.keys(venda));
+  // Achar o prato que vendeu e nao levou este insumo junto: e a diferenca entre
+  // "nao vendeu" e "o robo pulou". Sobe no maximo 4 niveis de preparo.
+  const pratoQueVendeu = (pid, nivel = 0, visto = new Set()) => {
+    if (nivel > 4 || visto.has(pid)) return null;
+    visto.add(pid);
+    for (const pai of (paisDe[pid] || [])) {
+      if (comVenda.has(pai)) return pai;
+      for (const irmao of (filhosDe[pai] || [])) if (irmao !== pid && comVenda.has(irmao)) return pai;
+      const r = pratoQueVendeu(pai, nivel + 1, visto);
+      if (r) return r;
+    }
+    return null;
+  };
+
+  // desempate de setor: sem ele, insumo contado em mais de um setor nao baixa
+  const { data: cfgDes } = await sb.from('inv_configuracoes')
+    .select('valor').eq('chave', 'baixa_setor_principal').maybeSingle();
+  const temDesempate = new Set(Object.keys(cfgDes?.valor || {}).map(n => norm(n)));
+
+  const porId = new Map(cProdutosFT.map(p => [p.id, p]));
+  const nomeDe = new Map();
+  itens.forEach(x => { if (x.produto_id && !nomeDe.has(x.produto_id)) nomeDe.set(x.produto_id, x.produto_id); });
+
+  _vcLinhas = [];
+  Object.entries(lugares).forEach(([pid, sets]) => {
+    const det = {};
+    let tinha = 0, contou = 0, rec = 0, aju = 0, pi = 0, tMin = null, tMax = null, dDe = null, dAte = null;
+    Object.entries(sets).forEach(([setor, p]) => {
+      if (!p.de || !p.ate) return;                       // sem as duas pontas nao mede
+      const L = localDoSetor(setor);
+      let r = 0, j = 0, e = 0;
+      (porLocal[`${L}|${pid}`] || []).forEach(m => {
+        if (!(m.t > p.t0 && m.t <= p.t1)) return;
+        if (m.tipo === 'recebimento' || m.tipo === 'devolucao') r += m.q;
+        else if (m.tipo === 'ajuste') j += m.q;
+        else e += m.q;                                   // pedido interno, com o sinal do razao
+      });
+      tinha += p.tinha; contou += p.contou; rec += r; aju += j; pi += e;
+      if (tMin === null || p.t0 < tMin) { tMin = p.t0; dDe = p.de; }
+      if (tMax === null || p.t1 > tMax) { tMax = p.t1; dAte = p.ate; }
+      det[setor] = { de: p.de, ate: p.ate, tinha: p.tinha, contou: p.contou, rec: r, aju: j, pi: e };
+    });
+    if (!Object.keys(det).length) return;
+
+    // PEDIDO INTERNO: so conta quando o insumo e contado num lugar SO.
+    //
+    // Contado em dois ou mais lugares (o tipico: estoque da loja + setor), o
+    // pedido interno tem as duas pernas dentro desta mesma conta — sai de um,
+    // entra no outro — e tem que se anular. Ele nao se anula sozinho porque
+    // cada lugar tem a sua propria janela: o estoque da loja nao conta toda
+    // noite, entao uma transferencia pode cair dentro da janela da loja e fora
+    // da janela do bar, que ja abriu com a mercadoria dentro do saldo. Aparecia
+    // como -300 em "Outros" e chegava a jogar o Disponivel para negativo, que e
+    // um estado impossivel.
+    //
+    // Contado num lugar so (banda de tambaqui, que so a churrasqueira conta), a
+    // outra ponta esta fora desta conta — ai o pedido interno e entrada de
+    // verdade e precisa entrar.
+    const soUmLugar = Object.keys(det).length === 1;
+    if (!soUmLugar) { pi = 0; Object.values(det).forEach(d => { d.pi = 0; }); }
+
+    // A venda vai pelo DIA: o robo grava o consumo do dia inteiro de uma vez,
+    // entao o horario dele nao diz nada sobre quando a mercadoria saiu.
+    const v = (venda[pid] || []).reduce((s, x) => s + (x.d > dDe && x.d <= dAte ? x.q : 0), 0);
+    const prod = porId.get(pid) || {};
+    const disp = tinha + rec + aju + pi;
+    const l = {
+      pid, nome: prod.nome || '(sem cadastro)', unid: prod.unidade_uso || prod.unidade_comp || '',
+      places: Object.keys(det).sort(), det, de: dDe, ate: dAte,
+      tinha, rec, aju, pi, outros: aju + pi, disp, venda: v,
+      devia: disp - v, contou, dif: contou - (disp - v),
+      universo: emFicha.has(pid) ? 'ficha' : (prod.tipo === 'MC' ? 'mc' : 'sem-ficha'),
+      dias: _vcSerie(pid, Object.keys(sets), ini, fim, cont, quando, porLocal, venda, localDoSetor),
+    };
+    l.ver = _vcVeredito(l, { emFicha, noPdv, pratoQueVendeu, temDesempate, porId });
+    _vcLinhas.push(l);
+  });
+
+  _vcLinhas.sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif));
+
+  const setores = [...new Set(_vcLinhas.flatMap(l => l.places))].sort();
+  document.getElementById('vc-setor').innerHTML =
+    '<option value="">Todos os lugares</option>' + setores.map(s => `<option>${esc(s)}</option>`).join('');
+
+  _pintarVendaContagem();
+}
+
+// SERIE NOITE A NOITE — so serve para UMA pergunta: a diferenca fica sempre do
+// mesmo lado, ou troca de sinal? Trocar de sinal nao vem de ficha nem de
+// cadastro (esses erram sempre para o mesmo lado); vem do numero digitado na
+// contagem. Por isso o veredito "ora falta, ora sobra" existe separado.
+//
+// Aqui a conta e por NOITE, somando os setores que contaram naquela noite —
+// cada um com a propria contagem anterior como ponto de partida. O estoque da
+// loja fica de fora desta serie: ele nao conta toda noite, e entrar com janela
+// de cinco dias contra setores de um dia so misturaria escalas diferentes.
+function _vcSerie(pid, setores, ini, fim, cont, quando, porLocal, venda, localDoSetor) {
+  const oper = setores.filter(s => s !== 'ESTOQUE DA LOJA');
+  if (!oper.length) return {};
+  // todas as datas contadas de cada setor, para achar a anterior de cada noite
+  const datas = {};
+  oper.forEach(s => {
+    datas[s] = Object.keys(cont)
+      .filter(k => { const [ks, kp] = k.split('|'); return ks === s && kp === pid; })
+      .map(k => k.split('|')[2]).sort();
+  });
+  const noites = [...new Set(oper.flatMap(s => datas[s].filter(d => d >= ini && d <= fim)))].sort();
+  const out = {};
+  noites.forEach(d => {
+    let anc = 0, ent = 0, contouN = 0, dAnt = null, usados = [];
+    oper.forEach(s => {
+      if (!datas[s].includes(d)) return;
+      const ant = datas[s].filter(x => x < d).pop();
+      if (!ant) return;                                  // sem ponto de partida, nao mede
+      const t0 = Date.parse(quando[`${s}|${pid}|${ant}`]);
+      const t1 = Date.parse(quando[`${s}|${pid}|${d}`]);
+      anc += cont[`${s}|${pid}|${ant}`];
+      contouN += cont[`${s}|${pid}|${d}`];
+      (porLocal[`${localDoSetor(s)}|${pid}`] || []).forEach(m => {
+        if (m.t > t0 && m.t <= t1) ent += m.q;           // recebimento, ajuste e pedido interno, com sinal
+      });
+      if (!dAnt || ant < dAnt) dAnt = ant;
+      usados.push(s);
+    });
+    if (!usados.length) return;
+    const v = (venda[pid] || []).reduce((sm, x) => sm + (x.d > dAnt && x.d <= d ? x.q : 0), 0);
+    const devia = anc + ent - v;
+    out[d] = { set: usados.sort(), anc, ent, venda: v, devia, contou: contouN, dif: contouN - devia };
+  });
+  return out;
+}
+
+// TOLERANCIA FIXA DE 1 UNIDADE, nao percentual: em item de giro grande 2% vira
+// quilo e engole erro de verdade; em item pequeno 2% nunca fecha. Com 1 unidade
+// a regua e a mesma para todo mundo.
+const VC_TOL = 1;
+
+function _vcVeredito(l, ctx) {
+  if (Math.abs(l.venda) < 0.001) {
+    if (!ctx.emFicha.has(l.pid) && !ctx.noPdv.has(l.pid)) {
+      l.pq = 'Não está em ficha nenhuma nem tem produto mapeado no PDV — a venda nunca vai explicar este insumo.';
+      return 'nao_enxerga';
+    }
+    const pai = ctx.pratoQueVendeu(l.pid);
+    if (pai) {
+      const n = ctx.porId.get(pai)?.nome || 'o prato';
+      l.pq = `O prato "${n}" vendeu neste período e este insumo não foi baixado. É conserto de cadastro, não de estoque.`;
+      return 'nao_baixou';
+    }
+    if (l.places.length > 1 && !ctx.temDesempate.has(norm(l.nome))) {
+      l.pq = `Contado em ${l.places.length} lugares e sem desempate: o robô não sabe de qual setor tirar, então não tira de nenhum. Falta a linha dele em baixa_setor_principal.`;
+      return 'nao_baixou';
+    }
+    l.pq = 'Nenhum prato com este insumo saiu neste período.';
+    return 'nao_vendeu';
+  }
+  l.pq = '';
+  if (Math.abs(l.dif) <= VC_TOL) return 'bate';
+  // Troca de sinal entre as noites = o numero digitado na contagem e que varia.
+  const fora = Object.values(l.dias || {}).map(d => d.dif).filter(d => Math.abs(d) > VC_TOL);
+  if (fora.length > 1 && fora.some(d => d > 0) && fora.some(d => d < 0)) return 'varia';
+  return l.dif < 0 ? 'faltou' : 'sobrou';
+}
+
+const VC_VER = {
+  faltou:      ['Faltou no estoque',    'bg-warning text-dark'],
+  sobrou:      ['Sobrou no estoque',    'bg-info text-dark'],
+  varia:       ['Ora falta, ora sobra', 'bg-secondary'],
+  bate:        ['Bate',                 'bg-success'],
+  nao_baixou:  ['O robô não baixou',    'bg-danger'],
+  nao_enxerga: ['A venda não enxerga',  'bg-light text-muted border'],
+  nao_vendeu:  ['Não vendeu no período','bg-light text-muted border'],
+};
+
+function _vcN(v) {
+  const n = Number(v) || 0;
+  return (Math.abs(n) >= 100 || Number.isInteger(n))
+    ? n.toLocaleString('pt-BR')
+    : n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+}
+function _vcSin(v) { return (v > 0 ? '+' : '') + _vcN(v); }
+
+function _vcFiltradas() {
+  const s  = document.getElementById('vc-setor')?.value || '';
+  const u  = document.getElementById('vc-universo')?.value ?? 'ficha';
+  const st = document.getElementById('vc-sit')?.value ?? '';
+  const q  = (document.getElementById('vc-busca')?.value || '').trim().toLowerCase();
+  return _vcLinhas.filter(l =>
+    (!s || l.places.includes(s)) &&
+    (!u || l.universo === u) &&
+    (!q || l.nome.toLowerCase().includes(q)) &&
+    (!st ? true
+         : st === 'erro'  ? ['faltou', 'sobrou', 'varia', 'nao_baixou'].includes(l.ver)
+         : st === 'receb' ? Math.abs(l.rec) > 0.005
+         : l.ver === st));
+}
+
+function _pintarVendaContagem() {
+  const tb = document.getElementById('lst-vc');
+  if (!tb) return;
+  const universo = document.getElementById('vc-universo')?.value ?? 'ficha';
+  const base = _vcLinhas.filter(l => !universo || l.universo === universo);
+  const n = v => base.filter(l => l.ver === v).length;
+  document.getElementById('vc-kpis').innerHTML = [
+    ['Insumos medidos', base.length, 'secondary'],
+    ['Batem', n('bate'), 'success'],
+    ['Faltou', n('faltou'), 'warning'],
+    ['Sobrou', n('sobrou'), 'info'],
+    ['Robô não baixou', n('nao_baixou'), 'danger'],
+    ['Venda não enxerga', n('nao_enxerga') + n('nao_vendeu'), 'light'],
+  ].map(([k, v, c]) => `<div class="border rounded px-3 py-2 bg-${c === 'light' ? 'white' : c + '-subtle'}">
+      <div class="text-muted" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.05em">${k}</div>
+      <div class="fw-bold" style="font-size:1.35rem;line-height:1.1">${v}</div></div>`).join('');
+
+  const linhas = _vcFiltradas();
+  document.getElementById('vc-contador').textContent =
+    `${linhas.length} de ${base.length} insumos · ${_vcPeriodoTxt}`;
+
+  if (!linhas.length) {
+    tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Nenhum insumo com esses filtros.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = linhas.map(l => {
+    const [txt, cls] = VC_VER[l.ver] || ['—', 'bg-light text-muted'];
+    const cor = Math.abs(l.dif) <= VC_TOL ? '' : (l.dif < 0 ? 'text-warning-emphasis fw-bold' : 'text-info-emphasis fw-bold');
+    const ab = _vcAberto === l.pid;
+    return `<tr class="${ab ? 'table-active' : ''}" style="cursor:pointer" onclick="_vcAbrir('${l.pid}')">
+        <td><i class="bi bi-chevron-${ab ? 'down' : 'right'} text-muted small me-1"></i>
+          <strong>${esc(l.nome)}</strong>
+          <div class="text-muted" style="font-size:.78rem">${esc(l.places.join(' · '))}${l.unid ? ' · ' + esc(l.unid) : ''}</div></td>
+        <td class="text-end text-muted">${_vcN(l.tinha)}</td>
+        <td class="text-end text-muted">${_vcN(l.rec)}</td>
+        <td class="text-end text-muted">${_vcN(l.outros)}</td>
+        <td class="text-end fw-semibold">${_vcN(l.disp)}</td>
+        <td class="text-end">${_vcN(l.venda)}</td>
+        <td class="text-end fw-semibold">${_vcN(l.devia)}</td>
+        <td class="text-end">${_vcN(l.contou)}</td>
+        <td class="text-end ${cor}">${_vcSin(l.dif)}</td>
+        <td><span class="badge ${cls}">${txt}</span></td>
+      </tr>` + (ab ? _vcDetalhe(l) : '');
+  }).join('');
+}
+
+function _vcAbrir(pid) { _vcAberto = (_vcAberto === pid) ? null : pid; _pintarVendaContagem(); }
+
+function _vcDetalhe(l) {
+  const lug = Object.entries(l.det).map(([s, v]) => `<tr>
+      <td>${esc(s)}</td><td class="text-muted small">${_dataBR(v.de)} a ${_dataBR(v.ate)}</td>
+      <td class="text-end">${_vcN(v.tinha)}</td><td class="text-end">${_vcN(v.rec)}</td>
+      <td class="text-end">${_vcN(v.pi)}</td><td class="text-end">${_vcN(v.aju)}</td>
+      <td class="text-end fw-semibold">${_vcN(v.contou)}</td></tr>`).join('');
+  const noites = Object.entries(l.dias || {}).map(([d, v]) => {
+    const cor = Math.abs(v.dif) <= VC_TOL ? '' : (v.dif < 0 ? 'text-warning-emphasis' : 'text-info-emphasis');
+    return `<tr><td>${_dataBR(d)}</td><td class="text-muted small">${esc(v.set.join(' · '))}</td>
+      <td class="text-end">${_vcN(v.anc)}</td><td class="text-end">${_vcN(v.ent)}</td>
+      <td class="text-end">${_vcN(v.venda)}</td><td class="text-end">${_vcN(v.devia)}</td>
+      <td class="text-end fw-semibold">${_vcN(v.contou)}</td>
+      <td class="text-end fw-bold ${cor}">${_vcSin(v.dif)}</td></tr>`;
+  }).join('');
+  return `<tr><td colspan="10" class="bg-light-subtle">
+      ${l.pq ? `<div class="alert alert-warning py-2 px-3 small mb-3">${esc(l.pq)}</div>` : ''}
+      <div class="text-muted mb-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">De onde sai cada número</div>
+      <div class="table-responsive"><table class="table table-sm mb-0" style="font-size:.86rem">
+        <thead><tr><th>Onde</th><th>Da contagem de … até</th><th class="text-end">Tinha</th>
+          <th class="text-end">Recebeu</th><th class="text-end">Pedido interno</th>
+          <th class="text-end">Ajuste</th><th class="text-end">Contou</th></tr></thead>
+        <tbody>${lug}
+          <tr class="fw-bold border-top"><td>Total</td><td></td><td class="text-end">${_vcN(l.tinha)}</td>
+            <td class="text-end">${_vcN(l.rec)}</td><td class="text-end">${_vcN(l.pi)}</td>
+            <td class="text-end">${_vcN(l.aju)}</td><td class="text-end">${_vcN(l.contou)}</td></tr>
+        </tbody></table></div>
+      <div class="text-muted mt-2" style="font-size:.8rem">
+        Disponível ${_vcN(l.disp)} − venda ${_vcN(l.venda)} = deveria ter ${_vcN(l.devia)};
+        a contagem achou ${_vcN(l.contou)}.
+        ${l.places.length > 1 ? 'O pedido interno não entra nesta conta: como o estoque da loja e o setor estão os dois aqui dentro, ele só muda a mercadoria de lugar.' : 'Este insumo é contado num lugar só, então o pedido interno entra como entrada de verdade.'}
+      </div>
+      ${noites ? `<div class="text-muted mt-3 mb-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Noite a noite, nos setores</div>
+      <div class="table-responsive"><table class="table table-sm mb-0" style="font-size:.86rem">
+        <thead><tr><th>Noite</th><th>Setores que contaram</th><th class="text-end">Tinha</th>
+          <th class="text-end">Entrou</th><th class="text-end">Vendeu</th>
+          <th class="text-end">Deveria ter</th><th class="text-end">Contou</th>
+          <th class="text-end">Diferença</th></tr></thead><tbody>${noites}</tbody></table></div>` : ''}
+      </td></tr>`;
+}
+
+function exportarVendaContagem() {
+  const linhas = _vcFiltradas();
+  if (!linhas.length) { toast('Nada para exportar com esses filtros.', 'erro'); return; }
+  const cab = ['Insumo', 'Unid. uso', 'Onde é contado', 'Tinha', 'Recebeu', 'Outros',
+               'Disponível', 'A venda diz', 'Deveria ter', 'Contou', 'Diferença', 'O que parece ser', 'Observação'];
+  const dados = linhas.map(l => [
+    l.nome, l.unid, l.places.join(' · '),
+    l.tinha, l.rec, l.outros, l.disp, l.venda, l.devia, l.contou, l.dif,
+    (VC_VER[l.ver] || ['—'])[0], l.pq || '',
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`Venda x Contagem — ${_vcPeriodoTxt} — ${document.getElementById('vc-unidade')?.value || ''}`],
+    [], cab, ...dados,
+  ]);
+  ws['!cols'] = [{ wch: 34 }, { wch: 10 }, { wch: 26 }, ...Array(8).fill({ wch: 12 }), { wch: 22 }, { wch: 60 }];
+  for (let r = 3; r < 3 + dados.length; r++) {
+    for (let c = 3; c <= 10; c++) {
+      const cel = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cel && typeof cel.v === 'number') cel.z = '#,##0.###';
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Venda x Contagem');
+  XLSX.writeFile(wb, `venda-x-contagem_${document.getElementById('vc-ini').value}_a_${document.getElementById('vc-fim').value}.xlsx`);
 }
