@@ -14185,7 +14185,7 @@ async function carregarVendaContagem() {
 
   // Movimentos. Entradas vao pelo HORARIO da contagem, nao pelo dia: a emergencia
   // recebida as 23:58, depois da contagem das 22h, pertence a janela seguinte.
-  const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo,quantidade,criado_em',
+  const movs = await _fetchAllPaged('est_movimentacoes', 'produto_id,local,data,tipo,quantidade,valor_total,criado_em',
     q => q.gte('data', dIni).lte('data', _parSomaDias(fim, 1)));
   const porLocal = {}, venda = {}, vistos = new Set();
   movs.forEach(m => {
@@ -14324,7 +14324,56 @@ async function carregarVendaContagem() {
     + tipos.map(t => `<option value="T:${esc(t)}">${esc(_VC_TIPO[t] || t)} (${conta(l => l.tipo === t)})</option>`).join('');
   selT.value = [...selT.options].some(o => o.value === escolhido) ? escolhido : 'VENDAVEL';
 
+  await _vcAvisarLojaSemContagem(unidade, ini, fim, doGrupo, movs);
   _pintarVendaContagem();
+}
+
+// O RECEBIMENTO ENTRA NO ESTOQUE DA LOJA, E SO CONTA QUANDO A LOJA E CONTADA.
+//
+// Um lugar so entra na medicao quando tem as duas pontas: uma contagem antes do
+// periodo e outra dentro dele. O estoque da loja nao conta toda noite — em
+// setembro de 2026 ele contava de dois em dois dias ou mais. Escolhendo um
+// periodo curto que caia entre duas contagens dele, a loja fica de fora, e como
+// e nela que o recebimento entra, a coluna "Recebeu" zera na tela inteira.
+//
+// A conta continua certa: medir um lugar sem as duas pontas daria diferenca
+// inventada. Errado seria a tela ficar calada. No dia 23/09/2026 entraram
+// R$ 27,8 mil em 19 recebimentos e a tela mostrava zero, porque a loja tinha
+// contado no dia 21 e so voltaria a contar no dia 24.
+async function _vcAvisarLojaSemContagem(unidade, ini, fim, invsDoPeriodo, movs) {
+  const el = document.getElementById('vc-aviso');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const LOJA = 'ESTOQUE DA LOJA';
+  const contouNoPeriodo = invsDoPeriodo.some(i => i.setor === LOJA && i.dia >= ini && i.dia <= fim);
+  if (contouNoPeriodo) return;
+
+  const recs = movs.filter(m => m.tipo === 'recebimento' && m.data >= ini && m.data <= fim);
+  if (!recs.length) return;                       // sem mercadoria entrando, nao ha o que avisar
+  const valor = recs.reduce((s, m) => s + (Number(m.valor_total) || 0), 0);
+  const dias  = new Set(recs.map(m => m.data)).size;
+
+  // a ultima contagem da loja antes do periodo e a proxima depois dele: e o
+  // intervalo que o usuario precisa cobrir para o recebimento entrar na conta
+  const [{ data: ant }, { data: dep }] = await Promise.all([
+    sb.from('est_inventarios').select('data').eq('local', unidade).eq('setor', LOJA)
+      .lt('data', ini).order('data', { ascending: false }).limit(1),
+    sb.from('est_inventarios').select('data').eq('local', unidade).eq('setor', LOJA)
+      .gt('data', fim).order('data').limit(1),
+  ]);
+  const dAnt = ant?.[0]?.data, dDep = dep?.[0]?.data;
+
+  el.innerHTML = `<div class="alert alert-warning py-2 px-3 small">
+    <i class="bi bi-exclamation-triangle me-1"></i>
+    <strong>Entrou mercadoria neste período, mas ela não está na conta.</strong>
+    Foram ${recs.length} entrada(s) em ${dias} dia(s), ${brl(valor)} — e o recebimento entra no
+    <strong>Estoque da Loja</strong>, que não foi contado entre ${_dataBR(ini)} e ${_dataBR(fim)}.
+    ${dAnt ? `A última contagem dele é de <strong>${_dataBR(dAnt)}</strong>` : 'Não há contagem dele antes do período'}${dDep ? ` e a seguinte é de <strong>${_dataBR(dDep)}</strong>` : ' e ainda não há uma depois'}.
+    Sem as duas pontas a loja fica de fora da medição, e por isso a coluna <strong>Recebeu</strong>
+    aparece zerada.
+    ${dDep ? `<button class="btn btn-sm btn-outline-dark ms-2 py-0" onclick="document.getElementById('vc-fim').value='${dDep}';carregarVendaContagem()">Estender até ${_dataBR(dDep)}</button>` : ''}
+  </div>`;
 }
 
 // SERIE NOITE A NOITE — so serve para UMA pergunta: a diferenca fica sempre do
