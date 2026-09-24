@@ -4409,6 +4409,48 @@ let _pedReceberId    = null;
 let _pedReceberItens = [];
 let _pedReceberSetor = null;
 
+// ════════════════════════════════════════════════════════════════
+// O LUGAR NO RAZAO
+//
+// est_saldo_local guarda (produto_id, local, saldo) e mais nada: o `local` e o
+// nome do setor em texto, sem unidade nenhuma. est_movimentacoes ate tem uma
+// coluna unidade_id, mas ela esta NULA nos 21.949 movimentos dos ultimos 30 dias
+// — nunca foi preenchida. Resultado: o BAR do Centro e o BAR do Delivery P10 sao
+// a MESMA linha de saldo.
+//
+// O Estoque Central e a Producao nao tem setor: cada um e um lugar so, igual ao
+// ESTOQUE_LOJA ja e hoje. Entao eles entram como irmaos dele no mesmo campo
+// `local`, sem coluna nova e sem migracao. Os nomes CENTRAL e PRODUCAO nao
+// colidem com nenhum setor existente.
+//
+// O P10 e o unico que tem setores com o mesmo nome dos do Centro, e por isso
+// leva prefixo. Efeito colateral desejado: uma contagem etiquetada errado deixa
+// de acertar o saldo do Centro por acidente e passa a deixar um buraco visivel
+// ("o BAR nao contou"). Erro barulhento e melhor que erro silencioso — ver a
+// noite de 29/08/2026 em contagem.html (_conferirUnidadeDaNoite).
+//
+// Toda escrita de saldo passa por aqui. Nao chumbar nome de lugar em lugar nenhum.
+// ════════════════════════════════════════════════════════════════
+const LOCAL_CENTRAL  = 'CENTRAL';
+const LOCAL_PRODUCAO = 'PRODUCAO';
+
+function _localRazao(unidade, setor) {
+  if (unidade === 'Estoque Central') return LOCAL_CENTRAL;
+  if (unidade === 'Produção')        return LOCAL_PRODUCAO;
+  const s = setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
+  if (unidade === 'Delivery P10')    return 'P10_' + s;
+  return s;                                     // Centro: BAR, COZINHA, ESTOQUE_LOJA...
+}
+
+// Rotulo humano de um lugar do razao — usado nas telas de saldo e nos relatorios.
+function _rotuloLocal(l) {
+  if (l === LOCAL_CENTRAL)  return '🏭 Estoque Central';
+  if (l === LOCAL_PRODUCAO) return '🍳 Produção';
+  if (l === 'ESTOQUE_LOJA') return 'Estoque da Loja';
+  if (l && l.startsWith('P10_')) return 'P10 · ' + (_SETOR_LABEL[l.slice(4)] || l.slice(4));
+  return _SETOR_LABEL[l] || l;
+}
+
 async function _movSaldo(produto_id, local, delta) {
   if (!produto_id || !delta) return;
   const { data: cur } = await sb.from('est_saldo_local')
@@ -6124,7 +6166,30 @@ async function abrirModalReceber(pedido_num) {
     </tr>`).join('');
 
   calcTotalReceb();
+  // O lugar volta SEMPRE para a loja ao abrir. Mesma licao da pilula de unidade
+  // na contagem (29/08/2026): escolha lembrada e escolha que ninguem mais confere.
+  const _sel = document.getElementById('receb-local');
+  if (_sel) { _sel.value = 'ESTOQUE_LOJA'; _pintarLocalReceb(); }
   new bootstrap.Modal(document.getElementById('modal-receber')).show();
+}
+
+// Fora da loja a caixa muda de cor e diz para onde vai — ninguem confirma um
+// recebimento de R$ 20 mil no lugar errado sem ver.
+function _pintarLocalReceb() {
+  const v    = document.getElementById('receb-local')?.value || 'ESTOQUE_LOJA';
+  const box  = document.getElementById('receb-local-box');
+  const hint = document.getElementById('receb-local-hint');
+  const naLoja = v === 'ESTOQUE_LOJA';
+  if (box) {
+    box.style.background  = naLoja ? '#f0fdf4' : '#fff7ed';
+    box.style.borderColor = naLoja ? '#bbf7d0' : '#fdba74';
+  }
+  if (hint) {
+    hint.textContent = naLoja
+      ? 'O padrão é a loja.'
+      : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+    hint.className = naLoja ? 'small text-muted' : 'small fw-semibold text-danger';
+  }
 }
 
 function togIncluirReceb(id) {
@@ -6326,11 +6391,17 @@ async function confirmarRecebimento() {
     }
   }
 
+  // ONDE ENTROU. A nota do Estoque Central vem direto para la, entao o recebimento
+  // deixou de ser sempre ESTOQUE_LOJA. Fica GRAVADO na linha porque o estorno
+  // (devolverPedidoAoEstoque) precisa desfazer no mesmo lugar — creditar num e
+  // debitar no outro criaria estoque fantasma nos dois.
+  const localReceb = document.getElementById('receb-local')?.value || 'ESTOQUE_LOJA';
+
   // Salva recebimento cabeçalho
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel,
     fornecedor: ref?.fornecedor_nome || '', comprador: ref?.comprador || '',
-    total_recebido: totalRecebido,
+    total_recebido: totalRecebido, local: localReceb,
     status: temDiverg ? 'parcial' : 'confirmado',
   }]).select().single();
   if (errReceb) { toast('Erro ao salvar recebimento: ' + errReceb.message, 'erro'); return; }
@@ -6436,7 +6507,7 @@ async function confirmarRecebimento() {
     }
   }
 
-  // Aumentar saldo ESTOQUE_LOJA para cada item recebido. Casa por produto_id (vínculo
+  // Aumentar o saldo do lugar que recebeu (localReceb). Casa por produto_id (vínculo
   // por código); só cai no match por nome como fallback para pedidos antigos sem id.
   if (!cProdutosFT.length) await carregarProdutosFT();
   await Promise.all(itensReceb.map(async it => {
@@ -6445,7 +6516,7 @@ async function confirmarRecebimento() {
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) return;
     const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
-    await movimentar({ produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}` });
+    await movimentar({ produto_id: pid, local: localReceb, tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}${localReceb === 'ESTOQUE_LOJA' ? '' : ' · ' + _rotuloLocal(localReceb)}` });
   }));
 
   // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
@@ -7623,7 +7694,7 @@ async function devolverPedidoAoEstoque(pedido_num) {
     sb.from('lancamentos').select('id,valor,status,vencimento').eq('numero_pedido', pedido_num),
     sb.from('lancamentos_rascunho').select('id,valor').eq('pedido_num', pedido_num),
     sb.from('cmp_contas_pagar').select('id,valor,lancamento_id').eq('pedido_num', pedido_num),
-    sb.from('cmp_recebimentos').select('id,total_recebido').eq('pedido_num', pedido_num),
+    sb.from('cmp_recebimentos').select('id,total_recebido,local').eq('pedido_num', pedido_num),
   ]);
   const lancs  = rLanc.data  || [], rascs  = rRasc.data  || [];
   const contas = rConta.data || [], recebs = rReceb.data || [];
@@ -7641,7 +7712,7 @@ async function devolverPedidoAoEstoque(pedido_num) {
   let itensReceb = [];
   if (recebs.length) {
     const { data, error } = await sb.from('cmp_recebimento_itens')
-      .select('id,compra_id,produto,produto_id,qtd_pedida,qtd_recebida,valor_unitario')
+      .select('id,recebimento_id,compra_id,produto,produto_id,qtd_pedida,qtd_recebida,valor_unitario')
       .in('recebimento_id', recebs.map(r => r.id));
     if (error) { toast('Não foi possível ler os itens do recebimento: ' + error.message, 'erro'); return; }
     itensReceb = data || [];
@@ -7716,9 +7787,17 @@ async function devolverPedidoAoEstoque(pedido_num) {
     await sb.from('cmp_compras').update({ quantidade: qtd }).eq('id', compra_id);
   }
 
-  // 6. Estorno do estoque, por ultimo. O recebimento creditou o ESTOQUE_LOJA na
-  // unidade de USO; o estorno desfaz na mesma unidade, com quantidade negativa e o
-  // MESMO tipo, para a soma do razao por tipo fechar em zero.
+  // 6. Estorno do estoque, por ultimo. O recebimento creditou o lugar que recebeu na
+  // unidade de USO; o estorno desfaz no MESMO lugar e na mesma unidade, com quantidade
+  // negativa e o MESMO tipo, para a soma do razao por tipo fechar em zero.
+  //
+  // O lugar sai da linha do recebimento (cmp_recebimentos.local), NUNCA de um padrao:
+  // desde que a nota do Estoque Central passou a ser recebida la, um pedido pode ter
+  // creditado o CENTRAL. Estornar no ESTOQUE_LOJA criaria estoque fantasma dos dois
+  // lados — sobra no central e negativo na loja. Recebimento antigo nao tem a coluna
+  // preenchida com outra coisa: o default do banco e ESTOQUE_LOJA.
+  const localDoReceb = {};
+  recebs.forEach(r => { localDoReceb[r.id] = r.local || 'ESTOQUE_LOJA'; });
   if (!cProdutosFT.length) await carregarProdutosFT();
   for (const it of itensReceb) {
     if (!(it.qtd_recebida > 0)) continue;
@@ -7732,8 +7811,9 @@ async function devolverPedidoAoEstoque(pedido_num) {
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) continue;
     const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
+    const _localEstorno = localDoReceb[it.recebimento_id] || 'ESTOQUE_LOJA';
     await movimentar({
-      produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento',
+      produto_id: pid, local: _localEstorno, tipo: 'recebimento',
       quantidade: -_uso.quantidade, custo_unit: _uso.custo_unit || 0,
       motivo: `Estorno do recebimento ${pedido_num} — pedido devolvido ao estoque`,
       origem: 'estorno_recebimento', ref_tabela: 'cmp_recebimento_itens', ref_id: it.id,
@@ -9792,7 +9872,10 @@ async function carregarSaldo() {
   if (!cProdutosFT.length) await carregarProdutosFT();
   if (!Object.keys(_invMapeamentos).length) await carregarMapeamentosInv();
 
-  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA');
+  // O Estoque Central e a Producao sao lugares do razao, nao setores da loja: nao
+  // saem de INVENTARIO_ESTRUTURA, entram aqui na mao para aparecerem na tela de Saldo.
+  _saldoSetores = [...Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA'),
+                   LOCAL_CENTRAL, LOCAL_PRODUCAO];
   const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
   const grupos    = Object.keys(estrutura);
 
@@ -13141,8 +13224,9 @@ function renderSaldoKpis() {
   cards.push(card('💰 Valor do Estoque', _saldoValorTotal, '#b45309', '#fffbeb', true));
   cards.push(card('🏪 Estoque da Loja', _saldoValorLocal['ESTOQUE_LOJA'] || 0, '#16a34a', '#f0fdf4'));
   _saldoSetores.forEach(s => {
-    const cor = _SETOR_COR[s] || '#6c757d';
-    cards.push(card(`${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}`, _saldoValorLocal[s] || 0, cor));
+    const cor = _SETOR_COR[s] || (s === LOCAL_CENTRAL ? '#7c3aed' : s === LOCAL_PRODUCAO ? '#0891b2' : '#6c757d');
+    const rot = _SETOR_COR[s] ? `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` : _rotuloLocal(s);
+    cards.push(card(rot, _saldoValorLocal[s] || 0, cor));
   });
   el.innerHTML = cards.join('');
 }
@@ -13195,7 +13279,10 @@ async function selecionarGrupoSaldo(grupo) {
   });
 
   // Setores fixos (sempre todos)
-  _saldoSetores = Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA');
+  // O Estoque Central e a Producao sao lugares do razao, nao setores da loja: nao
+  // saem de INVENTARIO_ESTRUTURA, entram aqui na mao para aparecerem na tela de Saldo.
+  _saldoSetores = [...Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA'),
+                   LOCAL_CENTRAL, LOCAL_PRODUCAO];
   const todosLocais = ['ESTOQUE_LOJA', ..._saldoSetores];
 
   // Saldo de todos os locais via est_saldo_local
@@ -13242,7 +13329,7 @@ function renderSaldo() {
       ${_saldoSetores.map(s => {
         const cor = _SETOR_COR[s] || '#6c757d';
         return `<th class="text-center" style="min-width:100px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
-          ${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}<br>
+          ${_SETOR_COR[s] ? `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` : _rotuloLocal(s)}<br>
           <small style="font-weight:400;font-size:.68rem;opacity:.75">últ. contagem</small>
         </th>`;
       }).join('')}
@@ -13437,7 +13524,7 @@ function abrirSalvarInventario() {
   document.getElementById('inv-val-qtd').textContent = nProd + ' com estoque';
   document.getElementById('inv-val-total').textContent = brl(_saldoValorTotal);
   const setores = ['ESTOQUE_LOJA', ..._saldoSetores]
-    .map(l => `${l === 'ESTOQUE_LOJA' ? 'Loja' : (_SETOR_LABEL[l] || l)}: ${brl(_saldoValorLocal[l] || 0)}`)
+    .map(l => `${_rotuloLocal(l)}: ${brl(_saldoValorLocal[l] || 0)}`)
     .join(' · ');
   document.getElementById('inv-val-setores').textContent = setores;
   new bootstrap.Modal(document.getElementById('modal-salvar-inv')).show();
@@ -13534,7 +13621,7 @@ async function verInventarioValorado(id) {
   const vpl = inv.valor_por_local || {};
   const kpisSet = Object.entries(vpl).map(([l, v]) =>
     `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;background:#f0f0f0;border-radius:6px">
-       ${l === 'ESTOQUE_LOJA' ? '🏪 Loja' : (_SETOR_LABEL[l] || l)}: <strong>${brl(v)}</strong></span>`).join('');
+       ${_rotuloLocal(l)}: <strong>${brl(v)}</strong></span>`).join('');
 
   let corpo = '';
   Object.entries(grupos).forEach(([g, arr]) => {
@@ -13603,7 +13690,7 @@ async function exportarInventarioValorado(id) {
   const baseLabel = inv.base_custo === 'media_3m' ? 'Média dos últimos 3 meses' : 'Último preço de compra';
   const vpl = inv.valor_por_local || {};
   const setoresTxt = Object.entries(vpl)
-    .map(([l, v]) => `${l === 'ESTOQUE_LOJA' ? 'Loja' : (_SETOR_LABEL[l] || l)}: ${brl(v)}`)
+    .map(([l, v]) => `${_rotuloLocal(l)}: ${brl(v)}`)
     .join(' · ');
 
   const grupos = {};

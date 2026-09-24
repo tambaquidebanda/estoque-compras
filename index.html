@@ -3651,6 +3651,19 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <!-- ONDE ENTROU: a nota do Estoque Central vem direto para la e e recebida la.
+             O lugar fica gravado no recebimento porque o estorno tem de desfazer no
+             mesmo lugar (ver SQL_RECEBIMENTO_NO_CENTRAL.sql). -->
+        <div class="d-flex align-items-center gap-2 mb-3 p-2 rounded" id="receb-local-box"
+             style="background:#f0fdf4;border:1px solid #bbf7d0">
+          <span class="fw-semibold">📍 Onde a mercadoria entrou:</span>
+          <select class="form-select form-select-sm" id="receb-local" style="max-width:260px"
+                  onchange="_pintarLocalReceb()">
+            <option value="ESTOQUE_LOJA" selected>🏪 Estoque da Loja</option>
+            <option value="CENTRAL">🏭 Estoque Central</option>
+          </select>
+          <span class="small text-muted" id="receb-local-hint">O padrão é a loja.</span>
+        </div>
         <div class="row g-3 mb-3">
           <div class="col-md-2">
             <label class="form-label fw-semibold">📅 Data do Recebimento</label>

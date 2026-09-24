@@ -254,6 +254,18 @@
     <div style="font-size:.78rem;color:var(--txt2);margin-top:.2rem;padding-left:.2rem" id="ped-info"></div>
   </div>
 
+  <!-- ONDE ENTROU: a nota do Estoque Central vem direto para la e e recebida la.
+       Fica gravado em cmp_recebimentos.local porque o estorno desfaz no mesmo lugar. -->
+  <div id="rec-local-box" style="background:#0f2e1c;border-bottom:1px solid #1f6b3f;
+       padding:.7rem 1rem">
+    <label class="campo-lbl" style="margin-bottom:.3rem">📍 Onde a mercadoria entrou *</label>
+    <select id="rec-local" onchange="_pintarLocalRecebMob()" style="width:100%">
+      <option value="ESTOQUE_LOJA" selected>🏪 Estoque da Loja</option>
+      <option value="CENTRAL">🏭 Estoque Central</option>
+    </select>
+    <div id="rec-local-hint" style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">O padrão é a loja.</div>
+  </div>
+
   <div class="campos-bloco">
     <div>
       <label class="campo-lbl">📅 Data Recebimento *</label>
@@ -820,6 +832,11 @@ async function abrirPedido(pedido_num) {
   document.getElementById('rec-data').value      = hoje;
   document.getElementById('rec-venc').value      = '';
   document.getElementById('rec-nf').value        = '';
+  // O lugar volta SEMPRE para a loja ao abrir um pedido. Escolha lembrada e
+  // escolha que ninguem mais confere — foi assim que a unidade errada atravessou
+  // a noite de 29/08 na contagem.
+  const _selLocal = document.getElementById('rec-local');
+  if (_selLocal) { _selLocal.value = 'ESTOQUE_LOJA'; _pintarLocalRecebMob(); }
   setMoeda('rec-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
 
   // Mostra nome do responsável (usuário logado)
@@ -1221,10 +1238,12 @@ async function confirmarRecebimento() {
   }
 
   // 1. Cabeçalho do recebimento
+  const localReceb = document.getElementById('rec-local')?.value || 'ESTOQUE_LOJA';
+
   const { data: receb, error: errReceb } = await sb.from('cmp_recebimentos').insert([{
     pedido_num, data_receb: dataRec, responsavel: resp,
     fornecedor: ref?.fornecedor_nome || '', comprador: ref?.comprador || '',
-    total_recebido: totalRecebido,
+    total_recebido: totalRecebido, local: localReceb,
     status: temDiverg ? 'parcial' : 'confirmado',
   }]).select().single();
 
@@ -1347,7 +1366,7 @@ async function confirmarRecebimento() {
   // Em segundo plano (fire-and-forget) para não atrasar a confirmação; nunca quebra o recebimento.
   _recebimentoAtualizaCustos(itensReceb);
   // Acréscimo de estoque: mercadoria recebida soma no saldo (ESTOQUE_LOJA) — reflete na tela de Saldo.
-  _recebimentoAtualizaSaldo(itensReceb);
+  _recebimentoAtualizaSaldo(itensReceb, localReceb);
 
   toast(`✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}`, 'ok');
   setTimeout(() => {
@@ -1464,7 +1483,28 @@ async function _recebimentoAtualizaCustos(itensReceb) {
 }
 
 // ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por produto_id ──
-async function _recebimentoAtualizaSaldo(itensReceb) {
+// Fora da loja a caixa muda de cor e avisa o que isso significa.
+function _pintarLocalRecebMob() {
+  const v      = document.getElementById('rec-local')?.value || 'ESTOQUE_LOJA';
+  const box    = document.getElementById('rec-local-box');
+  const hint   = document.getElementById('rec-local-hint');
+  const naLoja = v === 'ESTOQUE_LOJA';
+  if (box) {
+    box.style.background        = naLoja ? '#0f2e1c' : '#3a1d09';
+    box.style.borderBottomColor = naLoja ? '#1f6b3f' : '#b45309';
+  }
+  if (hint) {
+    hint.textContent = naLoja
+      ? 'O padrão é a loja.'
+      : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+    hint.style.color = naLoja ? 'var(--txt2)' : '#fbbf24';
+  }
+}
+
+// O lugar vem de fora: a nota do Estoque Central e recebida la e credita o
+// CENTRAL, nao o deposito da loja. Default ESTOQUE_LOJA = o que sempre foi.
+async function _recebimentoAtualizaSaldo(itensReceb, local) {
+  const _local = local || 'ESTOQUE_LOJA';
   try {
     // Fallback por nome só para itens sem produto_id (pedidos antigos). PAGINADO:
     // est_produtos tem >1000 linhas; sem paginar o Supabase corta em 1000 e produtos
@@ -1512,12 +1552,12 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
     });
 
     const { data: saldos } = await sb.from('est_saldo_local')
-      .select('produto_id,saldo').eq('local', 'ESTOQUE_LOJA').in('produto_id', ids);
+      .select('produto_id,saldo').eq('local', _local).in('produto_id', ids);
     const atual = {};
     (saldos || []).forEach(s => { atual[s.produto_id] = Number(s.saldo) || 0; });
 
     const rows = ids.map(pid => ({
-      produto_id: pid, local: 'ESTOQUE_LOJA',
+      produto_id: pid, local: _local,
       saldo: (atual[pid] || 0) + deltaPorId[pid], updated_at: new Date().toISOString()
     }));
     const { error: eUp } = await sb.from('est_saldo_local').upsert(rows, { onConflict: 'produto_id,local' });
@@ -1526,7 +1566,7 @@ async function _recebimentoAtualizaSaldo(itensReceb) {
     // Livro-razão (F3): uma entrada de recebimento por produto — best-effort (nunca derruba)
     try {
       const movs = ids.filter(pid => deltaPorId[pid]).map(pid => {
-        const m = { produto_id: pid, local: 'ESTOQUE_LOJA', tipo: 'recebimento', quantidade: deltaPorId[pid], origem: 'recebimento', motivo: 'Recebimento (mobile)' };
+        const m = { produto_id: pid, local: _local, tipo: 'recebimento', quantidade: deltaPorId[pid], origem: 'recebimento', motivo: _local === 'ESTOQUE_LOJA' ? 'Recebimento (mobile)' : 'Recebimento (mobile) - Estoque Central' };
         if (custoPorId[pid] != null) m.custo_unit = custoPorId[pid];
         return m;
       });
