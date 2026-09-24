@@ -14294,7 +14294,8 @@ async function carregarVendaContagem() {
       places: Object.keys(det).sort(), det, de: dDe, ate: dAte,
       tinha, rec, aju, pi, outros: aju + pi, disp, venda: v,
       devia: disp - v, contou, dif: contou - (disp - v),
-      universo: emFicha.has(pid) ? 'ficha' : (prod.tipo === 'MC' ? 'mc' : 'sem-ficha'),
+      tipo: (prod.tipo || '—').trim().toUpperCase(),
+      emFicha: emFicha.has(pid),
       dias: _vcSerie(pid, Object.keys(sets), ini, fim, cont, quando, porLocal, venda, localDoSetor),
     };
     l.ver = _vcVeredito(l, { emFicha, noPdv, pratoQueVendeu, temDesempate, porId });
@@ -14306,6 +14307,22 @@ async function carregarVendaContagem() {
   const setores = [...new Set(_vcLinhas.flatMap(l => l.places))].sort();
   document.getElementById('vc-setor').innerHTML =
     '<option value="">Todos os lugares</option>' + setores.map(s => `<option>${esc(s)}</option>`).join('');
+
+  // TIPO DE PRODUTO — vem do cadastro (est_produtos.tipo). Os dois primeiros sao
+  // atalhos porque sao a pergunta que se faz todo dia: "so o que sai por venda"
+  // e "so o material de consumo". Depois vem cada tipo, um a um, para quando a
+  // pergunta for outra (so os preparos, so os semi-acabados).
+  const selT = document.getElementById('vc-tipo');
+  const escolhido = selT.value || 'VENDAVEL';
+  const tipos = [...new Set(_vcLinhas.map(l => l.tipo))].sort();
+  const conta = f => _vcLinhas.filter(f).length;
+  selT.innerHTML =
+      `<option value="VENDAVEL">Só o que sai por venda (${conta(l => l.tipo !== 'MC')})</option>`
+    + `<option value="MC">Só material de consumo (${conta(l => l.tipo === 'MC')})</option>`
+    + `<option value="">Todos os tipos (${_vcLinhas.length})</option>`
+    + '<option disabled>──────────</option>'
+    + tipos.map(t => `<option value="T:${esc(t)}">${esc(_VC_TIPO[t] || t)} (${conta(l => l.tipo === t)})</option>`).join('');
+  selT.value = [...selT.options].some(o => o.value === escolhido) ? escolhido : 'VENDAVEL';
 
   _pintarVendaContagem();
 }
@@ -14354,6 +14371,14 @@ function _vcSerie(pid, setores, ini, fim, cont, quando, porLocal, venda, localDo
   });
   return out;
 }
+
+// Os codigos de tipo do cadastro, por extenso. Quem le a tela nao tem que saber
+// o que e PPB nem PPC.
+const _VC_TIPO = {
+  MP: 'MP — matéria-prima', SA: 'SA — semi-acabado', MC: 'MC — material de consumo',
+  PPC: 'PPC — preparo da cozinha', PPB: 'PPB — preparo do bar', PPP: 'PPP — preparo de produção',
+  VENDA: 'VENDA — produto vendido', MU: 'MU — utensílio',
+};
 
 // TOLERANCIA FIXA DE 1 UNIDADE, nao percentual: em item de giro grande 2% vira
 // quilo e engole erro de verdade; em item pequeno 2% nunca fecha. Com 1 unidade
@@ -14405,14 +14430,24 @@ function _vcN(v) {
 }
 function _vcSin(v) { return (v > 0 ? '+' : '') + _vcN(v); }
 
+// A escolha de tipo vira um teste so, usado tanto pela lista quanto pelos KPIs —
+// sem isso o placar contava um universo e a tabela mostrava outro.
+function _vcTesteTipo() {
+  const t = document.getElementById('vc-tipo')?.value ?? 'VENDAVEL';
+  if (t === 'VENDAVEL') return l => l.tipo !== 'MC';
+  if (t === 'MC')       return l => l.tipo === 'MC';
+  if (t.startsWith('T:')) { const alvo = t.slice(2); return l => l.tipo === alvo; }
+  return () => true;
+}
+
 function _vcFiltradas() {
   const s  = document.getElementById('vc-setor')?.value || '';
-  const u  = document.getElementById('vc-universo')?.value ?? 'ficha';
+  const u  = _vcTesteTipo();
   const st = document.getElementById('vc-sit')?.value ?? '';
   const q  = (document.getElementById('vc-busca')?.value || '').trim().toLowerCase();
   return _vcLinhas.filter(l =>
     (!s || l.places.includes(s)) &&
-    (!u || l.universo === u) &&
+    u(l) &&
     (!q || l.nome.toLowerCase().includes(q)) &&
     (!st ? true
          : st === 'erro'  ? ['faltou', 'sobrou', 'varia', 'nao_baixou'].includes(l.ver)
@@ -14423,8 +14458,7 @@ function _vcFiltradas() {
 function _pintarVendaContagem() {
   const tb = document.getElementById('lst-vc');
   if (!tb) return;
-  const universo = document.getElementById('vc-universo')?.value ?? 'ficha';
-  const base = _vcLinhas.filter(l => !universo || l.universo === universo);
+  const base = _vcLinhas.filter(_vcTesteTipo());
   const n = v => base.filter(l => l.ver === v).length;
   document.getElementById('vc-kpis').innerHTML = [
     ['Insumos medidos', base.length, 'secondary'],
@@ -14453,7 +14487,7 @@ function _pintarVendaContagem() {
     return `<tr class="${ab ? 'table-active' : ''}" style="cursor:pointer" onclick="_vcAbrir('${l.pid}')">
         <td><i class="bi bi-chevron-${ab ? 'down' : 'right'} text-muted small me-1"></i>
           <strong>${esc(l.nome)}</strong>
-          <div class="text-muted" style="font-size:.78rem">${esc(l.places.join(' · '))}${l.unid ? ' · ' + esc(l.unid) : ''}</div></td>
+          <div class="text-muted" style="font-size:.78rem">${esc(l.tipo)} · ${esc(l.places.join(' · '))}${l.unid ? ' · ' + esc(l.unid) : ''}</div></td>
         <td class="text-end text-muted">${_vcN(l.tinha)}</td>
         <td class="text-end text-muted">${_vcN(l.rec)}</td>
         <td class="text-end text-muted">${_vcN(l.outros)}</td>
@@ -14512,10 +14546,10 @@ function _vcDetalhe(l) {
 function exportarVendaContagem() {
   const linhas = _vcFiltradas();
   if (!linhas.length) { toast('Nada para exportar com esses filtros.', 'erro'); return; }
-  const cab = ['Insumo', 'Unid. uso', 'Onde é contado', 'Tinha', 'Recebeu', 'Outros',
+  const cab = ['Insumo', 'Tipo', 'Unid. uso', 'Onde é contado', 'Tinha', 'Recebeu', 'Outros',
                'Disponível', 'A venda diz', 'Deveria ter', 'Contou', 'Diferença', 'O que parece ser', 'Observação'];
   const dados = linhas.map(l => [
-    l.nome, l.unid, l.places.join(' · '),
+    l.nome, l.tipo, l.unid, l.places.join(' · '),
     l.tinha, l.rec, l.outros, l.disp, l.venda, l.devia, l.contou, l.dif,
     (VC_VER[l.ver] || ['—'])[0], l.pq || '',
   ]);
@@ -14523,9 +14557,9 @@ function exportarVendaContagem() {
     [`Venda x Contagem — ${_vcPeriodoTxt} — ${document.getElementById('vc-unidade')?.value || ''}`],
     [], cab, ...dados,
   ]);
-  ws['!cols'] = [{ wch: 34 }, { wch: 10 }, { wch: 26 }, ...Array(8).fill({ wch: 12 }), { wch: 22 }, { wch: 60 }];
+  ws['!cols'] = [{ wch: 34 }, { wch: 8 }, { wch: 10 }, { wch: 26 }, ...Array(8).fill({ wch: 12 }), { wch: 22 }, { wch: 60 }];
   for (let r = 3; r < 3 + dados.length; r++) {
-    for (let c = 3; c <= 10; c++) {
+    for (let c = 4; c <= 11; c++) {
       const cel = ws[XLSX.utils.encode_cell({ r, c })];
       if (cel && typeof cel.v === 'number') cel.z = '#,##0.###';
     }

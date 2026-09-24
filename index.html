@@ -2938,13 +2938,9 @@
           <select class="form-select form-select-sm" id="vc-setor" onchange="_pintarVendaContagem()" style="width:180px"></select>
         </div>
         <div>
-          <label class="form-label small text-muted mb-1" for="vc-universo">O que mostrar</label>
-          <select class="form-select form-select-sm" id="vc-universo" onchange="_pintarVendaContagem()" style="width:220px"
-                  title="Material de consumo (papel, embalagem, limpeza) nao tem ficha que o desconte: a conta pela venda nao se aplica a ele.">
-            <option value="ficha" selected>O que a venda explica</option>
-            <option value="mc">Material de consumo</option>
-            <option value="">Tudo junto</option>
-          </select>
+          <label class="form-label small text-muted mb-1" for="vc-tipo">Tipo de produto</label>
+          <select class="form-select form-select-sm" id="vc-tipo" onchange="_pintarVendaContagem()" style="width:230px"
+                  title="O tipo vem do cadastro do produto. Material de consumo (MC) nao sai por prato vendido: nenhuma ficha o desconta, entao a conta pela venda nao se aplica a ele e misturar faz o placar parecer pior do que e."></select>
         </div>
         <div>
           <label class="form-label small text-muted mb-1" for="vc-sit">Situação</label>
