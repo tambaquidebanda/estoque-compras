@@ -1540,42 +1540,34 @@
       </div><!-- /tab-pedidos -->
 
       <!-- ─── Aba Transferências ─── -->
+      <!-- Uma lista só, da unidade escolhida no topo: o que ela pediu, o que tem de
+           enviar e o que está chegando. Ver o bloco TRANSFERÊNCIAS em app.js. -->
       <div class="tab-pane fade" id="tab-transferencias">
-
-        <!-- Solicitar transferência (visible when local != 'Estoque Central') -->
-        <div id="transf-solicitar">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">🔄 Solicitar do Estoque Central</h5>
-            <button class="btn btn-success btn-sm" onclick="abrirNovaTransferencia()">+ Nova Solicitação</button>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+          <div>
+            <h5 class="mb-0">🔄 Transferências — <span id="transf-unidade">Centro</span></h5>
+            <small class="text-muted">Com borda azul: espera uma ação desta unidade (enviar ou confirmar a chegada).</small>
           </div>
-          <div id="transf-lista-solicitacoes">
-            <div class="text-center text-muted py-4">Carregando...</div>
-          </div>
+          <div id="transf-acoes" class="d-flex gap-2 flex-wrap"></div>
         </div>
-
-        <!-- Atender transferências (visible when local == 'Estoque Central') -->
-        <div id="transf-atender" class="d-none">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">📦 Solicitações Recebidas</h5>
-          </div>
-          <div id="transf-lista-atender">
-            <div class="text-center text-muted py-4">Carregando...</div>
-          </div>
+        <div id="transf-lista">
+          <div class="text-center text-muted py-4">Carregando...</div>
         </div>
-
+        <div id="transf-producoes"></div>
       </div><!-- /tab-transferencias -->
 
       </div><!-- /tab-content outer -->
 
-      <!-- Modal: Nova Solicitação de Transferência -->
+      <!-- Modal: Nova Transferência (pedir ao Central / Produção entrega ao Central) -->
       <div class="modal fade" id="modal-nova-transf" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-lg">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title">🔄 Nova Solicitação — Estoque Central</h5>
+              <h5 class="modal-title" id="transf-modal-titulo">🔄 Pedir ao Estoque Central</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+              <p class="small text-muted" id="transf-modal-dica"></p>
               <div class="mb-3">
                 <label class="form-label small fw-bold">Buscar produto</label>
                 <input type="text" class="form-control" id="transf-busca-prod" placeholder="Digite o nome do produto..." oninput="buscarProdutosTransf()">
@@ -1587,7 +1579,39 @@
             </div>
             <div class="modal-footer">
               <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-              <button class="btn btn-success" onclick="enviarSolicitacaoTransf()">📤 Enviar Solicitação</button>
+              <button class="btn btn-success" id="transf-modal-ok" onclick="enviarSolicitacaoTransf()">📤 Enviar pedido</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Registrar produção (Produção, no fim do lote) -->
+      <div class="modal fade" id="modal-producao" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">🍳 Registrar produção</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <p class="small text-muted">No fim do lote: o que foi produzido e quanto. Os insumos saem do saldo da Produção pela ficha técnica, e o produto pronto entra na Produção — vai para o Central pelo botão "Entregar ao Central".</p>
+              <div class="row g-2 mb-3">
+                <div class="col-md-8">
+                  <label class="form-label small fw-bold">Produto</label>
+                  <select class="form-select" id="prod-produto" onchange="previewProducao()"></select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-bold">Quantidade produzida</label>
+                  <input type="number" class="form-control" id="prod-qtd" min="0" step="any" oninput="previewProducao()">
+                  <div class="small text-muted" id="prod-unidade"></div>
+                </div>
+              </div>
+              <div id="prod-preview"></div>
+              <div class="small text-muted mt-2" id="prod-sem-ficha"></div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-warning" id="prod-btn-ok" onclick="registrarProducao()">✅ Registrar produção</button>
             </div>
           </div>
         </div>

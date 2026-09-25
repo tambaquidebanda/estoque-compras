@@ -2883,6 +2883,7 @@ function mudarLocalInv(local) {
   document.querySelectorAll('.inv-local-btn').forEach(b => {
     b.className = 'saldo-grupo-btn inv-local-btn' + (b.dataset.local === local ? ' ativo' : '');
   });
+  if (document.getElementById('tab-transferencias')?.classList.contains('active')) carregarTransferencias();
 }
 
 async function carregarMapeamentosInv() {
@@ -4802,122 +4803,285 @@ async function _confirmarRecebimentoInv() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// TRANSFERÊNCIAS ENTRE UNIDADES
-// Estoque Loja (Centro / Delivery P10) solicita ao Estoque Central
-// Estoque Central aprova e envia → saldo sai do Estoque Central
-// Unidade destino confirma recebimento → saldo entra no ESTOQUE_LOJA
+// TRANSFERÊNCIAS ENTRE UNIDADES — refeito em 25/09/2026
 //
-// criarSolicitacaoTransf() é a API pública: pode ser chamada
-// manualmente (origem='manual') ou pela engine de ficha técnica
-// no futuro (origem='automatico').
+// As quatro pernas, decididas pelo Wagner em 25/09:
+//   Loja do Centro pede ao Central   -> Central envia -> loja confirma (celular ou computador)
+//   Produção pede MP ao Central      -> Central envia -> Produção confirma
+//   Produção registra o que fabricou, no fim do lote (ficha sai, item pronto entra)
+//   Produção entrega o pronto        -> Central confirma
+//
+// Uma transferência é um pedidos_internos com tipo='transferencia':
+//   unidade_origem = de onde sai   ('Estoque Central' | 'Produção')
+//   local          = para onde vai ('Centro' | 'Produção' | 'Estoque Central')
+//   status         = pendente -> liberado (saiu da origem) -> recebido (entrou no destino)
+//   por item: qtd_pedida / qtd_liberada (enviado) / qtd_recebida (chegou)
+// Mesmos status do pedido interno, para os relatórios lerem igual.
+//
+// O código de jun/2026 nunca rodou: gravava qtd_aprovada, coluna que não existe
+// em pedidos_internos_itens (os itens falhariam calados e o pedido nasceria
+// vazio), e tirava e punha no mesmo ESTOQUE_LOJA — somava zero. Nenhuma
+// transferência existia no banco em 25/09.
+//
+// Lugar no razão: _localRazao(unidade, 'ESTOQUE DA LOJA') -> Centro ESTOQUE_LOJA,
+// Central CENTRAL, Produção PRODUCAO. O P10 fica de fora até o prefixo P10_ ser
+// ligado junto com o pedido interno (ver _localDaContagem).
+//
+// Toque duplo: a troca de status só vale se o status ainda for o esperado
+// (.eq('status', ...)). Quem chega depois não acha linha e não mexe no saldo —
+// o buraco que fez 388 cópias no pedido interno (0c01b58).
+//
+// ref_id no razão = id do ITEM, não do pedido: o índice uq_est_mov_ref
+// (ref_tabela, ref_id, local, tipo) barraria o segundo item do mesmo pedido.
 // ════════════════════════════════════════════════════════════════
 
+const _TRANSF_UNIDADES = ['Centro', 'Produção', 'Estoque Central'];
+const _transfLugar = u => _localRazao(u, 'ESTOQUE DA LOJA');
+const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
+  : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central)
+let _transfBusca  = [];
+let _transfEmVoo  = false;
+
+function _transfResp() { return (document.getElementById('inv-resp')?.value || '').trim(); }
+
 async function carregarTransferencias() {
-  const local = _invLocal || 'Centro';
-  const isEC  = local === 'Estoque Central';
-
-  document.getElementById('transf-solicitar')?.classList.toggle('d-none', isEC);
-  document.getElementById('transf-atender')?.classList.toggle('d-none', !isEC);
-
-  if (isEC) {
-    await _carregarTransfAtender();
-  } else {
-    await _carregarTransfSolicitacoes(local);
+  const unidade = _invLocal || 'Centro';
+  const el    = document.getElementById('transf-lista');
+  const acoes = document.getElementById('transf-acoes');
+  const tit   = document.getElementById('transf-unidade');
+  if (tit) tit.textContent = unidade;
+  _renderProducoesRecentes(unidade === 'Produção');
+  if (!_TRANSF_UNIDADES.includes(unidade)) {
+    if (acoes) acoes.innerHTML = '';
+    if (el) el.innerHTML = `<p class="text-muted text-center py-4">A transferência para o ${esc(unidade)} ainda não está ligada.</p>`;
+    return;
   }
-}
-
-async function _carregarTransfSolicitacoes(local) {
-  const el = document.getElementById('transf-lista-solicitacoes');
+  if (acoes) acoes.innerHTML =
+    (unidade !== 'Estoque Central'
+      ? `<button class="btn btn-success btn-sm" onclick="abrirNovaTransferencia('pedir')">+ Pedir ao Estoque Central</button>` : '') +
+    (unidade === 'Produção'
+      ? ` <button class="btn btn-warning btn-sm" onclick="abrirRegistrarProducao()">🍳 Registrar produção</button>
+          <button class="btn btn-primary btn-sm" onclick="abrirNovaTransferencia('entregar')">📤 Entregar ao Central</button>` : '');
   if (!el) return;
-  const { data, error } = await sb.from('pedidos_internos')
-    .select('*').eq('tipo', 'transferencia').eq('local', local)
-    .order('criado_em', { ascending: false }).limit(30);
-  if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
-  if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação ainda.</p>'; return; }
-  const ids = data.map(p => p.id);
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', ids);
-  const byPedido = {};
-  (itens || []).forEach(it => { if (!byPedido[it.pedido_id]) byPedido[it.pedido_id] = []; byPedido[it.pedido_id].push(it); });
-  el.innerHTML = data.map(p => _renderTransfCard({ ...p, _itens: byPedido[p.id] || [] }, false)).join('');
+  el.innerHTML = '<div class="text-center text-muted py-4">Carregando...</div>';
+  if (!cProdutosFT.length) await carregarProdutosFT();
+
+  const { data, error } = await sb.from('pedidos_internos').select('*')
+    .eq('tipo', 'transferencia')
+    .or(`local.eq."${unidade}",unidade_origem.eq."${unidade}"`)
+    .order('criado_em', { ascending: false }).limit(60);
+  if (error) { el.innerHTML = `<p class="text-danger">Erro ao carregar: ${esc(error.message)}</p>`; return; }
+  if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma transferência ainda.</p>'; return; }
+
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', data.map(p => p.id));
+  const porPedido = {};
+  (itens || []).forEach(it => { (porPedido[it.pedido_id] = porPedido[it.pedido_id] || []).push(it); });
+
+  // O que espera ação DESTA unidade vem primeiro
+  const acao = p => (p.unidade_origem === unidade && p.status === 'pendente') || (p.local === unidade && p.status === 'liberado');
+  const ord  = [...data].sort((a, b) => (acao(b) - acao(a)));
+  el.innerHTML = ord.map(p => _renderTransfCard({ ...p, _itens: porPedido[p.id] || [] }, unidade)).join('');
 }
 
-async function _carregarTransfAtender() {
-  const el = document.getElementById('transf-lista-atender');
-  if (!el) return;
-  const { data, error } = await sb.from('pedidos_internos')
-    .select('*').eq('tipo', 'transferencia').eq('unidade_origem', 'Estoque Central')
-    .order('criado_em', { ascending: false }).limit(30);
-  if (error) { el.innerHTML = '<p class="text-danger">Erro ao carregar.</p>'; return; }
-  if (!data?.length) { el.innerHTML = '<p class="text-muted text-center py-4">Nenhuma solicitação recebida.</p>'; return; }
-  const ids = data.map(p => p.id);
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', ids);
-  const byPedido = {};
-  (itens || []).forEach(it => { if (!byPedido[it.pedido_id]) byPedido[it.pedido_id] = []; byPedido[it.pedido_id].push(it); });
-  el.innerHTML = data.map(p => _renderTransfCard({ ...p, _itens: byPedido[p.id] || [] }, true)).join('');
-}
+function _renderTransfCard(p, unidade) {
+  const souOrigem  = p.unidade_origem === unidade;
+  const souDestino = p.local === unidade;
+  const enviar     = souOrigem  && p.status === 'pendente';
+  const confirmar  = souDestino && p.status === 'liberado';
+  const badge = {
+    pendente:  ['bg-warning text-dark', 'Pedido — aguardando envio'],
+    liberado:  ['bg-primary',           'Enviado — aguardando chegada'],
+    recebido:  ['bg-success',           'Recebido'],
+    cancelado: ['bg-danger',            'Cancelado'],
+  }[p.status] || ['bg-secondary', p.status];
+  const inp = (attr, id, val) =>
+    `<input type="number" class="form-control form-control-sm text-end ms-auto" style="width:95px" min="0" step="any" ${attr}="${id}" value="${val ?? ''}">`;
 
-function _renderTransfCard(p, isSupplier) {
-  const statusMap = { pendente: '🟡 Pendente', aprovado: '🟢 Enviado', entregue: '✅ Entregue', cancelado: '🔴 Cancelado' };
-  const itens = (p._itens || []).map(it => {
-    const nome     = it.nome || it.produto_id;
-    const un       = '';
-    const aprovada = it.qtd_aprovada != null ? it.qtd_aprovada : it.qtd_pedida;
-    return `<tr><td>${esc(nome)}</td><td class="text-center">${it.qtd_pedida}</td><td class="text-center">${aprovada}</td><td class="text-muted small">${esc(un)}</td></tr>`;
+  const linhas = (p._itens || []).map(it => {
+    const prod = prodFT(it.produto_id);
+    const dif  = p.status === 'recebido' && it.qtd_liberada != null && it.qtd_recebida != null
+      ? Number(it.qtd_recebida) - Number(it.qtd_liberada) : 0;
+    const aviso = Math.abs(dif) > 0.0001
+      ? `<div class="small text-danger">${dif < 0 ? 'faltou' : 'sobrou'} ${_transfQ(Math.abs(dif))}</div>` : '';
+    return `<tr>
+      <td>${esc(it.nome || prod?.nome || it.produto_id)}</td>
+      <td class="text-muted small">${esc(prod?.unidade_uso || '')}</td>
+      <td class="text-end">${_transfQ(it.qtd_pedida)}</td>
+      <td class="text-end">${enviar ? inp('data-transf-liberada', it.id, it.qtd_pedida) : _transfQ(it.qtd_liberada)}</td>
+      <td class="text-end">${confirmar ? inp('data-transf-recebida', it.id, it.qtd_liberada) : _transfQ(it.qtd_recebida)}${aviso}</td>
+    </tr>`;
   }).join('');
 
-  const acoes = isSupplier && p.status === 'pendente'
-    ? `<button class="btn btn-sm btn-success" onclick="aprovarTransferencia('${p.id}')">✅ Aprovar e Enviar</button>`
-    : !isSupplier && p.status === 'aprovado'
-    ? `<button class="btn btn-sm btn-primary" onclick="confirmarRecebimentoTransf('${p.id}')">📦 Confirmar Recebimento</button>`
-    : '';
+  const botoes = [];
+  if (enviar)    botoes.push(`<button class="btn btn-sm btn-success" onclick="enviarTransferencia('${p.id}')">📤 Enviar</button>`);
+  if (confirmar) botoes.push(`<button class="btn btn-sm btn-primary" onclick="confirmarRecebimentoTransf('${p.id}')">📦 Confirmar chegada</button>`);
+  if (p.status === 'pendente' && (souOrigem || souDestino))
+    botoes.unshift(`<button class="btn btn-sm btn-outline-danger" onclick="cancelarTransferencia('${p.id}')">Cancelar pedido</button>`);
+  const dica = enviar ? '<div class="small text-muted mb-2">Confira e ajuste o que vai sair de fato — o saldo sai daqui ao enviar.</div>'
+             : confirmar ? '<div class="small text-muted mb-2">Confira o que chegou — o saldo entra aqui ao confirmar.</div>' : '';
 
-  return `<div class="card-grafico mb-3">
+  return `<div class="card-grafico mb-3${enviar || confirmar ? ' border border-2 border-primary' : ''}" data-transf-card="${p.id}">
     <div class="d-flex justify-content-between align-items-start mb-2">
       <div>
-        <span class="fw-bold">${isSupplier ? `📍 ${esc(p.local)}` : '📦 Estoque Central'}</span>
-        <span class="badge bg-secondary ms-2">${statusMap[p.status] || p.status}</span>
+        <span class="fw-bold">${esc(p.num_pedido || '')}</span>
+        <span class="ms-2">${esc(p.unidade_origem || '?')} → ${esc(p.local || '?')}</span>
+        <span class="badge ${badge[0]} ms-2">${badge[1]}</span>
         ${p.origem === 'automatico' ? '<span class="badge bg-info ms-1">🤖 Auto</span>' : ''}
       </div>
-      <small class="text-muted">${new Date(p.criado_em || p.data).toLocaleDateString('pt-BR')}</small>
+      <small class="text-muted text-end">${esc(p.data || '')}${p.responsavel ? '<br>' + esc(p.responsavel) : ''}</small>
     </div>
+    ${dica}
     <table class="table table-sm mb-2">
-      <thead><tr><th>Produto</th><th class="text-center">Solicitado</th><th class="text-center">Aprovado</th><th>Un.</th></tr></thead>
-      <tbody>${itens}</tbody>
+      <thead><tr><th>Produto</th><th>Un.</th><th class="text-end">Pedido</th><th class="text-end">Enviado</th><th class="text-end">Chegou</th></tr></thead>
+      <tbody>${linhas}</tbody>
     </table>
-    ${acoes ? `<div class="d-flex justify-content-end">${acoes}</div>` : ''}
+    ${botoes.length ? `<div class="d-flex justify-content-end gap-2">${botoes.join('')}</div>` : ''}
   </div>`;
 }
 
-// ── CRIAR SOLICITAÇÃO ───────────────────────────────────────────
-// Esta função pode ser chamada manualmente (pela UI) OU automaticamente
-// (pela engine de ficha técnica no futuro — origem='automatico')
-async function criarSolicitacaoTransf(itens, origem = 'manual') {
-  const local = _invLocal || 'Centro';
-  const resp  = (document.getElementById('inv-resp')?.value || '').trim();
-  const { data: pedido, error } = await sb.from('pedidos_internos').insert({
-    tipo: 'transferencia',
-    local,
-    setor: 'TRANSFERENCIA',
-    unidade_origem: 'Estoque Central',
-    responsavel: resp,
-    status: 'pendente',
-    data: hojeLocal(),
-    origem,
-  }).select().single();
-  if (error || !pedido) { toast('Erro ao criar solicitação.', 'erro'); return null; }
+// Lê os campos de quantidade de um cartão. null = algum valor inválido.
+function _transfLerQtds(pedidoId, attr) {
+  const card = document.querySelector(`[data-transf-card="${pedidoId}"]`);
+  const q = {};
+  for (const i of card?.querySelectorAll(`[${attr}]`) || []) {
+    const v = Number(String(i.value).replace(',', '.'));
+    if (i.value === '' || isNaN(v) || v < 0) return null;
+    q[i.getAttribute(attr)] = v;
+  }
+  return q;
+}
 
-  const itensBd = itens.map(it => ({
-    pedido_id:    pedido.id,
-    produto_id:   it.produto_id,
-    qtd_pedida:   it.qtd,
-    qtd_aprovada: null,
-  }));
-  await sb.from('pedidos_internos_itens').insert(itensBd);
+// ── ENVIAR (origem) ─────────────────────────────────────────────
+async function enviarTransferencia(pedidoId) {
+  if (_transfEmVoo) return;
+  const q = _transfLerQtds(pedidoId, 'data-transf-liberada');
+  if (!q) { toast('Quantidade inválida — use 0 para o que não vai.', 'erro'); return; }
+  if (!Object.values(q).some(v => v > 0)) { toast('Nada para enviar. Se não vai mandar nada, use "Cancelar pedido".', 'erro'); return; }
+  _transfEmVoo = true;
+  try {
+    if (!await _garantirSessao()) return;
+    const { data: ok, error } = await sb.from('pedidos_internos')
+      .update({ status: 'liberado', liberado_em: new Date().toISOString() })
+      .eq('id', pedidoId).eq('status', 'pendente')
+      .select('id,num_pedido,unidade_origem,local');
+    if (error) { toast('Erro ao enviar: ' + error.message, 'erro'); return; }
+    if (!ok?.length) { toast('Esta transferência já foi enviada ou cancelada em outra tela.', 'erro'); await carregarTransferencias(); return; }
+    const p = ok[0];
+    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id').eq('pedido_id', pedidoId);
+    const resp = _transfResp();
+    for (const it of itens || []) {
+      const v = q[it.id] ?? 0;
+      await sb.from('pedidos_internos_itens').update({ qtd_liberada: v }).eq('id', it.id);
+      if (v > 0) await movimentar({
+        produto_id: it.produto_id, local: _transfLugar(p.unidade_origem), tipo: 'transferencia_saida',
+        quantidade: -v, origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
+        responsavel: resp || null, data: hojeLocal(), motivo: `Transferência ${p.num_pedido} → ${p.local}`,
+      });
+    }
+    toast(`${p.num_pedido} enviado para ${p.local} 📦`, 'ok');
+    await carregarTransferencias();
+  } finally { _transfEmVoo = false; }
+}
+
+// ── CONFIRMAR CHEGADA (destino) ─────────────────────────────────
+async function confirmarRecebimentoTransf(pedidoId) {
+  if (_transfEmVoo) return;
+  const q = _transfLerQtds(pedidoId, 'data-transf-recebida');
+  if (!q) { toast('Quantidade inválida — use 0 para o que não chegou.', 'erro'); return; }
+  _transfEmVoo = true;
+  try {
+    if (!await _garantirSessao()) return;
+    const { data: ok, error } = await sb.from('pedidos_internos')
+      .update({ status: 'recebido', recebido_em: new Date().toISOString() })
+      .eq('id', pedidoId).eq('status', 'liberado')
+      .select('id,num_pedido,unidade_origem,local');
+    if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
+    if (!ok?.length) { toast('Esta transferência já foi confirmada em outra tela.', 'erro'); await carregarTransferencias(); return; }
+    const p = ok[0];
+    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id').eq('pedido_id', pedidoId);
+    const resp = _transfResp();
+    for (const it of itens || []) {
+      const v = q[it.id] ?? 0;
+      await sb.from('pedidos_internos_itens').update({ qtd_recebida: v }).eq('id', it.id);
+      if (v > 0) await movimentar({
+        produto_id: it.produto_id, local: _transfLugar(p.local), tipo: 'transferencia_entrada',
+        quantidade: v, origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
+        responsavel: resp || null, data: hojeLocal(), motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}`,
+      });
+    }
+    toast(`${p.num_pedido} recebido ✅`, 'ok');
+    await carregarTransferencias();
+  } finally { _transfEmVoo = false; }
+}
+
+// ── CANCELAR (só antes de sair da origem; não mexe em saldo) ────
+async function cancelarTransferencia(pedidoId) {
+  if (!confirm('Cancelar este pedido de transferência?')) return;
+  const { data: ok, error } = await sb.from('pedidos_internos')
+    .update({ status: 'cancelado' }).eq('id', pedidoId).eq('status', 'pendente').select('id');
+  if (error) { toast('Erro ao cancelar: ' + error.message, 'erro'); return; }
+  if (!ok?.length) toast('Não dá mais para cancelar: já foi enviado.', 'erro');
+  else toast('Pedido cancelado.', 'ok');
+  await carregarTransferencias();
+}
+
+// ── CRIAR ───────────────────────────────────────────────────────
+// API pública: a engine automática pode chamar com origem='automatico'.
+// itens = [{ produto_id, qtd, nome? }]. modo 'pedir' = unidade atual pede ao
+// Central; 'entregar' = Produção manda ao Central (nasce já enviado, sem pedido).
+async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') {
+  const entrega = modo === 'entregar';
+  const destino = entrega ? 'Estoque Central' : (_invLocal || 'Centro');
+  const deOnde  = entrega ? 'Produção' : 'Estoque Central';
+  if (!_TRANSF_UNIDADES.includes(destino) || destino === deOnde) { toast(`O ${destino} não pode pedir ao ${deOnde}.`, 'erro'); return null; }
+  const validos = (itens || []).filter(it => it.produto_id && Number(it.qtd) > 0);
+  if (!validos.length) { toast('Informe a quantidade de pelo menos um produto.', 'erro'); return null; }
+  if (!await _garantirSessao()) return null;
+
+  const agora = new Date().toISOString();
+  const num_pedido = await _proximoNumPedido();
+  const { data: pedido, error } = await sb.from('pedidos_internos').insert({
+    num_pedido, tipo: 'transferencia', setor: 'TRANSFERENCIA', origem,
+    local: destino, unidade_origem: deOnde,
+    status: entrega ? 'liberado' : 'pendente', liberado_em: entrega ? agora : null,
+    responsavel: _transfResp(), data: hojeLocal(),
+    obs: entrega ? 'Entrega da Produção' : 'Pedido ao Estoque Central',
+  }).select().single();
+  if (error || !pedido) { toast('Erro ao criar: ' + (error?.message || ''), 'erro'); return null; }
+
+  const { data: itensBd, error: eIt } = await sb.from('pedidos_internos_itens').insert(validos.map(it => ({
+    pedido_id: pedido.id, produto_id: it.produto_id, nome: it.nome || prodFT(it.produto_id)?.nome || null,
+    qtd_pedida: Number(it.qtd), qtd_liberada: entrega ? Number(it.qtd) : null,
+  }))).select('id,produto_id,qtd_liberada');
+  if (eIt || !itensBd?.length) {
+    // Sem itens o pedido não serve para nada — e na entrega o saldo ainda não saiu.
+    await sb.from('pedidos_internos').update({ status: 'cancelado', obs: 'Itens não gravaram' }).eq('id', pedido.id);
+    toast('Erro ao gravar os itens: ' + (eIt?.message || 'nenhum item'), 'erro');
+    return null;
+  }
+  if (entrega) {
+    for (const it of itensBd) await movimentar({
+      produto_id: it.produto_id, local: _transfLugar(deOnde), tipo: 'transferencia_saida',
+      quantidade: -Number(it.qtd_liberada), origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
+      responsavel: _transfResp() || null, data: hojeLocal(), motivo: `Transferência ${num_pedido} → ${destino}`,
+    });
+  }
   return pedido;
 }
 
-function abrirNovaTransferencia() {
+function abrirNovaTransferencia(modo = 'pedir') {
+  _transfModo = modo;
   _transfItens = [];
+  _transfBusca = [];
+  const entrega = modo === 'entregar';
+  document.getElementById('transf-modal-titulo').textContent = entrega
+    ? '📤 Entregar ao Estoque Central — o que a Produção fabricou'
+    : `🔄 Pedir ao Estoque Central — para ${_invLocal || 'Centro'}`;
+  document.getElementById('transf-modal-ok').textContent = entrega ? '📤 Enviar ao Central' : '📤 Enviar pedido';
+  document.getElementById('transf-modal-dica').textContent = entrega
+    ? 'O saldo sai da Produção agora; entra no Central quando ele confirmar a chegada.'
+    : 'O Central confere e envia; o saldo só entra aqui quando você confirmar a chegada.';
   const inp = document.getElementById('transf-busca-prod');
   if (inp) inp.value = '';
   document.getElementById('transf-resultados-busca').innerHTML = '';
@@ -4925,25 +5089,38 @@ function abrirNovaTransferencia() {
   new bootstrap.Modal(document.getElementById('modal-nova-transf')).show();
 }
 
+// Só oferece o que a ORIGEM guarda: a estrutura do Central (ou da Produção, na
+// entrega) é a lista que o Wagner conferiu em 25/09. Mostra o saldo de lá.
 async function buscarProdutosTransf() {
-  const q  = (document.getElementById('transf-busca-prod')?.value || '').trim();
+  const q  = norm((document.getElementById('transf-busca-prod')?.value || '').trim());
   const el = document.getElementById('transf-resultados-busca');
-  if (!q || q.length < 2) { el.innerHTML = ''; return; }
-  const { data } = await sb.from('est_produtos').select('id,nome,unidade_uso').ilike('nome', `%${q}%`).limit(8);
-  if (!data?.length) { el.innerHTML = '<p class="text-muted small">Nenhum produto encontrado.</p>'; return; }
-  el.innerHTML = data.map(p =>
-    `<button class="btn btn-sm btn-outline-secondary me-1 mb-1" onclick="adicionarItemTransf('${p.id}','${esc(p.nome)}','${esc(p.unidade_uso||'')}')">
-      + ${esc(p.nome)} <span class="text-muted">(${esc(p.unidade_uso||'')})</span>
-    </button>`
-  ).join('');
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const deOnde = _transfModo === 'entregar' ? 'Produção' : 'Estoque Central';
+  const nomes  = new Set();
+  Object.values(_todasEstruturas[deOnde] || {}).forEach(gr => Object.values(gr || {}).forEach(ps => (ps || []).forEach(n => nomes.add(norm(n)))));
+  _transfBusca = cProdutosFT
+    .filter(p => p.ativo !== false && nomes.has(norm(p.nome)) && norm(p.nome).includes(q))
+    .filter(p => _transfModo !== 'entregar' || ['SA', 'PPP'].includes(p.tipo))
+    .slice(0, 12);
+  if (!_transfBusca.length) { el.innerHTML = `<p class="text-muted small">Nada com esse nome na lista do ${esc(deOnde)}.</p>`; return; }
+  const { data: sal } = await sb.from('est_saldo_local').select('produto_id,saldo')
+    .eq('local', _transfLugar(deOnde)).in('produto_id', _transfBusca.map(p => p.id));
+  const saldo = Object.fromEntries((sal || []).map(s => [s.produto_id, s.saldo]));
+  el.innerHTML = _transfBusca.map((p, i) =>
+    `<button class="btn btn-sm btn-outline-secondary me-1 mb-1" onclick="adicionarItemTransf(${i})">
+      + ${esc(p.nome)} <span class="text-muted">(${saldo[p.id] != null ? 'tem ' + _transfQ(saldo[p.id]) : 'sem saldo'} ${esc(p.unidade_uso || '')})</span>
+    </button>`).join('');
 }
 
-function adicionarItemTransf(produto_id, nome, unidade) {
-  if (_transfItens.find(i => i.produto_id === produto_id)) { toast('Produto já adicionado.', 'erro'); return; }
-  _transfItens.push({ produto_id, nome, unidade, qtd: 1 });
+function adicionarItemTransf(i) {
+  const p = _transfBusca[i];
+  if (!p) return;
+  if (_transfItens.find(x => x.produto_id === p.id)) { toast('Produto já adicionado.', 'erro'); return; }
+  _transfItens.push({ produto_id: p.id, nome: p.nome, unidade: p.unidade_uso || '', qtd: '' });
   _renderTransfItensSelecionados();
   const inp = document.getElementById('transf-busca-prod');
-  if (inp) inp.value = '';
+  if (inp) { inp.value = ''; inp.focus(); }
   document.getElementById('transf-resultados-busca').innerHTML = '';
 }
 
@@ -4952,12 +5129,12 @@ function _renderTransfItensSelecionados() {
   if (!el) return;
   if (!_transfItens.length) { el.innerHTML = '<p class="text-muted small">Nenhum produto adicionado ainda.</p>'; return; }
   el.innerHTML = `<table class="table table-sm">
-    <thead><tr><th>Produto</th><th>Un.</th><th style="width:120px">Qtd</th><th></th></tr></thead>
+    <thead><tr><th>Produto</th><th>Un.</th><th style="width:130px">Quantidade</th><th></th></tr></thead>
     <tbody>${_transfItens.map((it, i) => `
       <tr>
         <td>${esc(it.nome)}</td>
         <td class="text-muted small">${esc(it.unidade)}</td>
-        <td><input type="number" class="form-control form-control-sm" min="0.01" step="0.01" value="${it.qtd}" onchange="_transfItens[${i}].qtd=Number(this.value)"></td>
+        <td><input type="number" class="form-control form-control-sm" min="0" step="any" value="${it.qtd}" oninput="_transfItens[${i}].qtd=this.value"></td>
         <td><button class="btn btn-sm btn-link text-danger p-0" onclick="_transfItens.splice(${i},1);_renderTransfItensSelecionados()">🗑</button></td>
       </tr>`).join('')}
     </tbody>
@@ -4965,44 +5142,140 @@ function _renderTransfItensSelecionados() {
 }
 
 async function enviarSolicitacaoTransf() {
+  if (_transfEmVoo) return;
   if (!_transfItens.length) { toast('Adicione ao menos um produto.', 'erro'); return; }
-  const pedido = await criarSolicitacaoTransf(_transfItens, 'manual');
-  if (!pedido) return;
-  bootstrap.Modal.getInstance(document.getElementById('modal-nova-transf'))?.hide();
-  toast('Solicitação enviada ao Estoque Central! ✅', 'ok');
-  await _carregarTransfSolicitacoes(_invLocal || 'Centro');
+  const itens = _transfItens.map(it => ({ ...it, qtd: Number(String(it.qtd).replace(',', '.')) }));
+  if (itens.some(it => isNaN(it.qtd) || it.qtd <= 0)) { toast('Preencha a quantidade de todos os produtos (maior que zero).', 'erro'); return; }
+  const btn = document.getElementById('transf-modal-ok');
+  _transfEmVoo = true; if (btn) btn.disabled = true;
+  try {
+    const pedido = await criarSolicitacaoTransf(itens, 'manual', _transfModo);
+    if (!pedido) return;
+    bootstrap.Modal.getInstance(document.getElementById('modal-nova-transf'))?.hide();
+    toast(_transfModo === 'entregar' ? `${pedido.num_pedido} enviado ao Central ✅` : `${pedido.num_pedido} pedido ao Estoque Central ✅`, 'ok');
+    await carregarTransferencias();
+  } finally { _transfEmVoo = false; if (btn) btn.disabled = false; }
 }
 
-// ── ATENDER (Estoque Central) ───────────────────────────────────
-async function aprovarTransferencia(pedidoId) {
-  const { error } = await sb.from('pedidos_internos')
-    .update({ status: 'aprovado' })
-    .eq('id', pedidoId);
-  if (error) { toast('Erro ao aprovar.', 'erro'); return; }
-  // Diminui saldo do Estoque Central ESTOQUE_LOJA
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
-  for (const it of itens || []) {
-    const qtd = it.qtd_aprovada ?? it.qtd_pedida;
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_saida', quantidade: -qtd, origem: 'transferencia', motivo: 'Transferência enviada (Estoque Central)' });
+// ════════════════════════════════════════════════════════════════
+// PRODUÇÃO — registrar o lote fabricado (fim do lote, pela própria Produção)
+//
+// Mesma conta do robô da baixa (scripts/baixa_estoque_pdv.py):
+//   consumo do ingrediente = quantidade na ficha / rendimento × quantidade produzida
+// com a quantidade da ficha já em unidade de USO — a mesma do saldo. Um nível só:
+// se a SA leva um PPP, o PPP sai do saldo da PRODUCAO, onde entrou quando foi
+// fabricado. Tudo acontece dentro da PRODUCAO; o pronto vai ao Central pela entrega.
+//
+// Sem ref_id de propósito: o índice uq_est_mov_ref barraria o segundo lote da
+// mesma ficha. O lote vai no motivo ("Produção LOTE ...") para agrupar.
+// ════════════════════════════════════════════════════════════════
+let _prodFichas = {};   // produto_id -> { ficha, ings: [{ ingrediente_id, quantidade }] }
+
+async function abrirRegistrarProducao() {
+  if (!cProdutosFT.length) await carregarProdutosFT();
+  const nomes = new Set();
+  Object.values(_todasEstruturas['Produção'] || {}).forEach(gr => Object.values(gr || {}).forEach(ps => (ps || []).forEach(n => nomes.add(norm(n)))));
+  const cand = cProdutosFT.filter(p => p.ativo !== false && ['SA', 'PPP'].includes(p.tipo) && nomes.has(norm(p.nome)));
+  const ids  = cand.map(p => p.id);
+  _prodFichas = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: fs } = await sb.from('est_fichas_tecnicas').select('id,produto_id,rendimento,unidade_rendimento')
+      .eq('ativo', true).in('produto_id', ids.slice(i, i + 100));
+    (fs || []).forEach(f => { _prodFichas[f.produto_id] = { ficha: f, ings: [] }; });
   }
-  toast('Transferência aprovada e enviada! 📦', 'ok');
-  await _carregarTransfAtender();
+  const porFicha = {};
+  Object.values(_prodFichas).forEach(x => { porFicha[x.ficha.id] = x; });
+  const fids = Object.keys(porFicha);
+  for (let i = 0; i < fids.length; i += 100) {
+    const { data: ings } = await sb.from('est_ficha_ingredientes').select('ficha_id,ingrediente_id,quantidade')
+      .in('ficha_id', fids.slice(i, i + 100));
+    (ings || []).forEach(g => porFicha[g.ficha_id]?.ings.push(g));
+  }
+  const sel = document.getElementById('prod-produto');
+  const comFicha = cand.filter(p => _prodFichas[p.id]?.ings.length).sort((a, b) => a.nome.localeCompare(b.nome));
+  const semFicha = cand.filter(p => !_prodFichas[p.id]?.ings.length).map(p => p.nome);
+  sel.innerHTML = '<option value="">Escolha o que foi produzido...</option>' +
+    comFicha.map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  document.getElementById('prod-sem-ficha').textContent = semFicha.length
+    ? `Sem ficha, não aparecem aqui: ${semFicha.join(', ')}.` : '';
+  document.getElementById('prod-qtd').value = '';
+  document.getElementById('prod-preview').innerHTML = '';
+  document.getElementById('prod-unidade').textContent = '';
+  new bootstrap.Modal(document.getElementById('modal-producao')).show();
 }
 
-// ── CONFIRMAR RECEBIMENTO (unidade destino) ─────────────────────
-async function confirmarRecebimentoTransf(pedidoId) {
-  const { error } = await sb.from('pedidos_internos')
-    .update({ status: 'entregue' })
-    .eq('id', pedidoId);
-  if (error) { toast('Erro ao confirmar.', 'erro'); return; }
-  // Aumenta saldo da unidade receptora ESTOQUE_LOJA
-  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
-  for (const it of itens || []) {
-    const qtd = it.qtd_aprovada ?? it.qtd_pedida;
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_entrada', quantidade: +qtd, origem: 'transferencia', motivo: 'Transferência recebida' });
-  }
-  toast('Recebimento confirmado! ✅', 'ok');
-  await _carregarTransfSolicitacoes(_invLocal || 'Centro');
+async function previewProducao() {
+  const pid = document.getElementById('prod-produto').value;
+  const qtd = Number(String(document.getElementById('prod-qtd').value).replace(',', '.'));
+  const el  = document.getElementById('prod-preview');
+  const x   = _prodFichas[pid];
+  document.getElementById('prod-unidade').textContent = x
+    ? `${x.ficha.unidade_rendimento || prodFT(pid)?.unidade_uso || ''} (a ficha rende ${_transfQ(x.ficha.rendimento || 1)})` : '';
+  if (!x || !(qtd > 0)) { el.innerHTML = ''; return; }
+  const rend = Number(x.ficha.rendimento) || 1;
+  const { data: sal } = await sb.from('est_saldo_local').select('produto_id,saldo')
+    .eq('local', LOCAL_PRODUCAO).in('produto_id', x.ings.map(g => g.ingrediente_id));
+  const saldo = Object.fromEntries((sal || []).map(s => [s.produto_id, Number(s.saldo) || 0]));
+  el.innerHTML = `<table class="table table-sm mb-0">
+    <thead><tr><th>Sai da Produção</th><th class="text-end">Consumo</th><th class="text-end">Saldo hoje</th><th class="text-end">Fica</th></tr></thead>
+    <tbody>${x.ings.map(g => {
+      const c = (Number(g.quantidade) || 0) / rend * qtd;
+      const p = prodFT(g.ingrediente_id);
+      const antes = saldo[g.ingrediente_id] ?? 0;
+      const fica = antes - c;
+      return `<tr><td>${esc(p?.nome || g.ingrediente_id)}</td>
+        <td class="text-end">${_transfQ(c)} ${esc(p?.unidade_uso || '')}</td>
+        <td class="text-end">${_transfQ(antes)}</td>
+        <td class="text-end ${fica < 0 ? 'text-danger fw-semibold' : ''}">${_transfQ(fica)}</td></tr>`;
+    }).join('')}</tbody>
+  </table>
+  <div class="small text-muted mt-1">Entra na Produção: <strong>${_transfQ(qtd)} ${esc(prodFT(pid)?.unidade_uso || '')}</strong> de ${esc(prodFT(pid)?.nome || '')}.
+  Saldo em vermelho = a Produção não tem esse insumo registrado (falta pedir ao Central ou contar).</div>`;
+}
+
+async function registrarProducao() {
+  if (_transfEmVoo) return;
+  const pid = document.getElementById('prod-produto').value;
+  const qtd = Number(String(document.getElementById('prod-qtd').value).replace(',', '.'));
+  const x   = _prodFichas[pid];
+  if (!x) { toast('Escolha o que foi produzido.', 'erro'); return; }
+  if (!(qtd > 0)) { toast('Informe a quantidade produzida.', 'erro'); return; }
+  const nome = prodFT(pid)?.nome || '';
+  const un   = prodFT(pid)?.unidade_uso || '';
+  if (!confirm(`Registrar a produção de ${_transfQ(qtd)} ${un} de ${nome}?\n\nOs insumos da ficha saem do saldo da Produção.`)) return;
+  const btn = document.getElementById('prod-btn-ok');
+  _transfEmVoo = true; if (btn) btn.disabled = true;
+  try {
+    if (!await _garantirSessao()) return;
+    const rend  = Number(x.ficha.rendimento) || 1;
+    const agora = new Date();
+    const lote  = `LOTE ${hojeLocal()} ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    const resp  = _transfResp() || null;
+    const base  = { origem: 'producao', responsavel: resp, data: hojeLocal(), motivo: `Produção ${lote}: ${_transfQ(qtd)} ${un} de ${nome}` };
+    for (const g of x.ings) {
+      const c = (Number(g.quantidade) || 0) / rend * qtd;
+      if (c > 0) await movimentar({ ...base, produto_id: g.ingrediente_id, local: LOCAL_PRODUCAO, tipo: 'producao_consumo', quantidade: -c });
+    }
+    await movimentar({ ...base, produto_id: pid, local: LOCAL_PRODUCAO, tipo: 'producao_entrada', quantidade: qtd });
+    bootstrap.Modal.getInstance(document.getElementById('modal-producao'))?.hide();
+    toast(`Produção registrada: ${_transfQ(qtd)} ${un} de ${nome} ✅`, 'ok');
+    await carregarTransferencias();
+  } finally { _transfEmVoo = false; if (btn) btn.disabled = false; }
+}
+
+async function _renderProducoesRecentes(mostrar) {
+  const el = document.getElementById('transf-producoes');
+  if (!el) return;
+  if (!mostrar) { el.innerHTML = ''; return; }
+  const { data } = await sb.from('est_movimentacoes').select('produto_id,quantidade,data,responsavel,criado_em')
+    .eq('local', LOCAL_PRODUCAO).eq('tipo', 'producao_entrada')
+    .order('criado_em', { ascending: false }).limit(15);
+  el.innerHTML = `<h6 class="mt-4">🍳 Últimas produções registradas</h6>` + (data?.length
+    ? `<table class="table table-sm"><thead><tr><th>Data</th><th>Produto</th><th class="text-end">Qtd</th><th>Quem</th></tr></thead><tbody>${
+        data.map(m => `<tr><td>${esc(m.data)}</td><td>${esc(prodFT(m.produto_id)?.nome || m.produto_id)}</td>
+          <td class="text-end">${_transfQ(m.quantidade)} ${esc(prodFT(m.produto_id)?.unidade_uso || '')}</td><td>${esc(m.responsavel || '')}</td></tr>`).join('')
+      }</tbody></table>`
+    : '<p class="text-muted small">Nenhuma ainda.</p>');
 }
 
 let _emergIdx = 0;

@@ -1745,14 +1745,81 @@ function limparCampos() {
 async function carregarPedidosEstoque() {
   const status = document.getElementById('fil-ped-status')?.value || '';
   const setor  = document.getElementById('fil-ped-setor')?.value  || '';
-  let q = sb.from('pedidos_internos').select('*').order('criado_em',{ascending:false}).limit(80);
+  // Transferencia NAO e pedido de setor: se aparecesse aqui, "Liberar" a trataria
+  // como pedido interno e creditaria um setor 'TRANSFERENCIA' que nao existe.
+  // Ela tem o bloco proprio logo acima da lista (_blocoTransfMob).
+  let q = sb.from('pedidos_internos').select('*').neq('tipo','transferencia').order('criado_em',{ascending:false}).limit(80);
   if (status) q = q.eq('status', status);
   if (setor)  q = q.eq('setor', setor);
-  const { data: peds } = await q;
+  const [{ data: peds }, blocoTransf] = await Promise.all([q, _blocoTransfMob()]);
   const el = document.getElementById('lst-pedidos-estoque');
-  if (!peds?.length) { el.innerHTML='<div class="vazio">Nenhum pedido.</div>'; return; }
+  if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
-  el.innerHTML = peds.map(ped => _cardPedEstoque(ped, (itens||[]).filter(it=>it.pedido_id===ped.id))).join('');
+  el.innerHTML = blocoTransf + peds.map(ped => _cardPedEstoque(ped, (itens||[]).filter(it=>it.pedido_id===ped.id))).join('');
+}
+
+// ─── TRANSFERENCIA CHEGANDO DO ESTOQUE CENTRAL ──────────────────
+// O estoque da loja confirma aqui ou no computador (decisao de 25/09/2026).
+// So o Centro por enquanto: o P10 espera o prefixo P10_ do razao (ver app.js,
+// _localDaContagem). Mesma trava de toque duplo do computador: a troca de status
+// so vale se ainda estiver 'liberado'. ref_id = id do ITEM (indice uq_est_mov_ref).
+async function _blocoTransfMob() {
+  if (_local !== 'Centro') return '';
+  const { data: peds } = await sb.from('pedidos_internos').select('*')
+    .eq('tipo','transferencia').eq('local', _local).eq('status','liberado')
+    .order('criado_em',{ascending:true}).limit(20);
+  if (!peds?.length) return '';
+  const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
+  const q = v => v == null ? '—' : Number(v).toLocaleString('pt-BR',{maximumFractionDigits:3});
+  return `<div style="margin:.5rem 0 1rem"><div style="font-weight:700;color:#60a5fa;margin:0 .25rem .4rem">🔄 Chegando do Estoque Central (${peds.length})</div>` +
+    peds.map(p => {
+      const its = (itens||[]).filter(it => it.pedido_id === p.id);
+      const rows = its.map(it => `<tr><td>${esc(it.nome)}</td><td>${q(it.qtd_liberada)}</td>
+        <td><input type="number" inputmode="decimal" min="0" step="any" data-transf-recebida-mob="${it.id}" value="${it.qtd_liberada ?? ''}"
+          style="width:70px;padding:.3rem;border-radius:6px;border:1px solid #475569;background:#0f172a;color:#fff;text-align:right"></td></tr>`).join('');
+      return `<div class="ped-card" data-transf-card-mob="${p.id}" style="border:2px solid #3b82f6">
+        <div class="ped-card-header"><div>
+          <span class="ped-num">${esc(p.num_pedido||'—')}</span>
+          <div class="ped-info">${esc(p.data||'')} · ${esc(p.unidade_origem||'')} → ${esc(p.local||'')}</div>
+        </div><span class="badge-status" style="background:#0d6efd;color:#fff">Enviado</span></div>
+        <table class="ped-table"><thead><tr><th>Produto</th><th>Env.</th><th>Chegou</th></tr></thead><tbody>${rows}</tbody></table>
+        <div style="padding:.5rem .75rem .75rem"><button class="btn-liberar" style="width:100%" onclick="confirmarChegadaTransfMob('${p.id}')">📦 Confirmar chegada</button></div>
+      </div>`;
+    }).join('') + '</div>';
+}
+
+let _transfMobEmVoo = false;
+async function confirmarChegadaTransfMob(pedidoId) {
+  if (_transfMobEmVoo) return;
+  const card = document.querySelector(`[data-transf-card-mob="${pedidoId}"]`);
+  const qtds = {};
+  for (const i of card?.querySelectorAll('[data-transf-recebida-mob]') || []) {
+    const v = Number(String(i.value).replace(',', '.'));
+    if (i.value === '' || isNaN(v) || v < 0) { toast('Quantidade inválida — use 0 para o que não chegou.','err'); return; }
+    qtds[i.dataset.transfRecebidaMob] = v;
+  }
+  if (!confirm('Confirmar que estas quantidades chegaram no Estoque da Loja?')) return;
+  _transfMobEmVoo = true;
+  try {
+    if (!await _garantirSessao()) return;
+    const { data: ok, error } = await sb.from('pedidos_internos')
+      .update({ status:'recebido', recebido_em:new Date().toISOString() })
+      .eq('id',pedidoId).eq('status','liberado').select('id,num_pedido,unidade_origem');
+    if (error) { toast(_msgErroBanco(error),'err'); return; }
+    if (!ok?.length) { toast('Esta transferência já tinha sido confirmada. Nada foi lançado de novo.','err'); carregarPedidosEstoque(); return; }
+    const p = ok[0];
+    const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
+    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id').eq('pedido_id', pedidoId);
+    for (const it of itens || []) {
+      const v = qtds[it.id] ?? 0;
+      await sb.from('pedidos_internos_itens').update({ qtd_recebida: v }).eq('id', it.id);
+      if (v > 0) await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_entrada', quantidade: v,
+        origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id, responsavel: resp || null, data: hojeLocal(),
+        motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}` });
+    }
+    toast(`${p.num_pedido} recebido ✅`,'ok');
+    carregarPedidosEstoque();
+  } finally { _transfMobEmVoo = false; }
 }
 
 function _cardPedEstoque(ped, its) {
