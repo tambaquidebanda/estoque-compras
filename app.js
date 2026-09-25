@@ -4342,9 +4342,96 @@ async function abrirLiberarPedido(pedidoId) {
   new bootstrap.Modal(document.getElementById('modal-liberar-pedido')).show();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAVA DO "500 NO LUGAR DE 0,5" NO PEDIDO INTERNO — 25/09/2026
+//
+// A contagem ja tinha a trava do erro de mil vezes; o pedido nao. Varredura do
+// historico inteiro em 25/09: 34 itens de pedido com quantidade 20x ou mais
+// acima do normal do produto NAQUELE setor, e a maioria passou por pedir,
+// liberar e receber sem ninguem estranhar:
+//   MP QUEIJO MUSSARELA FATIADO 500 (3x, COZINHA)   mediana 0,4-0,5
+//   MC ALCOOL LIQUIDO 70        500 (5x, SALAO)     mediana 1
+//   MP ALFACE BOLA              500/510/625/800     mediana 0,5
+//   MP BANANA PACOVA  pediu 0,5 -> liberou 1.514
+//   SA CASTANHA LASCA pediu 0,2 -> liberou 0 -> recebeu 300
+// Dois caminhos: na EMERGENCIA o numero errado nasce no pedido e atravessa o
+// resto igual; no pedido normal ele nasce ao liberar ou ao receber. Por isso a
+// trava fica nos tres pontos, no computador e no celular.
+//
+// Regra (simulada no historico: 58 avisos em 3 meses, ~1 a cada 2 dias em
+// setembro, quase todos erro de verdade): avisa quando a quantidade e >= 10 e
+// >= 20x a mediana do que ESTE setor recebeu desse produto nos ultimos 90 dias
+// (3 registros no minimo). Por setor, nao geral: o BAR pede laranja em unidade
+// e a COZINHA em kg. Sem historico, compara com o passo anterior (pedido ao
+// liberar, liberado ao receber) — so assim a castanha 0,2 -> 300 aparece.
+// Arredondar para a embalagem (pediu 1, liberou a bandeja de 30 ovos) quase
+// nunca dispara, porque o historico do setor ja tem as bandejas.
+//
+// So AVISA: OK segue. E nunca impede de trabalhar — erro na consulta = segue.
+// Mesma funcao em app.js e contagem.html.
+// ─────────────────────────────────────────────────────────────────────────────
+const _QTD_FORA_FATOR = 20;
+const _QTD_FORA_MIN   = 10;
+
+// itens = [{ produto_id, nome, qtd, anterior }] — anterior: o pedido (ao liberar)
+// ou o liberado (ao receber); null na emergencia. Retorna true = pode seguir.
+async function _conferirQtdPedido(itens, setor, etapa) {
+  try {
+    const alvo = (itens || []).filter(i => i.produto_id && (Number(i.qtd) || 0) >= _QTD_FORA_MIN);
+    if (!alvo.length || !setor) return true;
+    const pids  = [...new Set(alvo.map(i => i.produto_id))];
+    const desde = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+    const { data: peds } = await sb.from('pedidos_internos').select('id')
+      .eq('setor', setor).neq('tipo', 'transferencia').gte('data', desde)
+      .order('criado_em', { ascending: false }).limit(1000);
+    const ids  = (peds || []).map(p => p.id);
+    const hist = {};
+    const lotes = [];                                     // lotes de 100: .in() grande estoura a URL
+    for (let i = 0; i < ids.length; i += 100) lotes.push(ids.slice(i, i + 100));
+    const resps = await Promise.all(lotes.map(l => sb.from('pedidos_internos_itens')
+      .select('produto_id,qtd_pedida,qtd_recebida').in('pedido_id', l).in('produto_id', pids)));
+    resps.forEach(({ data: its }) => (its || []).forEach(l => {
+      const v = Number(l.qtd_recebida) > 0 ? Number(l.qtd_recebida) : (Number(l.qtd_pedida) || 0);
+      if (v > 0) (hist[l.produto_id] = hist[l.produto_id] || []).push(v);
+    }));
+    const mediana = a => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    const fmt = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+
+    const avisos = [];
+    alvo.forEach(i => {
+      const q = Number(i.qtd);
+      const h = hist[i.produto_id] || [];
+      if (h.length >= 3) {
+        const md = mediana(h);
+        if (md > 0 && q >= _QTD_FORA_FATOR * md) avisos.push(`• ${i.nome}: ${fmt(q)} — o setor ${setor} costuma receber ${fmt(md)}`);
+      } else if (i.anterior !== null && i.anterior !== undefined && q >= _QTD_FORA_FATOR * Math.max(Number(i.anterior) || 0, 0.05)) {
+        avisos.push(`• ${i.nome}: ${fmt(q)} — o passo anterior tinha ${fmt(Number(i.anterior) || 0)}`);
+      }
+    });
+    if (!avisos.length) return true;
+    return confirm(
+      `Confira antes de ${etapa}:\n\n${avisos.join('\n')}\n\n` +
+      `Parece número em GRAMAS num campo de KG (500 no lugar de 0,5), ou unidade trocada.\n\n` +
+      `OK = está certo, seguir.\nCancelar = voltar e corrigir.`
+    );
+  } catch (e) {
+    console.error('_conferirQtdPedido falhou (segue sem aviso):', e);
+    return true;
+  }
+}
+
 async function confirmarLiberacao() {
   if (!_pedLiberarId) return;
   const itenIds = JSON.parse(document.getElementById('lib-itens')?.value || '[]');
+  {
+    const [{ data: pedL }, { data: itsL }] = await Promise.all([
+      sb.from('pedidos_internos').select('setor').eq('id', _pedLiberarId).single(),
+      sb.from('pedidos_internos_itens').select('id,produto_id,nome,qtd_pedida').in('id', itenIds),
+    ]);
+    const conf = (itsL || []).map(it => ({ produto_id: it.produto_id, nome: it.nome, anterior: it.qtd_pedida,
+      qtd: parseQtd(document.getElementById(`lib-qtd-${it.id}`)?.value) }));
+    if (!await _conferirQtdPedido(conf, pedL?.setor, 'liberar')) return;
+  }
 
   await Promise.all(itenIds.map(id => {
     const qtd = parseQtd(document.getElementById(`lib-qtd-${id}`)?.value);
@@ -4768,6 +4855,9 @@ async function _confirmarRecebimentoInv() {
   const qtdTela  = id => parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
   const qtds     = Object.fromEntries(itenIds.map(id => [id, qtdTela(id)]));
   const itensRec = (_pedReceberItens || []).map(it => ({ ...it, _qtd: qtdTela(it.id) }));
+
+  if (!await _conferirQtdPedido(itensRec.map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd: it._qtd,
+    anterior: it.qtd_liberada ?? it.qtd_pedida })), setor, 'confirmar o recebimento')) return;
 
   const atraso = await _confirmacaoAtrasada(pedidoId);
   if (atraso) { await _encerrarPedidoAtrasado(pedidoId, atraso); return; }
@@ -5414,6 +5504,9 @@ async function _enviarEmergencia() {
   }
 
   if (!itens.length) { toast('Adicione ao menos um produto.', 'warn'); return; }
+
+  if (!await _conferirQtdPedido(itens.map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd: it.qtd_pedida, anterior: null })),
+    setor, 'enviar a emergência')) return;
 
   const numPed = await _proximoNumPedido();
   const data   = hojeLocal();
