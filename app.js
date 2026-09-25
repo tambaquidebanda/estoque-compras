@@ -4002,7 +4002,7 @@ async function _enviarPedidoInterno() {
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(_invLocal, _invSetor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
@@ -4065,7 +4065,7 @@ async function salvarSaldoContagemDesktop() {
 
   // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(_invLocal, 'ESTOQUE DA LOJA'), saldo: it.estoque }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
@@ -4106,7 +4106,7 @@ async function salvarSaldoInicialSetor() {
 
   // Salva saldo absoluto do setor + registra no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _invSetor, saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(_invLocal, _invSetor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
@@ -4449,6 +4449,17 @@ function _rotuloLocal(l) {
   if (l === 'ESTOQUE_LOJA') return 'Estoque da Loja';
   if (l && l.startsWith('P10_')) return 'P10 · ' + (_SETOR_LABEL[l.slice(4)] || l.slice(4));
   return _SETOR_LABEL[l] || l;
+}
+
+// Onde uma CONTAGEM do computador cai no razao. Estoque Central e Producao ja
+// usam o lugar proprio (CENTRAL / PRODUCAO) — sem isto a contagem la gravava
+// no nome do setor e ninguem somava. O P10 continua no setor do Centro de
+// proposito: o pedido interno do P10 tambem credita o setor do Centro, e ligar
+// o prefixo so na contagem deixaria as duas pontas em lugares diferentes.
+// Liga as duas juntas, quando for a vez do P10.
+function _localDaContagem(unidade, setor) {
+  if (unidade === 'Estoque Central' || unidade === 'Produção') return _localRazao(unidade, setor);
+  return setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
 }
 
 async function _movSaldo(produto_id, local, delta) {
@@ -13818,11 +13829,14 @@ function _renderizarSetoresBtns() {
   const container = document.getElementById('inv-setor-btns');
   if (!container) return;
 
+  // Central e Producao sao um lugar so: o "Estoque da Loja" la repetiria o
+  // mesmo setor com outro nome, e contar pelos dois dobraria o trabalho.
+  const semEstoqueLoja = local === 'Estoque Central' || local === 'Produção';
   container.innerHTML = setores.map(s => {
     const ativo = s === _invSetor ? ' ativo' : '';
     return `<button class="saldo-grupo-btn inv-setor-btn${ativo}" data-setor="${esc(s)}" onclick="selecionarSetorInv('${esc(s)}')">${esc(s)}</button>`;
-  }).join('') +
-    `<button class="saldo-grupo-btn inv-setor-btn inv-setor-el${_invSetor === 'ESTOQUE DA LOJA' ? ' ativo' : ''}" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>`;
+  }).join('') + (semEstoqueLoja ? '' :
+    `<button class="saldo-grupo-btn inv-setor-btn inv-setor-el${_invSetor === 'ESTOQUE DA LOJA' ? ' ativo' : ''}" data-setor="ESTOQUE DA LOJA" onclick="selecionarSetorInv('ESTOQUE DA LOJA')">🏪 ESTOQUE DA LOJA</button>`);
 }
 
 async function moverGrupoInv(dir) {
