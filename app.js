@@ -3603,17 +3603,25 @@ async function verDetalheContagem(invId) {
 
   titulo.innerHTML = `<i class="bi bi-eye-fill"></i> ${inv?.num_inv || ''} · ${esc(inv?.setor || '')} · ${esc(inv?.grupo || '')}`;
 
-  // Tenta buscar o pedido interno correspondente (mesmo setor/grupo/local/data)
+  // Tenta buscar o pedido interno correspondente (mesmo setor/grupo/local/data).
+  // A coluna do nome em pedidos_internos_itens e 'nome' (nao 'produto_nome'): pedir
+  // 'produto_nome' dava 400, a lista voltava vazia e o Atendido mostrava "—" em toda
+  // contagem, mesmo com o pedido liberado e recebido (achado em 29/09/2026, INV-2092).
   let atendidoMap = {};
   if (inv?.setor && inv?.grupo) {
-    const { data: pedidos } = await sb.from('pedidos_internos')
+    // O pedido nasce logo DEPOIS da contagem (contagem.html grava o inventario e em seguida
+    // o pedido). Pode haver varios com o mesmo setor/grupo/data (28/09: 3 de CONGELADOS da
+    // Cozinha), entao pega o primeiro criado depois desta contagem, nao um qualquer.
+    let qPed = sb.from('pedidos_internos')
       .select('id').eq('setor', inv.setor).eq('obs', inv.grupo)
-      .eq('local', inv.local).eq('data', inv.data).limit(1);
+      .eq('local', inv.local).eq('data', inv.data).eq('tipo', 'normal');
+    if (inv.criado_em) qPed = qPed.gte('criado_em', inv.criado_em);
+    const { data: pedidos } = await qPed.order('criado_em').limit(1);
     if (pedidos?.length) {
       const { data: pedItens } = await sb.from('pedidos_internos_itens')
-        .select('produto_id,produto_nome,qtd_pedida,qtd_liberada').eq('pedido_id', pedidos[0].id);
+        .select('produto_id,nome,qtd_pedida,qtd_liberada').eq('pedido_id', pedidos[0].id);
       (pedItens || []).forEach(pi => {
-        atendidoMap[pi.produto_id || pi.produto_nome] = {
+        atendidoMap[pi.produto_id || pi.nome] = {
           solicitado: pi.qtd_pedida ?? 0,
           atendido:   pi.qtd_liberada ?? '—',
         };
@@ -3632,8 +3640,8 @@ async function verDetalheContagem(invId) {
       <td>${esc(it.nome)}</td>
       <td class="text-center">${+(it.estoque ?? 0)}</td>
       <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
-      <td class="text-center fw-bold text-primary">${+solicitado}</td>
-      <td class="text-center fw-bold ${atCor}">${typeof atendido === 'number' ? +atendido : atendido}</td>
+      <td class="text-center fw-bold text-primary">${+(+solicitado).toFixed(3)}</td>
+      <td class="text-center fw-bold ${atCor}">${typeof atendido === 'number' ? +atendido.toFixed(3) : atendido}</td>
     </tr>`;
   }).join('');
 
