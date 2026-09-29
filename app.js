@@ -2796,11 +2796,17 @@ const INVENTARIO_ESTRUTURA = {
   }
 };
 
+// Grupos do ESTOQUE DA LOJA = uniao dos grupos dos setores de uma estrutura.
+// Funcao pura: a tela de Saldo usa com a estrutura do Centro, sem depender da
+// unidade escolhida na tela de Contagem.
 function _gerarEstoqueLojaEstrutura() {
+  INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = _estoqueLojaDe(INVENTARIO_ESTRUTURA);
+}
+function _estoqueLojaDe(estrutura) {
   const _n = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
   const forceMerge = { 'material expediente': 'MATERIAL DE EXPEDIENTE' };
   const result = {}, seen = {}, normToCanonical = {};
-  Object.entries(INVENTARIO_ESTRUTURA).forEach(([setor, grupos]) => {
+  Object.entries(estrutura || {}).forEach(([setor, grupos]) => {
     if (setor === 'ESTOQUE DA LOJA') return;
     Object.entries(grupos).forEach(([grupo, prods]) => {
       const ng = _n(grupo);
@@ -2810,7 +2816,7 @@ function _gerarEstoqueLojaEstrutura() {
       prods.forEach(p => { const np = _n(p); if (!seen[canonical].has(np)) { result[canonical].push(p); seen[canonical].add(np); } });
     });
   });
-  INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] = result;
+  return result;
 }
 _gerarEstoqueLojaEstrutura(); // initial call (replaces IIFE)
 
@@ -4566,6 +4572,7 @@ function _rotuloLocal(l) {
   if (l === LOCAL_CENTRAL)  return '🏭 Estoque Central';
   if (l === LOCAL_PRODUCAO) return '🍳 Produção';
   if (l === 'ESTOQUE_LOJA') return 'Estoque da Loja';
+  if (l === 'ESTOQUE DELIVERY') return '🛵 Estoque Delivery P10';
   if (l && l.startsWith('P10_')) return 'P10 · ' + (_SETOR_LABEL[l.slice(4)] || l.slice(4));
   return _SETOR_LABEL[l] || l;
 }
@@ -10282,33 +10289,106 @@ let _saldoCustoBase  = 'ultimo_preco';   // 'ultimo_preco' | 'media_3m'
 let _saldoCustoMedia = {};               // produto_id -> custo médio 90 dias
 let _saldoValorTotal = 0;
 let _saldoValorLocal = {};               // local -> valor R$
-let _saldoTodosItens = [];               // todos os produtos (todos os grupos) com matrix de saldo
+let _saldoTodosItens = [];               // todos os produtos (todas as unidades) com matrix de saldo
+
+// ── Unidades da tela de Saldo ──
+// Cada unidade mostra os SEUS grupos (os da tela de Contagem dela) e os SEUS lugares do
+// razao. Antes a tela era montada so com a estrutura do Centro, e as colunas Estoque
+// Central / Producao so apareciam para produto que tambem existe no Centro (29/09/2026:
+// o Central mostrava R$ 855 e o Delivery P10 nem aparecia).
+// P10: so o setor ESTOQUE DELIVERY tem lugar proprio; os outros setores do P10 ainda
+// gravam no mesmo lugar do Centro (ver _localDaContagem) e nao entram aqui.
+const _SALDO_UNIDADES = [
+  { nome: 'Centro',          rotulo: '📍 Centro',          cor: '#16a34a' },
+  { nome: 'Delivery P10',    rotulo: '🛵 Delivery P10',    cor: '#e6ac00', setor: 'ESTOQUE DELIVERY' },
+  { nome: 'Estoque Central', rotulo: '🏭 Estoque Central', cor: '#7c3aed', setor: 'ESTOQUE CENTRAL' },
+  { nome: 'Produção',        rotulo: '🍳 Produção',        cor: '#0891b2', setor: 'PRODUCAO' },
+];
+let _saldoUnidade        = 'Centro';
+// Produto com saldo no lugar da unidade mas fora da lista de Contagem dela (ex.: nota
+// recebida direto no Estoque Central). So para as unidades novas: la todo saldo e
+// recente e real. No Centro o saldo fora da lista e historico e nao entra (ver
+// _saldoLocaisDoItem).
+const _SALDO_GRUPO_FORA = '⚠ FORA DA LISTA';
+let _saldoForaDaLista   = {};   // unidade -> [nome do produto]
+let _saldoLocalPrincipal = 'ESTOQUE_LOJA';   // coluna com o lapis de ajuste
+
+function _saldoUnidadeCfg(u) { return _SALDO_UNIDADES.find(x => x.nome === u) || _SALDO_UNIDADES[0]; }
+
+function _saldoEstruturaCentro() {
+  return Object.keys(_todasEstruturas['Centro'] || {}).length ? _todasEstruturas['Centro'] : INVENTARIO_ESTRUTURA;
+}
+
+// Lugares do razao de uma unidade: o principal (coluna com ajuste) + setores (colunas extras)
+function _saldoLocaisDe(u) {
+  const cfg = _saldoUnidadeCfg(u);
+  if (!cfg.setor) {
+    const setores = Object.keys(_saldoEstruturaCentro()).filter(s => s !== 'ESTOQUE DA LOJA');
+    return { principal: 'ESTOQUE_LOJA', setores };
+  }
+  return { principal: _localDaContagem(u, cfg.setor), setores: [] };
+}
+function _saldoTodosLocais() {
+  const todos = new Set();
+  _SALDO_UNIDADES.forEach(c => { const l = _saldoLocaisDe(c.nome); todos.add(l.principal); l.setores.forEach(x => todos.add(x)); });
+  return [...todos];
+}
+function _saldoValorUnidade(u) {
+  const l = _saldoLocaisDe(u);
+  return [l.principal, ...l.setores].reduce((t, x) => t + (_saldoValorLocal[x] || 0), 0);
+}
+
+// Grupos da unidade { grupo: [nomes] }, na mesma ordem da tela de Contagem
+function _saldoGruposDe(u, semFora) {
+  const cfg = _saldoUnidadeCfg(u);
+  if (!cfg.setor) return _estoqueLojaDe(_saldoEstruturaCentro());
+  const est   = _todasEstruturas[u]?.[cfg.setor] || {};
+  const ordem = _invOrdemGrupos?.[u]?.[cfg.setor] || [];
+  const out = {};
+  ordem.forEach(g => { if (est[g]) out[g] = est[g]; });
+  Object.keys(est).forEach(g => { if (!out[g]) out[g] = est[g]; });
+  if (!semFora && _saldoForaDaLista[u]?.length) out[_SALDO_GRUPO_FORA] = _saldoForaDaLista[u];
+  return out;
+}
 
 async function carregarSaldo() {
   if (!cProdutosFT.length) await carregarProdutosFT();
-  if (!Object.keys(_invMapeamentos).length) await carregarMapeamentosInv();
+  if (!Object.keys(_invMapeamentos).length || !Object.keys(_todasEstruturas).length) await carregarMapeamentosInv();
 
-  // O Estoque Central e a Producao sao lugares do razao, nao setores da loja: nao
-  // saem de INVENTARIO_ESTRUTURA, entram aqui na mao para aparecerem na tela de Saldo.
-  _saldoSetores = [...Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA'),
-                   LOCAL_CENTRAL, LOCAL_PRODUCAO];
-  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
-  const grupos    = Object.keys(estrutura);
-
-  const container = document.getElementById('saldo-grupo-btns');
-  if (container) {
-    container.innerHTML = grupos.map(g =>
-      `<button class="saldo-grupo-btn" data-grupo="${esc(g)}"
-        onclick="selecionarGrupoSaldo('${esc(g)}')">${esc(g)}</button>`
-    ).join('');
-  }
-
-  // Valorização total do estoque (todos os grupos) → KPIs
+  // Valorizacao total do estoque (todas as unidades) → KPIs
   if (_saldoCustoBase === 'media_3m' && !Object.keys(_saldoCustoMedia).length) await _carregarMediaCusto();
   await _carregarValorTotalEstoque();
 
-  if (!_saldoGrupo && grupos.length) await selecionarGrupoSaldo(grupos[0]);
-  else if (_saldoGrupo)              await selecionarGrupoSaldo(_saldoGrupo);
+  const grupos = _montarBotoesGrupoSaldo();
+  const g = _saldoGrupo && grupos.includes(_saldoGrupo) ? _saldoGrupo : grupos[0];
+  if (g) await selecionarGrupoSaldo(g);
+  else { _saldoGrupo = null; _saldoList = []; renderSaldo(); }
+}
+
+async function selecionarUnidadeSaldo(u) {
+  if (u === _saldoUnidade) return;
+  _saldoUnidade = u;
+  _saldoGrupo   = null;
+  renderSaldoKpis();
+  const grupos = _montarBotoesGrupoSaldo();
+  if (grupos.length) await selecionarGrupoSaldo(grupos[0]);
+  else { _saldoList = []; renderSaldo(); }
+}
+
+function _montarBotoesGrupoSaldo() {
+  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
+  _saldoLocalPrincipal = principal;
+  _saldoSetores        = setores;
+  const grupos = Object.keys(_saldoGruposDe(_saldoUnidade));
+  const container = document.getElementById('saldo-grupo-btns');
+  if (container) {
+    container.innerHTML = grupos.length
+      ? grupos.map(g =>
+          `<button class="saldo-grupo-btn" data-grupo="${esc(g)}"
+            onclick="selecionarGrupoSaldo('${esc(g)}')">${esc(g)}</button>`).join('')
+      : '<span class="text-muted small">Esta unidade ainda não tem grupos na tela de Contagem.</span>';
+  }
+  return grupos;
 }
 
 // Custo unitário de um item conforme base selecionada.
@@ -13580,42 +13660,84 @@ async function exportarProdutosSemFicha() {
 
 // Agrega saldo × custo de TODOS os produtos (todos os grupos) para KPIs e snapshot
 async function _carregarValorTotalEstoque() {
-  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
-  const vistos = new Set();
+  const porNome = new Map(cProdutosFT.map(p => [norm((p.nome || '').trim()), p]));
+  const vistos = new Map();   // chave -> item
   const itens = [];
-  for (const grupo of Object.keys(estrutura)) {
-    for (const nome of _nomesGrupoSaldo(grupo)) {   // inclui adições manuais via "+"
-      const nomeBusca = _invMapeamentos[nome] || nome;
-      const prod = cProdutosFT.find(p => norm((p.nome || '').trim()) === norm(nomeBusca.trim()));
-      const pid = prod?.id || null;
-      const chave = pid || norm(nome);
-      if (vistos.has(chave)) continue;   // dedup: mesmo produto em vários grupos
-      vistos.add(chave);
-      itens.push({ produto_id: pid, nome, grupo, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {} });
+  for (const cfg of _SALDO_UNIDADES) {
+    const grupos = _saldoGruposDe(cfg.nome, true);
+    for (const grupo of Object.keys(grupos)) {
+      for (const nome of _nomesGrupoSaldoDe(cfg.nome, grupo, grupos)) {   // inclui adições manuais via "+"
+        const nomeBusca = _invMapeamentos[nome] || nome;
+        const prod = porNome.get(norm(nomeBusca.trim()));
+        const pid = prod?.id || null;
+        const chave = pid || norm(nome);
+        if (vistos.has(chave)) { vistos.get(chave).unidades.add(cfg.nome); continue; }   // dedup: mesmo produto em vários grupos/unidades
+        const item = { produto_id: pid, nome, grupo, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {}, unidades: new Set([cfg.nome]) };
+        vistos.set(chave, item);
+        itens.push(item);
+      }
     }
   }
   const ids = itens.filter(x => x.produto_id).map(x => x.produto_id);
   let saldos = [];
-  for (let i = 0; i < ids.length; i += 300) {
-    const { data } = await sb.from('est_saldo_local').select('produto_id,local,saldo').in('produto_id', ids.slice(i, i + 300));
+  // lotes de 80: cada produto tem ate ~10 lugares e a API corta em 1000 linhas por consulta
+  for (let i = 0; i < ids.length; i += 80) {
+    const { data, error } = await sb.from('est_saldo_local').select('produto_id,local,saldo').in('produto_id', ids.slice(i, i + 80));
+    if (error) { toast('Erro ao carregar o saldo: ' + error.message, 'erro'); return; }
     saldos = saldos.concat(data || []);
   }
   const byId = {};
   saldos.forEach(s => { (byId[s.produto_id] ||= {})[s.local] = Number(s.saldo); });
   itens.forEach(it => { if (it.produto_id) it.matrix = byId[it.produto_id] || {}; });
+
+  // Unidades novas: produto com saldo no lugar dela e fora da lista de Contagem
+  // (monta local e publica no fim: duas cargas da tela ao mesmo tempo duplicavam a lista)
+  const foraDaLista = {};
+  const porId = new Map(cProdutosFT.map(p => [p.id, p]));
+  for (const cfg of _SALDO_UNIDADES.filter(c => c.setor)) {
+    const local = _saldoLocaisDe(cfg.nome).principal;
+    const { data: fora, error } = await sb.from('est_saldo_local').select('produto_id,local,saldo')
+      .eq('local', local).neq('saldo', 0).limit(1000);
+    if (error) { toast('Erro ao carregar o saldo: ' + error.message, 'erro'); return; }
+    for (const r of fora || []) {
+      let item = vistos.get(r.produto_id);
+      if (item?.unidades.has(cfg.nome)) continue;          // ja esta na lista da unidade
+      const prod = porId.get(r.produto_id);
+      if (!item) {
+        item = { produto_id: r.produto_id, nome: prod?.nome || r.produto_id, grupo: _SALDO_GRUPO_FORA, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, matrix: {}, unidades: new Set() };
+        vistos.set(r.produto_id, item);
+        itens.push(item);
+      }
+      item.matrix[local] = Number(r.saldo);
+      item.unidades.add(cfg.nome);
+      (foraDaLista[cfg.nome] ||= []).push(item.nome);
+    }
+  }
+  _saldoForaDaLista = foraDaLista;
   _saldoTodosItens = itens;
   _recalcularValorEstoque();
 }
 
+// Lugares em que um item conta: so os das unidades cuja Contagem tem o item.
+// Saldo num lugar de uma unidade que nao conta o produto nao e corrigido por contagem
+// nenhuma — somar isso inflava o Estoque da Loja de R$ 63 mil para R$ 393 mil (29/09).
+function _saldoLocaisDoItem(it) {
+  const out = new Set();
+  (it.unidades || new Set(['Centro'])).forEach(u => {
+    const l = _saldoLocaisDe(u); out.add(l.principal); l.setores.forEach(x => out.add(x));
+  });
+  return [...out];
+}
+
 // Recalcula _saldoValorTotal e _saldoValorLocal a partir de _saldoTodosItens
 function _recalcularValorEstoque() {
-  const locais = ['ESTOQUE_LOJA', ..._saldoSetores];
+  const locais = _saldoTodosLocais();
   _saldoValorLocal = {};
   locais.forEach(l => _saldoValorLocal[l] = 0);
   _saldoValorTotal = 0;
   for (const it of _saldoTodosItens) {
     const custo = _custoSaldoDe(it);
-    for (const l of locais) {
+    for (const l of _saldoLocaisDoItem(it)) {
       const q = Number(it.matrix?.[l]) || 0;
       if (!q) continue;
       const v = q * custo;
@@ -13637,13 +13759,32 @@ function renderSaldoKpis() {
        </div>
      </div>`;
   const cards = [];
-  cards.push(card('💰 Valor do Estoque', _saldoValorTotal, '#b45309', '#fffbeb', true));
-  cards.push(card('🏪 Estoque da Loja', _saldoValorLocal['ESTOQUE_LOJA'] || 0, '#16a34a', '#f0fdf4'));
-  _saldoSetores.forEach(s => {
-    const cor = _SETOR_COR[s] || (s === LOCAL_CENTRAL ? '#7c3aed' : s === LOCAL_PRODUCAO ? '#0891b2' : '#6c757d');
-    const rot = _SETOR_COR[s] ? `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` : _rotuloLocal(s);
-    cards.push(card(rot, _saldoValorLocal[s] || 0, cor));
+  cards.push(card('💰 Valor do Estoque · todas as unidades', _saldoValorTotal, '#b45309', '#fffbeb', true));
+  // Um cartao por unidade — clicar troca a unidade da tela
+  _SALDO_UNIDADES.forEach(cfg => {
+    const ativo = cfg.nome === _saldoUnidade;
+    cards.push(`<div class="col-md col-6">
+      <button type="button" onclick="selecionarUnidadeSaldo('${cfg.nome}')" aria-pressed="${ativo}"
+        style="width:100%;height:100%;text-align:left;cursor:pointer;border:1px solid ${cfg.cor}55;border-left:4px solid ${cfg.cor};border-radius:.5rem;padding:.6rem .8rem;background:${ativo ? cfg.cor + '1f' : '#fff'};${ativo ? `box-shadow:0 0 0 2px ${cfg.cor}88;` : ''}">
+        <div class="text-muted" style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px">${cfg.rotulo}${ativo ? ' · aberta' : ''}</div>
+        <div style="color:${cfg.cor};font-weight:700;font-size:1.05rem;line-height:1.2">${brl(_saldoValorUnidade(cfg.nome))}</div>
+      </button>
+    </div>`);
   });
+  // Detalhe da unidade aberta
+  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
+  let detalhe = '';
+  if (setores.length) {
+    detalhe = [principal, ...setores].map(l => {
+      const cor = l === 'ESTOQUE_LOJA' ? '#16a34a' : (_SETOR_COR[l] || '#6c757d');
+      const rot = l === 'ESTOQUE_LOJA' ? '🏪 Estoque da Loja' : (_SETOR_COR[l] ? `${_SETOR_EMOJI[l] || ''} ${_SETOR_LABEL[l] || l}` : _rotuloLocal(l));
+      return `<span style="border:1px solid ${cor}44;border-radius:1rem;padding:.15rem .6rem;white-space:nowrap">
+        <span class="text-muted">${rot}</span> <strong style="color:${cor}">${brl(_saldoValorLocal[l] || 0)}</strong></span>`;
+    }).join('');
+  } else if (_saldoUnidade === 'Delivery P10') {
+    detalhe = `<span class="text-muted">Aqui aparece só o setor <strong>Estoque Delivery</strong>. Os outros setores do P10 (Bar, Cozinha...) ainda gravam no mesmo saldo do Centro.</span>`;
+  }
+  if (detalhe) cards.push(`<div class="col-12"><div class="d-flex flex-wrap gap-2 small">${detalhe}</div></div>`);
   el.innerHTML = cards.join('');
 }
 
@@ -13656,8 +13797,11 @@ async function setSaldoCustoBase(base) {
 
 // Nomes de um grupo do Estoque da Loja = estrutura base + produtos adicionados via "+"
 // (dos setores reais que têm o grupo E os adicionados direto no Estoque da Loja).
-function _nomesGrupoSaldo(grupo) {
-  const estrutura = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+function _nomesGrupoSaldo(grupo) { return _nomesGrupoSaldoDe(_saldoUnidade, grupo); }
+function _nomesGrupoSaldoDe(unidade, grupo, grupos) {
+  const estrutura = grupos || _saldoGruposDe(unidade);
+  const cfg = _saldoUnidadeCfg(unidade);
+  if (grupo === _SALDO_GRUPO_FORA) return [...(_saldoForaDaLista[unidade] || [])];
   // Base: respeita a lista de excluídos, igual à Contagem (selecionarGrupoInv).
   // As adições ("+") NÃO são filtradas — assim, se um item excluído for re-adicionado
   // pelo "+", ele continua aparecendo (mesmo comportamento da Contagem).
@@ -13670,9 +13814,11 @@ function _nomesGrupoSaldo(grupo) {
       nomes.push(nome);
     });
   };
-  Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
+  if (cfg.setor) { addChave(`${cfg.setor}|${grupo}`); return nomes; }
+  const centro = _saldoEstruturaCentro();
+  Object.keys(centro).forEach(s => {
     if (s === 'ESTOQUE DA LOJA') return;
-    if (INVENTARIO_ESTRUTURA[s]?.[grupo]) addChave(`${s}|${grupo}`);
+    if (centro[s]?.[grupo]) addChave(`${s}|${grupo}`);
   });
   addChave(`ESTOQUE DA LOJA|${grupo}`);
   return nomes;
@@ -13694,12 +13840,8 @@ async function selecionarGrupoSaldo(grupo) {
     return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '', custo_comp: prod?.custo_comp || 0, fator_conversao: prod?.fator_conversao || 1, perda: prod?.perda || 0, saldo: 0 };
   });
 
-  // Setores fixos (sempre todos)
-  // O Estoque Central e a Producao sao lugares do razao, nao setores da loja: nao
-  // saem de INVENTARIO_ESTRUTURA, entram aqui na mao para aparecerem na tela de Saldo.
-  _saldoSetores = [...Object.keys(INVENTARIO_ESTRUTURA).filter(s => s !== 'ESTOQUE DA LOJA'),
-                   LOCAL_CENTRAL, LOCAL_PRODUCAO];
-  const todosLocais = ['ESTOQUE_LOJA', ..._saldoSetores];
+  // Colunas = lugares da unidade aberta (ver _saldoLocaisDe)
+  ({ principal: _saldoLocalPrincipal, setores: _saldoSetores } = _saldoLocaisDe(_saldoUnidade));
 
   // Saldo de todos os locais via est_saldo_local
   const ids = _saldoList.filter(p => p.produto_id).map(p => p.produto_id);
@@ -13714,7 +13856,7 @@ async function selecionarGrupoSaldo(grupo) {
     _saldoMatrix[s.produto_id][s.local] = Number(s.saldo);
   });
   _saldoList.forEach(p => {
-    if (p.produto_id) p.saldo = _saldoMatrix[p.produto_id]?.['ESTOQUE_LOJA'] ?? 0;
+    if (p.produto_id) p.saldo = _saldoMatrix[p.produto_id]?.[_saldoLocalPrincipal] ?? 0;
   });
 
   renderSaldo();
@@ -13739,14 +13881,18 @@ function renderSaldo() {
     thead.innerHTML = `<tr style="background:#1a1a2e;color:#fff">
       <th style="min-width:200px;padding:.75rem 1rem">Produto</th>
       <th class="text-center" style="min-width:60px">Un.</th>
-      <th class="text-center" style="min-width:120px;background:#166534;color:#fff;border-left:3px solid #16a34a">
-        🏪 Estoque<br><small style="font-weight:400;opacity:.85;font-size:.7rem">da Loja</small>
-      </th>
+      ${_saldoLocalPrincipal === 'ESTOQUE_LOJA'
+        ? `<th class="text-center" style="min-width:120px;background:#166534;color:#fff;border-left:3px solid #16a34a">
+             🏪 Estoque<br><small style="font-weight:400;opacity:.85;font-size:.7rem">da Loja</small>
+           </th>`
+        : `<th class="text-center" style="min-width:140px;background:${_saldoUnidadeCfg(_saldoUnidade).cor};color:#fff">
+             ${_saldoUnidadeCfg(_saldoUnidade).rotulo}<br><small style="font-weight:400;opacity:.85;font-size:.7rem">saldo</small>
+           </th>`}
       ${_saldoSetores.map(s => {
         const cor = _SETOR_COR[s] || '#6c757d';
         return `<th class="text-center" style="min-width:100px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
           ${_SETOR_COR[s] ? `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` : _rotuloLocal(s)}<br>
-          <small style="font-weight:400;font-size:.68rem;opacity:.75">últ. contagem</small>
+          <small style="font-weight:400;font-size:.68rem;opacity:.75">saldo</small>
         </th>`;
       }).join('')}
       <th class="text-center" style="min-width:70px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
@@ -13796,7 +13942,7 @@ function renderSaldo() {
       ? `<div class="d-flex align-items-center justify-content-center gap-1">
            <span class="fw-bold" style="color:${elCor};min-width:36px">${saldoFmt}</span>
            <button class="btn btn-link btn-sm p-0" style="color:#16a34a;font-size:.7rem;line-height:1"
-             title="Ajustar saldo" onclick="ajustarSaldoLocal('${p.produto_id}','ESTOQUE_LOJA','${esc(p.nome)}')">
+             title="Ajustar saldo" onclick="ajustarSaldoLocal('${p.produto_id}','${_saldoLocalPrincipal}','${esc(p.nome)}')">
              ✏️
            </button>
          </div>`
@@ -13919,7 +14065,7 @@ async function ajustarSaldoLocal(produto_id, local, nome) {
   if (!_saldoMatrix[produto_id]) _saldoMatrix[produto_id] = {};
   _saldoMatrix[produto_id][local] = novoSaldo;
   const item = _saldoList.find(p => p.produto_id === produto_id);
-  if (item && local === 'ESTOQUE_LOJA') item.saldo = novoSaldo;
+  if (item && local === _saldoLocalPrincipal) item.saldo = novoSaldo;
   toast('Saldo ajustado.', 'ok');
   // Atualiza também a agregação global (KPIs) sem recarregar tudo
   const glob = _saldoTodosItens.find(it => it.produto_id === produto_id);
@@ -13936,10 +14082,10 @@ function abrirSalvarInventario() {
   if (dataEl) dataEl.value = hoje;
   if (respEl) respEl.value = '';
   document.getElementById('inv-val-base').textContent = _saldoCustoBase === 'media_3m' ? 'Média 3 meses' : 'Último preço';
-  const nProd = _saldoTodosItens.filter(it => it.produto_id && ['ESTOQUE_LOJA', ..._saldoSetores].some(l => (Number(it.matrix?.[l]) || 0) > 0)).length;
+  const nProd = _saldoTodosItens.filter(it => it.produto_id && _saldoLocaisDoItem(it).some(l => (Number(it.matrix?.[l]) || 0) > 0)).length;
   document.getElementById('inv-val-qtd').textContent = nProd + ' com estoque';
   document.getElementById('inv-val-total').textContent = brl(_saldoValorTotal);
-  const setores = ['ESTOQUE_LOJA', ..._saldoSetores]
+  const setores = _saldoTodosLocais()
     .map(l => `${_rotuloLocal(l)}: ${brl(_saldoValorLocal[l] || 0)}`)
     .join(' · ');
   document.getElementById('inv-val-setores').textContent = setores;
@@ -13954,12 +14100,12 @@ async function confirmarSalvarInventario() {
   const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-camera-fill"></i> Salvar Inventário'; } };
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...'; }
 
-  const locais = ['ESTOQUE_LOJA', ..._saldoSetores];
+  const locais = _saldoTodosLocais();
   const { data: inv, error } = await sb.from('est_inventario_valorado').insert([{
     data,
     base_custo: _saldoCustoBase,
     responsavel: resp || null,
-    qtd_produtos: _saldoTodosItens.filter(it => it.produto_id && locais.some(l => (Number(it.matrix?.[l]) || 0) > 0)).length,
+    qtd_produtos: _saldoTodosItens.filter(it => it.produto_id && _saldoLocaisDoItem(it).some(l => (Number(it.matrix?.[l]) || 0) > 0)).length,
     total_valor: _saldoValorTotal,
     valor_por_local: _saldoValorLocal,
   }]).select().single();
@@ -13967,7 +14113,7 @@ async function confirmarSalvarInventario() {
 
   const rows = _saldoTodosItens.map(it => {
     const custo = _custoSaldoDe(it);
-    const qtd = locais.reduce((s, l) => s + (Number(it.matrix?.[l]) || 0), 0);
+    const qtd = _saldoLocaisDoItem(it).reduce((s, l) => s + (Number(it.matrix?.[l]) || 0), 0);
     return { inventario_id: inv.id, produto_id: it.produto_id, nome: it.nome, grupo: it.grupo, quantidade: qtd, custo_unit: custo, valor: qtd * custo };
   }).filter(r => r.quantidade > 0);
 
