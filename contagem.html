@@ -1205,6 +1205,22 @@ function _abrirSubTabEstoque() {
 }
 
 // ─── PIN ─────────────────────────────────────────────────────────
+// "Meus Pedidos" pede o PIN do setor escolhido: sem isso, qualquer celular confirmava o
+// recebimento de qualquer setor. Rastro: 28/09/2026 23:03-23:06 o celular do Bar recebeu os
+// pedidos da COZINHA pela aba Meus Pedidos. Quem contou o setor já digitou o PIN dele
+// (pedirPinSetor) e não precisa repetir. ESTOQUE DA LOJA usa o PIN do Estoque.
+const _meusLiberados = new Set();
+function _pinDoSetorMeus(setor) { return setor === 'ESTOQUE DA LOJA' ? _pins['ESTOQUE'] : _pins[setor]; }
+function _meusSetorLiberado(setor) { return !setor || !_pinDoSetorMeus(setor) || _meusLiberados.has(setor); }
+function pedirPinMeus(setor) {
+  _pinTarget = { tipo: 'meus', setor };
+  _pinBuffer = '';
+  document.getElementById('pin-nome-setor').textContent = `🔐 Meus Pedidos · ${setor.charAt(0) + setor.slice(1).toLowerCase()}`;
+  document.getElementById('pin-erro').textContent = '';
+  atualizarPinDisplay();
+  mostrarModal('modal-pin');
+}
+
 function pedirPinSetor(setor) {
   const pin = _pins[setor];
   if (!pin) { _pedirNomeParaSetor(setor); return; }
@@ -1254,16 +1270,21 @@ function atualizarPinDisplay() {
 }
 function pinConfirm() {
   if (!_pinTarget) return;
-  const esperado = _pinTarget.tipo === 'setor'
-    ? _pins[_pinTarget.setor]
+  const esperado = _pinTarget.tipo === 'setor' ? _pins[_pinTarget.setor]
+    : _pinTarget.tipo === 'meus' ? _pinDoSetorMeus(_pinTarget.setor)
     : _pins['ESTOQUE'];
   const pinBar = _pinTarget.tipo === 'estoque' && _pins['ESTOQUE_BAR'] && _pinBuffer === _pins['ESTOQUE_BAR'];
   if (_pinBuffer === esperado || pinBar) {
     if (_pinTarget.tipo === 'estoque') _estoqueEscopo = pinBar && _pinBuffer !== esperado ? 'BAR_ALCOOLICAS' : null;
     fecharModal('modal-pin');
-    if (_pinTarget.tipo === 'setor') {
+    if (_pinTarget.tipo === 'meus') {
+      _meusLiberados.add(_pinTarget.setor);
+      carregarMeusPedidos();
+    } else if (_pinTarget.tipo === 'setor') {
+      _meusLiberados.add(_pinTarget.setor);
       _pedirNomeParaSetor(_pinTarget.setor);
     } else if (_pinTarget.tipo === 'estoque_loja') {
+      _meusLiberados.add('ESTOQUE DA LOJA');
       selecionarEstoqueLoja();
     } else {
       _estoqueDesbloqueado = true;
@@ -1910,6 +1931,12 @@ async function carregarMeusPedidos() {
   const status = document.getElementById('fil-meus-status')?.value || '';
   const el     = document.getElementById('lst-meus-pedidos');
   if (!setor) { el.innerHTML='<div class="vazio">Selecione um setor.</div>'; return; }
+  if (!_meusSetorLiberado(setor)) {
+    el.innerHTML = `<div class="vazio">🔐 Digite o PIN do setor para ver os pedidos.<br><br>
+      <button class="btn-liberar" onclick="pedirPinMeus('${esc(setor)}')">Digitar PIN</button></div>`;
+    pedirPinMeus(setor);
+    return;
+  }
   let q = sb.from('pedidos_internos').select('*').eq('setor',setor).order('criado_em',{ascending:false}).limit(50);
   if (status) q = q.eq('status', status);
   const { data: peds } = await q;
@@ -2122,6 +2149,7 @@ let _pedEditarMobId = null;
 async function abrirEditarPedidoMob(id) {
   _pedEditarMobId = id;
   const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
+  if (!_meusSetorLiberado(ped?.setor)) { _pedEditarMobId = null; pedirPinMeus(ped.setor); return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td>
@@ -2153,6 +2181,7 @@ async function confirmarEdicaoMob() {
 async function abrirReceberPedido(id) {
   _pedReceberId = id;
   const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
+  if (!_meusSetorLiberado(ped?.setor)) { _pedReceberId = null; pedirPinMeus(ped.setor); return; }
   _pedReceberSetor = ped?.setor || null;
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
@@ -2227,6 +2256,7 @@ async function _confirmarRecebimento() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
   const pedidoId = _pedReceberId, setor = _pedReceberSetor;
+  if (!_meusSetorLiberado(setor)) { toast('Digite o PIN do setor antes de confirmar.', 'err'); return; }
   const quem = _lerQuem('rec-quem');
   if (!quem) return;
   _quemRecebe = quem;
