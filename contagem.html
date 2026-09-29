@@ -1599,6 +1599,46 @@ function _travarEnvio(chave, btnId, aviso) {
 // Por isso: conferir a sessão ANTES da primeira gravação e, se caiu, pedir o login por
 // cima da tela — sem recarregar, para não perder o que foi digitado.
 // NÃO abrir a policy para anon: a chave pública está no código da página.
+// QUEM LIBEROU / QUEM RECEBEU — o celular fica logado numa conta só e passa de mão em mão,
+// então o login não diz quem tocou no botão: a pessoa digita o nome no modal, e o login vai
+// junto quando for outro. Rastro: 28/09/2026 23:00-23:06 os 21 pedidos da noite (Cozinha e
+// Bar) foram liberados sem ajuste nenhum e recebidos 3 minutos depois, e não havia como
+// saber quem fez. Colunas liberado_por / recebido_por (SQL_QUEM_LIBEROU_RECEBEU.sql): enquanto
+// o SQL não roda, a tela segue gravando como antes, sem o nome.
+let _quemLibera = '', _quemRecebe = '', _temColQuem = null;
+function _nomeLogin() { return (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim(); }
+function _quemCom(digitado) {
+  const d = (digitado || '').trim(), l = _nomeLogin();
+  if (!d) return l;
+  return (!l || norm(d) === norm(l)) ? d : `${d} · login ${l}`;
+}
+async function _campoQuem(campo, quem) {
+  if (_temColQuem === null) {
+    const { error } = await sb.from('pedidos_internos').select('liberado_por,recebido_por').limit(1);
+    _temColQuem = !error;
+  }
+  return _temColQuem && quem ? { [campo]: quem } : {};
+}
+function _inputQuem(id, valor, rotulo) {
+  return `<label for="${id}" style="display:block;font-size:.8rem;color:var(--txt2);margin:.25rem 0 .3rem">${rotulo}</label>
+    <input type="text" id="${id}" class="inp-modal" value="${esc(valor)}" placeholder="Seu nome"
+      autocomplete="name" autocorrect="off" spellcheck="false"
+      style="width:100%;text-align:left;padding:.6rem .75rem;margin-bottom:.75rem;box-sizing:border-box">`;
+}
+function _lerQuem(id) {
+  const el = document.getElementById(id);
+  const v = (el?.value || '').trim();
+  if (!v) { if (el) { el.style.borderColor = '#ef4444'; el.focus(); } toast('Escreva seu nome antes de confirmar.', 'err'); }
+  return v;
+}
+function _linhaQuem(ped) {
+  const h = s => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const p = [];
+  if (ped.liberado_em) p.push(`Liberado ${h(ped.liberado_em)}${ped.liberado_por ? ' por ' + esc(ped.liberado_por) : ''}`);
+  if (ped.recebido_em) p.push(`Recebido ${h(ped.recebido_em)}${ped.recebido_por ? ' por ' + esc(ped.recebido_por) : ''}`);
+  return p.length ? `<div class="ped-info" style="padding:0 .75rem .5rem">${p.join(' · ')}</div>` : '';
+}
+
 function _msgErroBanco(e) {
   const m = e?.message || String(e || '');
   if (/row-level security|jwt|not authorized|permission denied/i.test(m))
@@ -1803,7 +1843,7 @@ async function confirmarChegadaTransfMob(pedidoId) {
   try {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
-      .update({ status:'recebido', recebido_em:new Date().toISOString() })
+      .update({ status:'recebido', recebido_em:new Date().toISOString(), ...await _campoQuem('recebido_por', _quemCom(_nomeResponsavel)) })
       .eq('id',pedidoId).eq('status','liberado').select('id,num_pedido,unidade_origem');
     if (error) { toast(_msgErroBanco(error),'err'); return; }
     if (!ok?.length) { toast('Esta transferência já tinha sido confirmada. Nada foi lançado de novo.','err'); carregarPedidosEstoque(); return; }
@@ -1836,6 +1876,7 @@ function _cardPedEstoque(ped, its) {
       <span class="badge-status" style="background:${cor};color:${ped.status==='pendente'?'#000':'#fff'}">${txt}</span>
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th></tr></thead><tbody>${rows}</tbody></table>
+    ${_linhaQuem(ped)}
     ${ped.status==='pendente'?`<div style="display:flex;gap:.5rem;padding:.5rem .75rem .75rem">
       <button class="btn-liberar" style="flex:1" onclick="abrirLiberarPedido('${ped.id}')">📦 Liberar Pedido</button>
       <button class="btn-cancelar-ped" onclick="cancelarPedidoInterno('${ped.id}','${esc(ped.num_pedido)}')">🗑️ Cancelar</button>
@@ -1871,6 +1912,7 @@ function _cardMeusPedidos(ped, its) {
       <span class="badge-status" style="background:${cor};color:${ped.status==='pendente'?'#000':'#fff'}">${txt}</span>
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th><th>Rec.</th></tr></thead><tbody>${rows}</tbody></table>
+    ${_linhaQuem(ped)}
     ${ped.status==='pendente'?`<button class="btn-editar" onclick="abrirEditarPedidoMob('${ped.id}')">✏️ Editar Pedido</button>`:''}
     ${ped.status==='liberado'?`<button class="btn-receber" onclick="abrirReceberPedido('${ped.id}')">✅ Confirmar Recebimento</button>`:''}
   </div>`;
@@ -1931,6 +1973,7 @@ async function abrirLiberarPedido(id) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    ${_inputQuem('lib-quem', _quemLibera, 'Quem está liberando?')}
     <input type="hidden" id="lib-itens" value='${JSON.stringify((itens||[]).map(i=>i.id))}'>`;
   mostrarModal('modal-liberar');
 }
@@ -2014,6 +2057,9 @@ async function _conferirQtdPedido(itens, setor, etapa) {
 
 async function confirmarLiberacao() {
   if (!_pedLiberarId) return;
+  const quem = _lerQuem('lib-quem');
+  if (!quem) return;
+  _quemLibera = quem;
   const ids = JSON.parse(document.getElementById('lib-itens')?.value||'[]');
   {
     const [{ data: pedL }, { data: itsL }] = await Promise.all([
@@ -2028,7 +2074,8 @@ async function confirmarLiberacao() {
     const qtd = parseQtd(document.getElementById(`lib-${id}`)?.value);
     return sb.from('pedidos_internos_itens').update({qtd_liberada:qtd}).eq('id',id);
   }));
-  await sb.from('pedidos_internos').update({status:'liberado',liberado_em:new Date().toISOString()}).eq('id',_pedLiberarId);
+  await sb.from('pedidos_internos').update({status:'liberado',liberado_em:new Date().toISOString(),
+    ...await _campoQuem('liberado_por', _quemCom(quem))}).eq('id',_pedLiberarId);
   fecharModal('modal-liberar');
   toast('Pedido liberado! ✅','ok');
   carregarPedidosEstoque();
@@ -2092,6 +2139,7 @@ async function abrirReceberPedido(id) {
       <thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th><th>Rec.</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    ${_inputQuem('rec-quem', _quemRecebe, 'Quem está recebendo?')}
     <input type="hidden" id="rec-itens" value='${JSON.stringify((itens||[]).map(i=>i.id))}'>`;
   mostrarModal('modal-receber');
 }
@@ -2153,6 +2201,9 @@ async function _confirmarRecebimento() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
   const pedidoId = _pedReceberId, setor = _pedReceberSetor;
+  const quem = _lerQuem('rec-quem');
+  if (!quem) return;
+  _quemRecebe = quem;
   const ids  = JSON.parse(document.getElementById('rec-itens')?.value||'[]');
   const qtds = Object.fromEntries(ids.map(id => [id, parseQtd(document.getElementById(`rec-${id}`)?.value)]));
 
@@ -2166,7 +2217,7 @@ async function _confirmarRecebimento() {
   if (atraso) { await _encerrarPedidoAtrasado(pedidoId, atraso); return; }
 
   const { data: reservado, error: eRes } = await sb.from('pedidos_internos')
-    .update({status:'recebido',recebido_em:new Date().toISOString()})
+    .update({status:'recebido',recebido_em:new Date().toISOString(), ...await _campoQuem('recebido_por', _quemCom(quem))})
     .eq('id',pedidoId).eq('status','liberado').select('id');
   if (eRes) { toast(_msgErroBanco(eRes),'err'); return; }
   if (!reservado?.length) {

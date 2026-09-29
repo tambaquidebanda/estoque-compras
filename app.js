@@ -4181,6 +4181,28 @@ async function carregarMeusPedidos() {
   _renderMeusPedidos(peds, itens || []);
 }
 
+// QUEM LIBEROU / QUEM RECEBEU — no computador o login é pessoal, então grava o nome do login.
+// No celular a pessoa digita o nome (contagem.html). Rastro: 28/09/2026 23:00-23:06 os 21
+// pedidos da noite foram liberados sem ajuste e recebidos 3 minutos depois, sem como saber
+// quem fez. Colunas liberado_por / recebido_por (SQL_QUEM_LIBEROU_RECEBEU.sql): enquanto o
+// SQL não roda, grava como antes, sem o nome.
+let _temColQuem = null;
+async function _campoQuem(campo, quem) {
+  if (_temColQuem === null) {
+    const { error } = await sb.from('pedidos_internos').select('liberado_por,recebido_por').limit(1);
+    _temColQuem = !error;
+  }
+  return _temColQuem && quem ? { [campo]: quem } : {};
+}
+function _rodapeQuem(ped) {
+  const h = s => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const p = [];
+  if (ped.responsavel) p.push(`Responsável: ${esc(ped.responsavel)}`);
+  if (ped.liberado_em) p.push(`Liberado ${h(ped.liberado_em)}${ped.liberado_por ? ' por ' + esc(ped.liberado_por) : ''}`);
+  if (ped.recebido_em) p.push(`Recebido ${h(ped.recebido_em)}${ped.recebido_por ? ' por ' + esc(ped.recebido_por) : ''}`);
+  return p.length ? `<div class="card-footer py-1 small text-muted">${p.join(' · ')}</div>` : '';
+}
+
 function _renderPedEstoque(peds, todosItens) {
   document.getElementById('lst-pedidos-estoque').innerHTML = peds.map(ped => {
     const its = todosItens.filter(it => it.pedido_id === ped.id);
@@ -4217,7 +4239,7 @@ function _renderPedEstoque(peds, todosItens) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      ${ped.responsavel ? `<div class="card-footer py-1 small text-muted">Responsável: ${esc(ped.responsavel)}</div>` : ''}
+      ${_rodapeQuem(ped)}
     </div>`;
   }).join('');
 }
@@ -4259,7 +4281,7 @@ function _renderMeusPedidos(peds, todosItens) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      ${ped.responsavel ? `<div class="card-footer py-1 small text-muted">Responsável: ${esc(ped.responsavel)}</div>` : ''}
+      ${_rodapeQuem(ped)}
     </div>`;
   }).join('');
 }
@@ -4440,6 +4462,7 @@ async function confirmarLiberacao() {
 
   await sb.from('pedidos_internos').update({
     status: 'liberado', liberado_em: new Date().toISOString(),
+    ...await _campoQuem('liberado_por', _nomeUsuario()),
   }).eq('id', _pedLiberarId);
 
   bootstrap.Modal.getInstance(document.getElementById('modal-liberar-pedido'))?.hide();
@@ -4864,6 +4887,7 @@ async function _confirmarRecebimentoInv() {
 
   const { data: reservado, error: eRes } = await sb.from('pedidos_internos').update({
     status: 'recebido', recebido_em: new Date().toISOString(),
+    ...await _campoQuem('recebido_por', _nomeUsuario()),
   }).eq('id', pedidoId).eq('status', 'liberado').select('id');
   if (eRes) { toast(_msgErroBanco(eRes), 'erro'); return; }
   if (!reservado?.length) {
@@ -5052,7 +5076,8 @@ async function enviarTransferencia(pedidoId) {
   try {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
-      .update({ status: 'liberado', liberado_em: new Date().toISOString() })
+      .update({ status: 'liberado', liberado_em: new Date().toISOString(),
+        ...await _campoQuem('liberado_por', _transfResp() || _nomeUsuario()) })
       .eq('id', pedidoId).eq('status', 'pendente')
       .select('id,num_pedido,unidade_origem,local');
     if (error) { toast('Erro ao enviar: ' + error.message, 'erro'); return; }
@@ -5083,7 +5108,8 @@ async function confirmarRecebimentoTransf(pedidoId) {
   try {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
-      .update({ status: 'recebido', recebido_em: new Date().toISOString() })
+      .update({ status: 'recebido', recebido_em: new Date().toISOString(),
+        ...await _campoQuem('recebido_por', _transfResp() || _nomeUsuario()) })
       .eq('id', pedidoId).eq('status', 'liberado')
       .select('id,num_pedido,unidade_origem,local');
     if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
@@ -5135,6 +5161,7 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
     num_pedido, tipo: 'transferencia', setor: 'TRANSFERENCIA', origem,
     local: destino, unidade_origem: deOnde,
     status: entrega ? 'liberado' : 'pendente', liberado_em: entrega ? agora : null,
+    ...(entrega ? await _campoQuem('liberado_por', _transfResp() || _nomeUsuario()) : {}),
     responsavel: _transfResp(), data: hojeLocal(),
     obs: entrega ? 'Entrega da Produção' : 'Pedido ao Estoque Central',
   }).select().single();
