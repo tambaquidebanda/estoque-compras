@@ -68,7 +68,7 @@
       background: none; border: 1px solid var(--borda); color: var(--txt2);
       border-radius: 8px; padding: .3rem .7rem; font-size: .78rem; cursor: pointer;
     }
-    .local-pills { display: flex; gap: .5rem; margin-bottom: .5rem; }
+    .local-pills { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; margin-bottom: .5rem; }
     .pill {
       flex: 1; text-align: center; padding: .45rem; border-radius: 8px;
       border: 1px solid var(--borda); color: var(--txt2); font-size: .82rem;
@@ -426,6 +426,8 @@
     <div class="local-pills">
       <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
       <div class="pill" data-local="Delivery P10" onclick="escolherLocal('Delivery P10')">🛵 Delivery P10</div>
+      <div class="pill" data-local="Estoque Central" onclick="escolherLocal('Estoque Central')">🏭 Est. Central</div>
+      <div class="pill" data-local="Produção" onclick="escolherLocal('Produção')">🍳 Produção</div>
     </div>
     <div id="aviso-unidade" style="display:none;background:#dc2626;color:#fff;font-weight:700;
          text-align:center;padding:.5rem;border-radius:8px;margin-bottom:.5rem;font-size:.85rem"></div>
@@ -898,7 +900,9 @@ async function _conferirUnidadeDaNoite(resp, local, data) {
     const { data: hoje } = await sb.from('est_inventarios')
       .select('local,setor,criado_em').eq('data', data).eq('responsavel', resp)
       .order('criado_em', { ascending: false }).limit(50);
-    const noCentro = (hoje || []).filter(r => r.local === 'Centro');
+    // quem contou o ESTOQUE DA LOJA pode contar o Central/Producao (o estoquista cuida dos dois)
+    const unico = _ESTOQUES_MOB[local]?.unico;
+    const noCentro = (hoje || []).filter(r => r.local === 'Centro' && !(unico && r.setor === 'ESTOQUE DA LOJA'));
     if (!noCentro.length) return true;
     const h = new Date(noCentro[0].criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     alert(
@@ -917,6 +921,7 @@ async function _conferirUnidadeDaNoite(resp, local, data) {
 // Depois de gravar, a unidade volta sozinha para o Centro. E a trava 1: quem
 // escolheu errado perde um grupo, nao a noite.
 function _voltarAoCentro() {
+  if (_estoqueMob().unico) return;   // Est. Central / Producao: nao ha setor da loja para errar
   if (_local !== 'Centro') selecionarLocal('Centro');
 }
 
@@ -1091,7 +1096,36 @@ async function sair() { await sb.auth.signOut(); location.reload(); }
 // Desde 01/06 nenhuma contagem de setor no Est. Central foi de verdade, e Produção só teve
 // uso em 28-30/06. O Estoque Central continua no computador (index.html), onde atende as
 // transferências. Agora a tela abre sempre no Centro e o P10 pede confirmação a cada vez.
-const _LOCAIS_MOB = ['Centro', 'Delivery P10'];
+const _LOCAIS_MOB = ['Centro', 'Delivery P10', 'Estoque Central', 'Produção'];
+
+// Estoque Central e Producao VOLTARAM ao celular em 29/09/2026 (a equipe conta la pelo
+// celular), mas sem repetir o 10/09: nessas duas unidades a grade mostra SO o botao do
+// estoque delas — nao existe Bar/Salao/ASG para contar no lugar errado. Cada estoque tem
+// PIN proprio e grava no seu lugar do razao (o mesmo do computador, _localDaContagem):
+// CENTRAL, PRODUCAO e, no P10, ESTOQUE DELIVERY. No P10 o botao "Estoque da Loja" saiu:
+// ele gravava no ESTOQUE_LOJA do Centro.
+const _ESTOQUES_MOB = {
+  'Centro':          { setor: 'ESTOQUE DA LOJA',  local: 'ESTOQUE_LOJA',     pin: 'ESTOQUE',          emoji: '🏪', nome: 'Estoque da Loja' },
+  'Delivery P10':    { setor: 'ESTOQUE DELIVERY', local: 'ESTOQUE DELIVERY', pin: 'ESTOQUE DELIVERY', emoji: '🛵', nome: 'Estoque Delivery' },
+  'Estoque Central': { setor: 'ESTOQUE CENTRAL',  local: 'CENTRAL',          pin: 'ESTOQUE CENTRAL',  emoji: '🏭', nome: 'Estoque Central', unico: true },
+  'Produção':        { setor: 'PRODUCAO',         local: 'PRODUCAO',         pin: 'PRODUCAO',         emoji: '🍳', nome: 'Produção',        unico: true },
+};
+function _estoqueMob() { return _ESTOQUES_MOB[_local] || _ESTOQUES_MOB['Centro']; }
+function _modoSaldo()  { return !!_setor && _setor === _estoqueMob().setor; }   // contagem so de saldo, sem pedido
+
+const _SETORES_BTN_MOB = [
+  ['CHURRASQUEIRA', '🔥', 'Churrasqueira'], ['COZINHA', '🍳', 'Cozinha'], ['BAR', '🍹', 'Bar'],
+  ['SALAO', '🪑', 'Salão'], ['ASG', '🧹', 'ASG'], ['DELIVERY', '🛵', 'Delivery'],
+];
+function _renderSetorGrid() {
+  const grid = document.querySelector('#setor-grid .setor-grid');
+  if (!grid) return;
+  const est = _estoqueMob();
+  const setores = est.unico ? '' : _SETORES_BTN_MOB.map(([k, e, r]) =>
+    `<button class="setor-btn" onclick="pedirPinSetor('${k}')">${e}<br>${r}</button>`).join('');
+  grid.innerHTML = setores +
+    `<button class="setor-btn" onclick="pedirPinEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">${est.emoji}<br>${est.nome}</button>`;
+}
 
 function escolherLocal(l) {
   if (l === _local) return;
@@ -1101,7 +1135,15 @@ function escolherLocal(l) {
 
 function selecionarLocal(l) {
   if (!_LOCAIS_MOB.includes(l)) l = 'Centro';
+  const trocou = l !== _local;
   _local = l;
+  if (trocou && _setor) voltarSetores();   // o setor aberto era da outra unidade
+  _renderSetorGrid();
+  if (!_setor) {                           // na grade: rodape conforme a unidade
+    document.getElementById('btn-enviar').style.display        = '';
+    document.getElementById('btn-saldo-inicial').style.display = '';
+    _rodapeDaUnidade();
+  }
   if (Object.keys(_todasEstruturasMob).length) _aplicarEstruturaLocalMob(l);
   document.querySelectorAll('.local-pills .pill').forEach(el => {
     el.className = 'pill' + (el.dataset.local === l ? ' ativo' : '');
@@ -1243,11 +1285,12 @@ function pedirPinEstoque() {
   mostrarModal('modal-pin');
 }
 function pedirPinEstoqueLoja() {
-  const pin = _pins['ESTOQUE'];
+  const est = _estoqueMob();
+  const pin = _pins[est.pin];
   if (!pin) { selecionarEstoqueLoja(); return; }
-  _pinTarget = { tipo: 'estoque_loja' };
+  _pinTarget = { tipo: 'estoque_loja', pinKey: est.pin };
   _pinBuffer = '';
-  document.getElementById('pin-nome-setor').textContent = '🔐 Estoque da Loja';
+  document.getElementById('pin-nome-setor').textContent = `🔐 ${est.nome}`;
   document.getElementById('pin-erro').textContent = '';
   atualizarPinDisplay();
   mostrarModal('modal-pin');
@@ -1272,6 +1315,7 @@ function pinConfirm() {
   if (!_pinTarget) return;
   const esperado = _pinTarget.tipo === 'setor' ? _pins[_pinTarget.setor]
     : _pinTarget.tipo === 'meus' ? _pinDoSetorMeus(_pinTarget.setor)
+    : _pinTarget.tipo === 'estoque_loja' ? _pins[_pinTarget.pinKey || 'ESTOQUE']
     : _pins['ESTOQUE'];
   const pinBar = _pinTarget.tipo === 'estoque' && _pins['ESTOQUE_BAR'] && _pinBuffer === _pins['ESTOQUE_BAR'];
   if (_pinBuffer === esperado || pinBar) {
@@ -1284,7 +1328,7 @@ function pinConfirm() {
       _meusLiberados.add(_pinTarget.setor);
       _pedirNomeParaSetor(_pinTarget.setor);
     } else if (_pinTarget.tipo === 'estoque_loja') {
-      _meusLiberados.add('ESTOQUE DA LOJA');
+      if ((_pinTarget.pinKey || 'ESTOQUE') === 'ESTOQUE') _meusLiberados.add('ESTOQUE DA LOJA');
       selecionarEstoqueLoja();
     } else {
       _estoqueDesbloqueado = true;
@@ -1347,12 +1391,20 @@ function voltarSetores() {
   document.getElementById('btn-saldo-inicial').disabled       = true;
   document.getElementById('btn-salvar-saldo').style.display   = 'none';
   document.getElementById('btn-salvar-saldo').disabled        = true;
+  _rodapeDaUnidade();
+}
+// Est. Central / Producao so contam o estoque (sem pedido de setor): some o rodape de pedido.
+function _rodapeDaUnidade() {
+  if (!_estoqueMob().unico || _setor) return;
+  document.getElementById('btn-enviar').style.display        = 'none';
+  document.getElementById('btn-saldo-inicial').style.display = 'none';
 }
 function selecionarEstoqueLoja() {
-  _setor = 'ESTOQUE DA LOJA'; _grupo = null; _grupoProds = [];
+  const est = _estoqueMob();
+  _setor = est.setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display         = 'none';
   document.getElementById('grupos-produtos').style.display    = 'block';
-  document.getElementById('breadcrumb-setor').textContent     = '🏪 Estoque da Loja';
+  document.getElementById('breadcrumb-setor').textContent     = `${est.emoji} ${est.nome}`;
   document.getElementById('btn-enviar').style.display         = 'none';
   document.getElementById('btn-saldo-inicial').style.display  = 'none';
   document.getElementById('btn-salvar-saldo').style.display   = '';
@@ -1379,7 +1431,8 @@ async function salvarSaldoContagem() {
     unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
   }));
 
-  if (!await _conferirContagemFora(itensCont, 'ESTOQUE DA LOJA', _local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
+  const est = _estoqueMob();
+  if (!await _conferirContagemFora(itensCont, est.setor, _local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
   if (!await _conferirUnidadeDaNoite(resp, _local, data)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
 
   if (!await _garantirSessao()) { btn.disabled = false; btn.textContent = '💾 Salvar Saldo'; return; }
@@ -1388,7 +1441,7 @@ async function salvarSaldoContagem() {
   const num_inv = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
     num_inv, data, local: _local, responsavel: resp,
-    setor: 'ESTOQUE DA LOJA', grupo: _grupo, total_geral: 0,
+    setor: est.setor, grupo: _grupo, total_geral: 0,
   }]).select().single();
   if (inv) {
     await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
@@ -1396,9 +1449,9 @@ async function salvarSaldoContagem() {
 
   // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: est.local, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_grupo}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ${est.setor}/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
@@ -1472,7 +1525,7 @@ async function selecionarGrupo(grupo) {
   }
 
   renderProdutos();
-  if (_setor === 'ESTOQUE DA LOJA') {
+  if (_modoSaldo()) {
     document.getElementById('btn-salvar-saldo').disabled = false;
   } else {
     document.getElementById('btn-enviar').disabled = false;
@@ -1482,7 +1535,7 @@ async function selecionarGrupo(grupo) {
 
 function renderProdutos() {
   const el   = document.getElementById('lista-produtos');
-  const isEL = _setor === 'ESTOQUE DA LOJA';
+  const isEL = _modoSaldo();
   if (!_grupoProds.length) {
     el.innerHTML = '<div class="vazio">Nenhum produto neste grupo.</div>';
     return;
@@ -2364,6 +2417,7 @@ function removerItemEmergMob(idx) {
 function abrirEmergencia() {
   _liberarTela('emergencia');   // abrir o modal emite um bilhete novo
   if (!_setor) { toast('Entre com o PIN de um setor antes de fazer um pedido de emergência.', 'err'); return; }
+  if (_modoSaldo()) { toast('Pedido de emergência é de setor. No estoque só se conta o saldo.', 'err'); return; }
   _emergIdxMob = 0;
   _buildProdutosEmerg();
   document.getElementById('emerg-setor-nome').textContent = _setor;

@@ -5571,11 +5571,17 @@ async function _enviarEmergencia() {
 }
 
 // ─── PINs Mobile ─────────────────────────────────────────────────
+// Chave = nome gravado em inv_configuracoes.pins (o celular le por essa chave).
+// 'ESTOQUE CENTRAL', 'PRODUCAO' e 'ESTOQUE DELIVERY' = contagem do estoque de cada
+// unidade no celular (contagem.html, _ESTOQUES_MOB). O id do campo troca espaco por _.
+// ATENCAO: salvarPins regrava o objeto inteiro — aba antiga sem estas chaves as apaga.
+const _PIN_CHAVES = ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR',
+                     'ESTOQUE CENTRAL','PRODUCAO','ESTOQUE DELIVERY'];
 async function abrirConfigurarPins() {
   const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave','pins').single();
   const pinsAtual = data?.valor || {};
-  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR'].forEach(s => {
-    const el = document.getElementById(`pin-${s}`);
+  _PIN_CHAVES.forEach(s => {
+    const el = document.getElementById(`pin-${s.replace(/ /g, '_')}`);
     if (el) el.value = pinsAtual[s] || '';
   });
   new bootstrap.Modal(document.getElementById('modal-pins')).show();
@@ -5583,8 +5589,8 @@ async function abrirConfigurarPins() {
 
 async function salvarPins() {
   const pins = {};
-  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR'].forEach(s => {
-    const val = document.getElementById(`pin-${s}`)?.value?.trim();
+  _PIN_CHAVES.forEach(s => {
+    const val = document.getElementById(`pin-${s.replace(/ /g, '_')}`)?.value?.trim();
     if (val) pins[s] = val;
   });
   // PIN do Bar só libera ALCOÓLICAS; se for igual ao do Estoque, o celular abre acesso completo.
