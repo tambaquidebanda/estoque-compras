@@ -1559,22 +1559,42 @@
       </div><!-- /tab-content outer -->
 
       <!-- Modal: Nova Transferência (pedir ao Central / Produção entrega ao Central) -->
+      <!-- Lista inteira da origem por grupo; so vai no pedido o que tiver quantidade (app.js, _transfQtd) -->
       <div class="modal fade" id="modal-nova-transf" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-dialog modal-dialog-centered modal-xl modal-fullscreen-lg-down">
           <div class="modal-content">
             <div class="modal-header">
               <h5 class="modal-title" id="transf-modal-titulo">🔄 Pedir ao Estoque Central</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-              <p class="small text-muted" id="transf-modal-dica"></p>
-              <div class="mb-3">
-                <label class="form-label small fw-bold">Buscar produto</label>
-                <input type="text" class="form-control" id="transf-busca-prod" placeholder="Digite o nome do produto..." oninput="buscarProdutosTransf()">
+              <p class="small text-muted mb-2" id="transf-modal-dica"></p>
+              <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                <input type="search" class="form-control form-control-sm" id="transf-busca-prod" style="max-width:260px"
+                  placeholder="Buscar na lista..." oninput="_renderTransfCatalogo()">
+                <div id="transf-grupos" class="d-flex flex-wrap gap-1"></div>
               </div>
-              <div id="transf-resultados-busca" class="mb-3"></div>
-              <div id="transf-itens-lista">
-                <p class="text-muted small">Nenhum produto adicionado ainda.</p>
+              <div class="row g-3">
+                <div class="col-lg-8">
+                  <div class="table-responsive" style="max-height:60vh;overflow-y:auto;border:1px solid #e5e7eb;border-radius:.5rem">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead class="table-light" style="position:sticky;top:0;z-index:1">
+                        <tr><th class="ps-3">Produto</th><th class="text-center">Un.</th>
+                          <th class="text-center" id="transf-col-saldo">No Central</th>
+                          <th class="text-center" style="width:130px">Quantidade</th></tr>
+                      </thead>
+                      <tbody id="transf-catalogo"><tr><td colspan="4" class="text-center text-muted py-4">Carregando...</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="col-lg-4">
+                  <div style="border:1px solid #e5e7eb;border-radius:.5rem;padding:.75rem;position:sticky;top:0">
+                    <div class="fw-semibold mb-2">🧾 Seu pedido <span class="badge bg-success" id="transf-qtd-itens">0</span></div>
+                    <div id="transf-itens-lista" style="max-height:52vh;overflow-y:auto">
+                      <p class="text-muted small mb-0">Digite a quantidade na lista ao lado. Só vai no pedido o que tiver quantidade.</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="modal-footer">

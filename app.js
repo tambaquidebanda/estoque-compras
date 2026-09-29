@@ -2841,7 +2841,6 @@ let _invExcluidos    = new Set();
 let _invAdicoes      = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _invPadroes      = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
 let _invOrdemGrupos  = {};   // { unidade: { setor: ['grupo1','grupo2',...] } }
-let _transfItens     = [];   // { produto_id, nome, unidade, qtd }
 
 const _DIAS_LABEL = { seg:'Segunda', ter:'Terça', qua:'Quarta', qui:'Quinta', sex:'Sexta', sab:'Sábado', dom:'Domingo', feriado:'Feriado' };
 const _DIAS_SEM   = ['dom','seg','ter','qua','qui','sex','sab'];
@@ -4969,7 +4968,6 @@ const _transfLugar = u => _localRazao(u, 'ESTOQUE DA LOJA');
 const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
   : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central)
-let _transfBusca  = [];
 let _transfEmVoo  = false;
 
 function _transfResp() { return (document.getElementById('inv-resp')?.value || '').trim(); }
@@ -5202,89 +5200,169 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
   return pedido;
 }
 
-function abrirNovaTransferencia(modo = 'pedir') {
+// ── PEDIR AO CENTRAL / ENTREGAR AO CENTRAL: lista inteira da ORIGEM, por grupo ──
+// Antes era busca + "adicionar" item por item: em dia de muito pedido virava uma
+// digitacao sem fim (Wagner, 29/09/2026). Agora a tela mostra a lista da origem
+// (a estrutura do Central, ou da Producao na entrega — a mesma que o Wagner conferiu
+// em 25/09) separada pelos grupos da Contagem, com o saldo de la. Quem pede so digita
+// a quantidade na linha; vai no pedido SO o que tiver quantidade (nao a lista toda,
+// como no pedido do setor). O painel "Seu pedido" mostra o que ja foi escolhido.
+let _transfCatalogo = [];     // { produto_id, nome, unidade, grupo, saldo }
+let _transfQtd      = {};     // produto_id -> texto digitado
+let _transfGrupoSel = '';     // '' = todos
+
+function _transfOrigem() { return _transfModo === 'entregar' ? 'Produção' : 'Estoque Central'; }
+
+async function abrirNovaTransferencia(modo = 'pedir') {
   _transfModo = modo;
-  _transfItens = [];
-  _transfBusca = [];
+  _transfQtd = {};
+  _transfGrupoSel = '';
   const entrega = modo === 'entregar';
+  const deOnde  = _transfOrigem();
   document.getElementById('transf-modal-titulo').textContent = entrega
     ? '📤 Entregar ao Estoque Central — o que a Produção fabricou'
     : `🔄 Pedir ao Estoque Central — para ${_invLocal || 'Centro'}`;
-  document.getElementById('transf-modal-ok').textContent = entrega ? '📤 Enviar ao Central' : '📤 Enviar pedido';
   document.getElementById('transf-modal-dica').textContent = entrega
-    ? 'O saldo sai da Produção agora; entra no Central quando ele confirmar a chegada.'
-    : 'O Central confere e envia; o saldo só entra aqui quando você confirmar a chegada.';
+    ? 'Digite a quantidade do que vai. O saldo sai da Produção agora; entra no Central quando ele confirmar a chegada.'
+    : 'Digite a quantidade só do que você precisa — o resto não vai no pedido. O Central confere e envia; o saldo só entra aqui quando você confirmar a chegada.';
+  document.getElementById('transf-col-saldo').textContent = entrega ? 'Na Produção' : 'No Central';
   const inp = document.getElementById('transf-busca-prod');
   if (inp) inp.value = '';
-  document.getElementById('transf-resultados-busca').innerHTML = '';
-  _renderTransfItensSelecionados();
+  document.getElementById('transf-catalogo').innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Carregando...</td></tr>';
+  document.getElementById('transf-grupos').innerHTML = '';
+  _renderTransfPedido();
   new bootstrap.Modal(document.getElementById('modal-nova-transf')).show();
-}
 
-// Só oferece o que a ORIGEM guarda: a estrutura do Central (ou da Produção, na
-// entrega) é a lista que o Wagner conferiu em 25/09. Mostra o saldo de lá.
-async function buscarProdutosTransf() {
-  const q  = norm((document.getElementById('transf-busca-prod')?.value || '').trim());
-  const el = document.getElementById('transf-resultados-busca');
-  if (q.length < 2) { el.innerHTML = ''; return; }
   if (!cProdutosFT.length) await carregarProdutosFT();
-  const deOnde = _transfModo === 'entregar' ? 'Produção' : 'Estoque Central';
-  const nomes  = new Set();
-  Object.values(_todasEstruturas[deOnde] || {}).forEach(gr => Object.values(gr || {}).forEach(ps => (ps || []).forEach(n => nomes.add(norm(n)))));
-  _transfBusca = cProdutosFT
-    .filter(p => p.ativo !== false && nomes.has(norm(p.nome)) && norm(p.nome).includes(q))
-    .filter(p => _transfModo !== 'entregar' || ['SA', 'PPP'].includes(p.tipo))
-    .slice(0, 12);
-  if (!_transfBusca.length) { el.innerHTML = `<p class="text-muted small">Nada com esse nome na lista do ${esc(deOnde)}.</p>`; return; }
-  const { data: sal } = await sb.from('est_saldo_local').select('produto_id,saldo')
-    .eq('local', _transfLugar(deOnde)).in('produto_id', _transfBusca.map(p => p.id));
-  const saldo = Object.fromEntries((sal || []).map(s => [s.produto_id, s.saldo]));
-  el.innerHTML = _transfBusca.map((p, i) =>
-    `<button class="btn btn-sm btn-outline-secondary me-1 mb-1" onclick="adicionarItemTransf(${i})">
-      + ${esc(p.nome)} <span class="text-muted">(${saldo[p.id] != null ? 'tem ' + _transfQ(saldo[p.id]) : 'sem saldo'} ${esc(p.unidade_uso || '')})</span>
-    </button>`).join('');
+  if (!Object.keys(_todasEstruturas).length) await carregarMapeamentosInv();
+  const porNome = new Map(cProdutosFT.filter(p => p.ativo !== false).map(p => [norm((p.nome || '').trim()), p]));
+  const cat = [], vistos = new Set();
+  Object.entries(_todasEstruturas[deOnde] || {}).forEach(([setor, gr]) => {
+    const ordem  = _invOrdemGrupos?.[deOnde]?.[setor] || [];
+    const grupos = [...ordem.filter(g => gr?.[g]), ...Object.keys(gr || {}).filter(g => !ordem.includes(g))];
+    grupos.forEach(g => {
+      const nomes = [...(gr[g] || []).filter(n => !_invExcluidos.has(n)), ...(_invAdicoes[`${setor}|${g}`] || [])];
+      nomes.forEach(n => {
+        const p = porNome.get(norm((_invMapeamentos[n] || n).trim()));
+        if (!p || vistos.has(p.id)) return;
+        if (entrega && !['SA', 'PPP'].includes(p.tipo)) return;   // a Producao entrega o que fabrica
+        vistos.add(p.id);
+        cat.push({ produto_id: p.id, nome: p.nome, unidade: p.unidade_uso || p.unidade_comp || '', grupo: g, saldo: null });
+      });
+    });
+  });
+  // saldo da origem, em lotes (a API corta em 1000 linhas e .in() grande estoura a URL)
+  const lugar = _transfLugar(deOnde), saldo = {};
+  for (let i = 0; i < cat.length; i += 100) {
+    const { data, error } = await sb.from('est_saldo_local').select('produto_id,saldo')
+      .eq('local', lugar).in('produto_id', cat.slice(i, i + 100).map(c => c.produto_id));
+    if (error) { toast('Erro ao carregar o saldo: ' + error.message, 'erro'); break; }
+    (data || []).forEach(s => { saldo[s.produto_id] = Number(s.saldo); });
+  }
+  cat.forEach(c => { c.saldo = saldo[c.produto_id] ?? null; });
+  _transfCatalogo = cat;
+  const grupos = [...new Set(cat.map(c => c.grupo))];
+  document.getElementById('transf-grupos').innerHTML = ['', ...grupos].map(g =>
+    `<button type="button" class="btn btn-sm ${g === _transfGrupoSel ? 'btn-dark' : 'btn-outline-secondary'}" data-transf-grupo="${esc(g)}"
+      onclick="_transfGrupoSel=this.dataset.transfGrupo;_renderTransfCatalogo()">${g ? esc(g) : 'Todos'}</button>`).join('');
+  _renderTransfCatalogo();
 }
 
-function adicionarItemTransf(i) {
-  const p = _transfBusca[i];
-  if (!p) return;
-  if (_transfItens.find(x => x.produto_id === p.id)) { toast('Produto já adicionado.', 'erro'); return; }
-  _transfItens.push({ produto_id: p.id, nome: p.nome, unidade: p.unidade_uso || '', qtd: '' });
-  _renderTransfItensSelecionados();
-  const inp = document.getElementById('transf-busca-prod');
-  if (inp) { inp.value = ''; inp.focus(); }
-  document.getElementById('transf-resultados-busca').innerHTML = '';
+function _renderTransfCatalogo() {
+  document.querySelectorAll('#transf-grupos [data-transf-grupo]').forEach(b => {
+    b.className = 'btn btn-sm ' + (b.dataset.transfGrupo === _transfGrupoSel ? 'btn-dark' : 'btn-outline-secondary');
+  });
+  const q = norm((document.getElementById('transf-busca-prod')?.value || '').trim());
+  const lista = _transfCatalogo.filter(c => (!_transfGrupoSel || c.grupo === _transfGrupoSel) && (!q || norm(c.nome).includes(q)));
+  const el = document.getElementById('transf-catalogo');
+  if (!lista.length) { el.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Nada nesta lista.</td></tr>'; return; }
+  let grupoAtual = null;
+  el.innerHTML = lista.map(c => {
+    const cab = (!_transfGrupoSel && c.grupo !== grupoAtual)
+      ? `<tr><td colspan="4" class="ps-3 small fw-bold text-uppercase" style="background:#f3f4f6;letter-spacing:.4px">${esc(grupoAtual = c.grupo)}</td></tr>` : '';
+    const v   = _transfQtd[c.produto_id] ?? '';
+    const sal = c.saldo == null ? '<span class="text-muted">—</span>'
+      : `<span class="${c.saldo > 0 ? '' : 'text-danger'}">${_transfQ(c.saldo)}</span>`;
+    return `${cab}<tr data-transf-linha="${c.produto_id}" style="${Number(String(v).replace(',', '.')) > 0 ? 'background:#ecfdf5' : ''}">
+      <td class="ps-3">${esc(c.nome)}</td>
+      <td class="text-center text-muted small">${esc(c.unidade)}</td>
+      <td class="text-center small">${sal}</td>
+      <td><input type="text" inputmode="decimal" class="form-control form-control-sm text-center" data-transf-qtd="${c.produto_id}"
+        value="${esc(String(v))}" placeholder="0" oninput="_transfDigitou(this)" onkeydown="_transfProximo(event, this)"></td>
+    </tr>`;
+  }).join('');
 }
 
-function _renderTransfItensSelecionados() {
-  const el = document.getElementById('transf-itens-lista');
+function _transfDigitou(inp) {
+  const pid = inp.dataset.transfQtd;
+  const v = inp.value.trim();
+  if (v) _transfQtd[pid] = v; else delete _transfQtd[pid];
+  const n = Number(v.replace(',', '.'));
+  const tr = inp.closest('tr');
+  if (tr) tr.style.background = n > 0 ? '#ecfdf5' : '';
+  const c = _transfCatalogo.find(x => x.produto_id === pid);
+  inp.classList.toggle('is-invalid', !!v && (isNaN(n) || n < 0));
+  inp.title = c && n > (c.saldo ?? 0) ? `Mais do que tem na origem (${_transfQ(c.saldo ?? 0)})` : '';
+  inp.style.color = c && n > (c.saldo ?? 0) ? '#b45309' : '';
+  _renderTransfPedido();
+}
+
+// Enter desce para a próxima quantidade — digitar uma coluna inteira sem o mouse
+function _transfProximo(ev, inp) {
+  if (ev.key !== 'Enter') return;
+  ev.preventDefault();
+  const todos = [...document.querySelectorAll('#transf-catalogo [data-transf-qtd]')];
+  const i = todos.indexOf(inp);
+  if (todos[i + 1]) { todos[i + 1].focus(); todos[i + 1].select(); }
+}
+
+function _transfItensEscolhidos() {
+  return _transfCatalogo
+    .filter(c => Number(String(_transfQtd[c.produto_id] ?? '').replace(',', '.')) > 0)
+    .map(c => ({ ...c, qtd: Number(String(_transfQtd[c.produto_id]).replace(',', '.')) }));
+}
+
+function _renderTransfPedido() {
+  const el  = document.getElementById('transf-itens-lista');
+  const its = _transfItensEscolhidos();
+  document.getElementById('transf-qtd-itens').textContent = its.length;
+  const btn = document.getElementById('transf-modal-ok');
+  if (btn) btn.textContent = (_transfModo === 'entregar' ? '📤 Enviar ao Central' : '📤 Enviar pedido') + (its.length ? ` (${its.length} ${its.length === 1 ? 'item' : 'itens'})` : '');
   if (!el) return;
-  if (!_transfItens.length) { el.innerHTML = '<p class="text-muted small">Nenhum produto adicionado ainda.</p>'; return; }
-  el.innerHTML = `<table class="table table-sm">
-    <thead><tr><th>Produto</th><th>Un.</th><th style="width:130px">Quantidade</th><th></th></tr></thead>
-    <tbody>${_transfItens.map((it, i) => `
-      <tr>
-        <td>${esc(it.nome)}</td>
-        <td class="text-muted small">${esc(it.unidade)}</td>
-        <td><input type="number" class="form-control form-control-sm" min="0" step="any" value="${it.qtd}" oninput="_transfItens[${i}].qtd=this.value"></td>
-        <td><button class="btn btn-sm btn-link text-danger p-0" onclick="_transfItens.splice(${i},1);_renderTransfItensSelecionados()">🗑</button></td>
-      </tr>`).join('')}
-    </tbody>
-  </table>`;
+  if (!its.length) { el.innerHTML = '<p class="text-muted small mb-0">Digite a quantidade na lista ao lado. Só vai no pedido o que tiver quantidade.</p>'; return; }
+  el.innerHTML = `<table class="table table-sm mb-0"><tbody>${its.map(it => `
+    <tr>
+      <td class="small">${esc(it.nome)}</td>
+      <td class="small text-end text-nowrap fw-semibold">${_transfQ(it.qtd)} <span class="text-muted fw-normal">${esc(it.unidade)}</span></td>
+      <td class="text-end"><button class="btn btn-sm btn-link text-danger p-0" title="Tirar do pedido"
+        onclick="_transfTirar('${it.produto_id}')">✕</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function _transfTirar(pid) {
+  delete _transfQtd[pid];
+  const inp = document.querySelector(`#transf-catalogo [data-transf-qtd="${pid}"]`);
+  if (inp) { inp.value = ''; const tr = inp.closest('tr'); if (tr) tr.style.background = ''; inp.style.color = ''; }
+  _renderTransfPedido();
 }
 
 async function enviarSolicitacaoTransf() {
   if (_transfEmVoo) return;
-  if (!_transfItens.length) { toast('Adicione ao menos um produto.', 'erro'); return; }
-  const itens = _transfItens.map(it => ({ ...it, qtd: Number(String(it.qtd).replace(',', '.')) }));
-  if (itens.some(it => isNaN(it.qtd) || it.qtd <= 0)) { toast('Preencha a quantidade de todos os produtos (maior que zero).', 'erro'); return; }
+  const ruins = Object.entries(_transfQtd).filter(([, v]) => { const n = Number(String(v).replace(',', '.')); return isNaN(n) || n < 0; });
+  if (ruins.length) { toast('Tem quantidade inválida na lista (em vermelho). Corrija antes de enviar.', 'erro'); return; }
+  const itens = _transfItensEscolhidos();
+  if (!itens.length) { toast('Digite a quantidade de pelo menos um produto.', 'erro'); return; }
+  const acima = itens.filter(it => it.qtd > (it.saldo ?? 0));
+  if (acima.length && !confirm(`${acima.length} item(ns) com quantidade maior do que tem na origem:\n\n` +
+      acima.slice(0, 8).map(it => `• ${it.nome}: pediu ${_transfQ(it.qtd)}, tem ${_transfQ(it.saldo ?? 0)}`).join('\n') +
+      `\n\nEnviar assim mesmo?`)) return;
   const btn = document.getElementById('transf-modal-ok');
   _transfEmVoo = true; if (btn) btn.disabled = true;
   try {
-    const pedido = await criarSolicitacaoTransf(itens, 'manual', _transfModo);
+    const pedido = await criarSolicitacaoTransf(itens.map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd: it.qtd })), 'manual', _transfModo);
     if (!pedido) return;
     bootstrap.Modal.getInstance(document.getElementById('modal-nova-transf'))?.hide();
-    toast(_transfModo === 'entregar' ? `${pedido.num_pedido} enviado ao Central ✅` : `${pedido.num_pedido} pedido ao Estoque Central ✅`, 'ok');
+    toast(_transfModo === 'entregar' ? `${pedido.num_pedido} enviado ao Central ✅` : `${pedido.num_pedido} pedido ao Estoque Central ✅ (${itens.length} itens)`, 'ok');
     await carregarTransferencias();
   } finally { _transfEmVoo = false; if (btn) btn.disabled = false; }
 }
