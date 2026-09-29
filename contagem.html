@@ -748,6 +748,16 @@ let _pins              = {};
 let _pinBuffer         = '';
 let _pinTarget         = null;   // { tipo: 'setor'|'estoque', setor?: string }
 let _estoqueDesbloqueado = false;
+// PIN do Bar (pins.ESTOQUE_BAR): abre "Pedidos dos Setores" SÓ com os pedidos de ALCOÓLICAS do
+// Bar — o Bar libera a cerveja à noite, e só isso. Rastro: 28/09/2026 23:00-23:06 o celular do
+// Bar, com o PIN do Estoque, liberou e recebeu os 21 pedidos da noite (Cozinha e Bar) que o
+// estoque libera de manhã (Logs do Supabase: mesma sessão das contagens do Bar).
+let _estoqueEscopo = null;   // null = acesso completo | 'BAR_ALCOOLICAS'
+function _ehAlcoolicas(obs) { return norm(obs).replace(/[^a-z]/g, '') === 'alcoolicas'; }
+function _pedNoEscopo(ped) {
+  if (_estoqueEscopo !== 'BAR_ALCOOLICAS') return true;
+  return ped?.setor === 'BAR' && ped?.tipo === 'normal' && _ehAlcoolicas(ped?.obs);
+}
 let _nomeResponsavel     = '';
 let _nomeSetor           = null;
 
@@ -1247,7 +1257,9 @@ function pinConfirm() {
   const esperado = _pinTarget.tipo === 'setor'
     ? _pins[_pinTarget.setor]
     : _pins['ESTOQUE'];
-  if (_pinBuffer === esperado) {
+  const pinBar = _pinTarget.tipo === 'estoque' && _pins['ESTOQUE_BAR'] && _pinBuffer === _pins['ESTOQUE_BAR'];
+  if (_pinBuffer === esperado || pinBar) {
+    if (_pinTarget.tipo === 'estoque') _estoqueEscopo = pinBar && _pinBuffer !== esperado ? 'BAR_ALCOOLICAS' : null;
     fecharModal('modal-pin');
     if (_pinTarget.tipo === 'setor') {
       _pedirNomeParaSetor(_pinTarget.setor);
@@ -1788,10 +1800,18 @@ async function carregarPedidosEstoque() {
   // Transferencia NAO e pedido de setor: se aparecesse aqui, "Liberar" a trataria
   // como pedido interno e creditaria um setor 'TRANSFERENCIA' que nao existe.
   // Ela tem o bloco proprio logo acima da lista (_blocoTransfMob).
+  const restrito = _estoqueEscopo === 'BAR_ALCOOLICAS';
+  const selSetor = document.getElementById('fil-ped-setor');
+  if (selSetor) { if (restrito) selSetor.value = 'BAR'; selSetor.disabled = restrito; }
   let q = sb.from('pedidos_internos').select('*').neq('tipo','transferencia').order('criado_em',{ascending:false}).limit(80);
   if (status) q = q.eq('status', status);
-  if (setor)  q = q.eq('setor', setor);
-  const [{ data: peds }, blocoTransf] = await Promise.all([q, _blocoTransfMob()]);
+  if (restrito) q = q.eq('setor', 'BAR').eq('tipo', 'normal').ilike('obs', 'alco%licas');
+  else if (setor) q = q.eq('setor', setor);
+  const [{ data: pedsQ }, blocoTransfQ] = await Promise.all([q, restrito ? '' : _blocoTransfMob()]);
+  const peds = (pedsQ || []).filter(_pedNoEscopo);
+  const blocoTransf = (restrito
+    ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🍺 PIN do Bar: aqui aparecem só os pedidos de ALCOÓLICAS do Bar.</div>'
+    : '') + (blocoTransfQ || '');
   const el = document.getElementById('lst-pedidos-estoque');
   if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
@@ -1925,6 +1945,7 @@ async function abrirLiberarPedido(id) {
     sb.from('pedidos_internos').select('*').eq('id',id).single(),
     sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id),
   ]);
+  if (!_pedNoEscopo(ped)) { toast('Com o PIN do Bar só dá para liberar os pedidos de ALCOÓLICAS do Bar.', 'err'); _pedLiberarId = null; return; }
 
   // Busca contagem relacionada
   const estoqueMap = {};
@@ -2063,11 +2084,12 @@ async function confirmarLiberacao() {
   const ids = JSON.parse(document.getElementById('lib-itens')?.value||'[]');
   {
     const [{ data: pedL }, { data: itsL }] = await Promise.all([
-      sb.from('pedidos_internos').select('setor').eq('id', _pedLiberarId).single(),
+      sb.from('pedidos_internos').select('setor,tipo,obs').eq('id', _pedLiberarId).single(),
       sb.from('pedidos_internos_itens').select('id,produto_id,nome,qtd_pedida').in('id', ids),
     ]);
     const conf = (itsL || []).map(it => ({ produto_id: it.produto_id, nome: it.nome, anterior: it.qtd_pedida,
       qtd: parseQtd(document.getElementById(`lib-${it.id}`)?.value) }));
+    if (!_pedNoEscopo(pedL)) { toast('Com o PIN do Bar só dá para liberar os pedidos de ALCOÓLICAS do Bar.', 'err'); return; }
     if (!await _conferirQtdPedido(conf, pedL?.setor, 'liberar')) return;
   }
   await Promise.all(ids.map(id => {
@@ -2082,6 +2104,10 @@ async function confirmarLiberacao() {
 }
 
 async function cancelarPedidoInterno(id, num) {
+  if (_estoqueEscopo) {
+    const { data: pc } = await sb.from('pedidos_internos').select('setor,tipo,obs').eq('id', id).single();
+    if (!_pedNoEscopo(pc)) { toast('Com o PIN do Bar só dá para mexer nos pedidos de ALCOÓLICAS do Bar.', 'err'); return; }
+  }
   if (!confirm(`Cancelar pedido ${num}?\n\nO setor poderá enviar um novo pedido hoje.`)) return;
   const { error } = await sb.from('pedidos_internos')
     .update({ status: 'cancelado' }).eq('id', id).eq('status', 'pendente');

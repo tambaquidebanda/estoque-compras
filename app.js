@@ -5567,7 +5567,7 @@ async function _enviarEmergencia() {
 async function abrirConfigurarPins() {
   const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave','pins').single();
   const pinsAtual = data?.valor || {};
-  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE'].forEach(s => {
+  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR'].forEach(s => {
     const el = document.getElementById(`pin-${s}`);
     if (el) el.value = pinsAtual[s] || '';
   });
@@ -5576,10 +5576,14 @@ async function abrirConfigurarPins() {
 
 async function salvarPins() {
   const pins = {};
-  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE'].forEach(s => {
+  ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR'].forEach(s => {
     const val = document.getElementById(`pin-${s}`)?.value?.trim();
     if (val) pins[s] = val;
   });
+  // PIN do Bar só libera ALCOÓLICAS; se for igual ao do Estoque, o celular abre acesso completo.
+  if (pins.ESTOQUE_BAR && pins.ESTOQUE_BAR === pins.ESTOQUE) {
+    toast('O PIN do Bar tem que ser diferente do PIN do Estoque.', 'erro'); return;
+  }
   await sb.from('inv_configuracoes').upsert({ chave: 'pins', valor: pins });
   bootstrap.Modal.getInstance(document.getElementById('modal-pins'))?.hide();
   toast('PINs salvos! ✅', 'ok');
