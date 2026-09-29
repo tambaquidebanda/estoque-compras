@@ -4970,7 +4970,9 @@ const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
 let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central)
 let _transfEmVoo  = false;
 
-function _transfResp() { return (document.getElementById('inv-resp')?.value || '').trim(); }
+// Quem fez: o campo Responsavel da tela de Contagem; vazio, o nome do login.
+// (PED-2975, 29/09/2026: o campo estava em branco e o razao ficou sem nome.)
+function _transfResp() { return (document.getElementById('inv-resp')?.value || '').trim() || _nomeUsuario(); }
 
 async function carregarTransferencias() {
   const unidade = _invLocal || 'Centro';
@@ -5093,7 +5095,7 @@ async function enviarTransferencia(pedidoId) {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
       .update({ status: 'liberado', liberado_em: new Date().toISOString(),
-        ...await _campoQuem('liberado_por', _transfResp() || _nomeUsuario()) })
+        ...await _campoQuem('liberado_por', _transfResp()) })
       .eq('id', pedidoId).eq('status', 'pendente')
       .select('id,num_pedido,unidade_origem,local');
     if (error) { toast('Erro ao enviar: ' + error.message, 'erro'); return; }
@@ -5125,7 +5127,7 @@ async function confirmarRecebimentoTransf(pedidoId) {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
       .update({ status: 'recebido', recebido_em: new Date().toISOString(),
-        ...await _campoQuem('recebido_por', _transfResp() || _nomeUsuario()) })
+        ...await _campoQuem('recebido_por', _transfResp()) })
       .eq('id', pedidoId).eq('status', 'liberado')
       .select('id,num_pedido,unidade_origem,local');
     if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
@@ -5177,7 +5179,7 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
     num_pedido, tipo: 'transferencia', setor: 'TRANSFERENCIA', origem,
     local: destino, unidade_origem: deOnde,
     status: entrega ? 'liberado' : 'pendente', liberado_em: entrega ? agora : null,
-    ...(entrega ? await _campoQuem('liberado_por', _transfResp() || _nomeUsuario()) : {}),
+    ...(entrega ? await _campoQuem('liberado_por', _transfResp()) : {}),
     responsavel: _transfResp(), data: hojeLocal(),
     obs: entrega ? 'Entrega da Produção' : 'Pedido ao Estoque Central',
   }).select().single();
