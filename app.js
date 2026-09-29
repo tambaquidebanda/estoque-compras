@@ -4978,6 +4978,9 @@ async function carregarTransferencias() {
   const acoes = document.getElementById('transf-acoes');
   const tit   = document.getElementById('transf-unidade');
   if (tit) tit.textContent = unidade;
+  document.querySelectorAll('.inv-local-btn').forEach(b => {   // botoes "Ver como" desta aba
+    b.className = 'saldo-grupo-btn inv-local-btn' + (b.dataset.local === unidade ? ' ativo' : '');
+  });
   _renderProducoesRecentes(unidade === 'Produção');
   if (!_TRANSF_UNIDADES.includes(unidade)) {
     if (acoes) acoes.innerHTML = '';
