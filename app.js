@@ -4938,9 +4938,11 @@ async function _confirmarRecebimentoInv() {
 //   Produção pede MP ao Central      -> Central envia -> Produção confirma
 //   Produção registra o que fabricou, no fim do lote (ficha sai, item pronto entra)
 //   Produção entrega o pronto        -> Central confirma
+//   Centro envia ao Central          -> Central confirma (01/10/2026: o que chega do
+//                                       fornecedor no Centro e segue para o Central)
 //
 // Uma transferência é um pedidos_internos com tipo='transferencia':
-//   unidade_origem = de onde sai   ('Estoque Central' | 'Produção')
+//   unidade_origem = de onde sai   ('Estoque Central' | 'Produção' | 'Centro')
 //   local          = para onde vai ('Centro' | 'Produção' | 'Estoque Central')
 //   status         = pendente -> liberado (saiu da origem) -> recebido (entrou no destino)
 //   por item: qtd_pedida / qtd_liberada (enviado) / qtd_recebida (chegou)
@@ -4967,7 +4969,17 @@ const _TRANSF_UNIDADES = ['Centro', 'Produção', 'Estoque Central'];
 const _transfLugar = u => _localRazao(u, 'ESTOQUE DA LOJA');
 const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
   : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
-let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central)
+let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central) | 'enviar' (Centro -> Central)
+
+// Quem manda e quem recebe em cada modo. 'entregar' e 'enviar' nascem ja enviados:
+// quem tem a mercadoria na mao e quem sabe o que vai — o Central so confirma a chegada.
+// 'lista' = de qual unidade vem a lista de produtos da tela. No envio do Centro e a
+// lista do CENTRAL (o que ele guarda), nao a do Centro, que tem bar, salao, ASG...
+const _TRANSF_MODOS = {
+  pedir:    { origem: 'Estoque Central', destino: null,              direto: false, lista: 'origem'          },
+  entregar: { origem: 'Produção',        destino: 'Estoque Central', direto: true,  lista: 'origem'          },
+  enviar:   { origem: 'Centro',          destino: 'Estoque Central', direto: true,  lista: 'Estoque Central' },
+};
 let _transfEmVoo  = false;
 
 // Quem fez: o campo Responsavel da tela de Contagem; vazio, o nome do login.
@@ -4992,6 +5004,8 @@ async function carregarTransferencias() {
   if (acoes) acoes.innerHTML =
     (unidade !== 'Estoque Central'
       ? `<button class="btn btn-success btn-sm" onclick="abrirNovaTransferencia('pedir')">+ Pedir ao Estoque Central</button>` : '') +
+    (unidade === 'Centro'
+      ? ` <button class="btn btn-primary btn-sm" onclick="abrirNovaTransferencia('enviar')">📤 Enviar ao Estoque Central</button>` : '') +
     (unidade === 'Produção'
       ? ` <button class="btn btn-warning btn-sm" onclick="abrirRegistrarProducao()">🍳 Registrar produção</button>
           <button class="btn btn-primary btn-sm" onclick="abrirNovaTransferencia('entregar')">📤 Entregar ao Central</button>` : '');
@@ -5163,11 +5177,13 @@ async function cancelarTransferencia(pedidoId) {
 // ── CRIAR ───────────────────────────────────────────────────────
 // API pública: a engine automática pode chamar com origem='automatico'.
 // itens = [{ produto_id, qtd, nome? }]. modo 'pedir' = unidade atual pede ao
-// Central; 'entregar' = Produção manda ao Central (nasce já enviado, sem pedido).
+// Central; 'entregar' = Produção manda ao Central; 'enviar' = Centro manda ao
+// Central. Os dois últimos nascem já enviados, sem pedido (ver _TRANSF_MODOS).
 async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') {
-  const entrega = modo === 'entregar';
-  const destino = entrega ? 'Estoque Central' : (_invLocal || 'Centro');
-  const deOnde  = entrega ? 'Produção' : 'Estoque Central';
+  const m       = _TRANSF_MODOS[modo] || _TRANSF_MODOS.pedir;
+  const entrega = m.direto;
+  const destino = m.destino || (_invLocal || 'Centro');
+  const deOnde  = m.origem;
   if (!_TRANSF_UNIDADES.includes(destino) || destino === deOnde) { toast(`O ${destino} não pode pedir ao ${deOnde}.`, 'erro'); return null; }
   const validos = (itens || []).filter(it => it.produto_id && Number(it.qtd) > 0);
   if (!validos.length) { toast('Informe a quantidade de pelo menos um produto.', 'erro'); return null; }
@@ -5181,7 +5197,7 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
     status: entrega ? 'liberado' : 'pendente', liberado_em: entrega ? agora : null,
     ...(entrega ? await _campoQuem('liberado_por', _transfResp()) : {}),
     responsavel: _transfResp(), data: hojeLocal(),
-    obs: entrega ? 'Entrega da Produção' : 'Pedido ao Estoque Central',
+    obs: modo === 'enviar' ? 'Envio do Centro' : entrega ? 'Entrega da Produção' : 'Pedido ao Estoque Central',
   }).select().single();
   if (error || !pedido) { toast('Erro ao criar: ' + (error?.message || ''), 'erro'); return null; }
 
@@ -5216,21 +5232,28 @@ let _transfCatalogo = [];     // { produto_id, nome, unidade, grupo, saldo }
 let _transfQtd      = {};     // produto_id -> texto digitado
 let _transfGrupoSel = '';     // '' = todos
 
-function _transfOrigem() { return _transfModo === 'entregar' ? 'Produção' : 'Estoque Central'; }
+function _transfOrigem() { return (_TRANSF_MODOS[_transfModo] || _TRANSF_MODOS.pedir).origem; }
 
 async function abrirNovaTransferencia(modo = 'pedir') {
   _transfModo = modo;
   _transfQtd = {};
   _transfGrupoSel = '';
   const entrega = modo === 'entregar';
+  const envio   = modo === 'enviar';
   const deOnde  = _transfOrigem();
-  document.getElementById('transf-modal-titulo').textContent = entrega
+  const m       = _TRANSF_MODOS[modo] || _TRANSF_MODOS.pedir;
+  const daLista = m.lista === 'origem' ? deOnde : m.lista;
+  document.getElementById('transf-modal-titulo').textContent = envio
+    ? '📤 Enviar ao Estoque Central — o que chegou no Centro e vai para o Central'
+    : entrega
     ? '📤 Entregar ao Estoque Central — o que a Produção fabricou'
     : `🔄 Pedir ao Estoque Central — para ${_invLocal || 'Centro'}`;
-  document.getElementById('transf-modal-dica').textContent = entrega
+  document.getElementById('transf-modal-dica').textContent = envio
+    ? 'Digite a quantidade do que vai. O saldo sai do Estoque da Loja agora; entra no Central quando ele confirmar a chegada.'
+    : entrega
     ? 'Digite a quantidade do que vai. O saldo sai da Produção agora; entra no Central quando ele confirmar a chegada.'
     : 'Digite a quantidade só do que você precisa — o resto não vai no pedido. O Central confere e envia; o saldo só entra aqui quando você confirmar a chegada.';
-  document.getElementById('transf-col-saldo').textContent = entrega ? 'Na Produção' : 'No Central';
+  document.getElementById('transf-col-saldo').textContent = envio ? 'No Estoque da Loja' : entrega ? 'Na Produção' : 'No Central';
   const inp = document.getElementById('transf-busca-prod');
   if (inp) inp.value = '';
   document.getElementById('transf-catalogo').innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Carregando...</td></tr>';
@@ -5242,8 +5265,8 @@ async function abrirNovaTransferencia(modo = 'pedir') {
   if (!Object.keys(_todasEstruturas).length) await carregarMapeamentosInv();
   const porNome = new Map(cProdutosFT.filter(p => p.ativo !== false).map(p => [norm((p.nome || '').trim()), p]));
   const cat = [], vistos = new Set();
-  Object.entries(_todasEstruturas[deOnde] || {}).forEach(([setor, gr]) => {
-    const ordem  = _invOrdemGrupos?.[deOnde]?.[setor] || [];
+  Object.entries(_todasEstruturas[daLista] || {}).forEach(([setor, gr]) => {
+    const ordem  = _invOrdemGrupos?.[daLista]?.[setor] || [];
     const grupos = [...ordem.filter(g => gr?.[g]), ...Object.keys(gr || {}).filter(g => !ordem.includes(g))];
     grupos.forEach(g => {
       const nomes = [...(gr[g] || []).filter(n => !_invExcluidos.has(n)), ...(_invAdicoes[`${setor}|${g}`] || [])];
@@ -5332,7 +5355,7 @@ function _renderTransfPedido() {
   const its = _transfItensEscolhidos();
   document.getElementById('transf-qtd-itens').textContent = its.length;
   const btn = document.getElementById('transf-modal-ok');
-  if (btn) btn.textContent = (_transfModo === 'entregar' ? '📤 Enviar ao Central' : '📤 Enviar pedido') + (its.length ? ` (${its.length} ${its.length === 1 ? 'item' : 'itens'})` : '');
+  if (btn) btn.textContent = (_transfModo !== 'pedir' ? '📤 Enviar ao Central' : '📤 Enviar pedido') + (its.length ? ` (${its.length} ${its.length === 1 ? 'item' : 'itens'})` : '');
   if (!el) return;
   if (!its.length) { el.innerHTML = '<p class="text-muted small mb-0">Digite a quantidade na lista ao lado. Só vai no pedido o que tiver quantidade.</p>'; return; }
   el.innerHTML = `<table class="table table-sm mb-0"><tbody>${its.map(it => `
@@ -5367,7 +5390,7 @@ async function enviarSolicitacaoTransf() {
     const pedido = await criarSolicitacaoTransf(itens.map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd: it.qtd })), 'manual', _transfModo);
     if (!pedido) return;
     bootstrap.Modal.getInstance(document.getElementById('modal-nova-transf'))?.hide();
-    toast(_transfModo === 'entregar' ? `${pedido.num_pedido} enviado ao Central ✅` : `${pedido.num_pedido} pedido ao Estoque Central ✅ (${itens.length} itens)`, 'ok');
+    toast(_transfModo !== 'pedir' ? `${pedido.num_pedido} enviado ao Central ✅ — o Central confirma a chegada` : `${pedido.num_pedido} pedido ao Estoque Central ✅ (${itens.length} itens)`, 'ok');
     await carregarTransferencias();
   } finally { _transfEmVoo = false; if (btn) btn.disabled = false; }
 }
