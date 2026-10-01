@@ -4587,6 +4587,71 @@ function _localDaContagem(unidade, setor) {
   return setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
 }
 
+// ════════════════════════════════════════════════════════════════
+// PEDIDO CONJUNTO — CENTRO + DELIVERY P10 (01/10/2026)
+//
+// Fornecedor com faturamento minimo: um pedido so, um boleto so, com itens das
+// duas lojas. Cada item ja diz de quem e (cmp_compras.unidade_uso). Duas coisas
+// seguem essa unidade:
+//   1. ESTOQUE — item do Delivery P10 entra direto no ESTOQUE DELIVERY (decisao do
+//      Wagner: a mercadoria do P10 chega no P10). O lugar fica gravado no item
+//      (cmp_recebimento_itens.local) para o estorno desfazer no mesmo lugar.
+//      Vazio = o lugar do cabecalho, como sempre foi.
+//   2. FINANCEIRO — um lancamento so (bate com o boleto e com o extrato), com o
+//      rateio por plano de contas E unidade (rateio_itens.unidade_id). A DRE abre o
+//      rateio linha a linha e cada linha vai para a unidade dela.
+// ════════════════════════════════════════════════════════════════
+const LOCAL_ESTOQUE_P10 = 'ESTOQUE DELIVERY';
+function _localDoItemReceb(unidade_uso, localReceb) {
+  return norm((unidade_uso || '').trim()) === norm('Delivery P10') ? LOCAL_ESTOQUE_P10 : (localReceb || 'ESTOQUE_LOJA');
+}
+
+// Rateio do pedido pelo que foi RECEBIDO (cmp_recebimento_itens.total_recebido),
+// agrupado por plano de contas x unidade. Bonificado fica fora (nao vira conta).
+// unidade_id so vai na linha quando o pedido tem mais de uma unidade — pedido de
+// uma loja so continua igual ao de sempre.
+// Retorna { linhas: [{ plano_conta_id, nome, unidade_id, unidade_nome, valor }], unidadePrincipal }
+async function _rateioDoPedido(pedido_num) {
+  if (!cCat.length || !cPlanoConta.length || !cUnidades.length) await carregarCaches();
+  const { data: recebs } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
+  const ids = (recebs || []).map(r => r.id);
+  if (!ids.length) return { linhas: [], unidadePrincipal: null };
+  const { data: itens } = await sb.from('cmp_recebimento_itens')
+    .select('compra_id,categoria,total_recebido,bonificado').in('recebimento_id', ids);
+  const { data: compras } = await sb.from('cmp_compras')
+    .select('id,categoria,plano_conta,unidade_uso').eq('pedido_num', pedido_num);
+  const compraDe = {};
+  (compras || []).forEach(c => { compraDe[c.id] = c; });
+  const grupos = {};
+  (itens || []).forEach(it => {
+    const v = Number(it.total_recebido) || 0;
+    if (it.bonificado || !(v > 0)) return;
+    const c      = compraDe[it.compra_id] || {};
+    const catNom = c.categoria || it.categoria || '';
+    const catObj = cCat.find(x => x.nome === catNom);
+    const pcNome = catObj?.plano_conta || c.plano_conta || catNom || '—';
+    const pcId   = (catObj?.plano_conta_id && cPlanoConta.find(x => x.id === catObj.plano_conta_id) ? catObj.plano_conta_id : null)
+      || cPlanoConta.find(x => x.grupo_id && x.nome.toLowerCase() === pcNome.toLowerCase())?.id || null;
+    const uni    = cUnidades.find(u => u.nome.toLowerCase() === (c.unidade_uso || '').toLowerCase()) || null;
+    const k = (pcId || pcNome) + '|' + (uni?.id || '');
+    if (!grupos[k]) grupos[k] = { plano_conta_id: pcId, nome: pcNome, unidade_id: uni?.id || null, unidade_nome: uni?.nome || '', valor: 0 };
+    grupos[k].valor += v;
+  });
+  const linhas = Object.values(grupos).map(g => ({ ...g, valor: Math.round(g.valor * 100) / 100 }));
+  const porUni = {};
+  linhas.forEach(l => { if (l.unidade_id) porUni[l.unidade_id] = (porUni[l.unidade_id] || 0) + l.valor; });
+  const unis = Object.keys(porUni);
+  const unidadePrincipal = unis.sort((a, b) => porUni[b] - porUni[a])[0] || null;
+  if (unis.length < 2) linhas.forEach(l => { delete l.unidade_id; });
+  return { linhas, unidadePrincipal };
+}
+
+// Linha de rateio para gravar: unidade_id so quando veio (pedido de duas lojas).
+function _linhaRateio(r, extra) {
+  return { plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '',
+    ...(r.unidade_id ? { unidade_id: r.unidade_id } : {}), ...extra };
+}
+
 async function _movSaldo(produto_id, local, delta) {
   if (!produto_id || !delta) return;
   const { data: cur } = await sb.from('est_saldo_local')
@@ -6943,7 +7008,12 @@ async function confirmarRecebimento() {
 
   // Salva itens — se falhar, remove o cabeçalho para não deixar recebimento órfão,
   // que inflaria o valor da conta (soma de TODOS os cmp_recebimentos do pedido).
-  const { error: errItens } = await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => ({ ...it, recebimento_id: receb.id })));
+  const _usoDoItem  = cid => _recebItensAbertos.find(o => o.id === cid)?.unidade_uso || '';
+  const _localItem  = it => _localDoItemReceb(_usoDoItem(it.compra_id), localReceb);
+  const { error: errItens } = await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => {
+    const l = _localItem(it);
+    return { ...it, recebimento_id: receb.id, ...(l !== localReceb ? { local: l } : {}) };
+  }));
   if (errItens) {
     await sb.from('cmp_recebimentos').delete().eq('id', receb.id);
     toast('Erro ao salvar itens do recebimento: ' + errItens.message + '. Recebimento cancelado — tente novamente.', 'erro');
@@ -7051,8 +7121,11 @@ async function confirmarRecebimento() {
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) return;
     const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
-    await movimentar({ produto_id: pid, local: localReceb, tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}${localReceb === 'ESTOQUE_LOJA' ? '' : ' · ' + _rotuloLocal(localReceb)}` });
+    const _l   = _localItem(it);
+    await movimentar({ produto_id: pid, local: _l, tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}${_l === 'ESTOQUE_LOJA' ? '' : ' · ' + _rotuloLocal(_l)}` });
   }));
+  const _noP10 = itensReceb.filter(it => it.qtd_recebida && _localItem(it) === LOCAL_ESTOQUE_P10).length;
+  if (_noP10) toast(`${_noP10} ${_noP10 === 1 ? 'item do Delivery P10 entrou' : 'itens do Delivery P10 entraram'} no Estoque Delivery 🛵`, 'ok');
 
   // Último preço: atualiza o custo_comp do ingrediente com o preço pago e recalcula as fichas que o usam.
   // Não sobrescreve produtos que têm ficha própria (custo vem da receita, não da compra).
@@ -8247,7 +8320,7 @@ async function devolverPedidoAoEstoque(pedido_num) {
   let itensReceb = [];
   if (recebs.length) {
     const { data, error } = await sb.from('cmp_recebimento_itens')
-      .select('id,recebimento_id,compra_id,produto,produto_id,qtd_pedida,qtd_recebida,valor_unitario')
+      .select('*')   // inclui 'local' (onde o item entrou), quando houver
       .in('recebimento_id', recebs.map(r => r.id));
     if (error) { toast('Não foi possível ler os itens do recebimento: ' + error.message, 'erro'); return; }
     itensReceb = data || [];
@@ -8346,7 +8419,7 @@ async function devolverPedidoAoEstoque(pedido_num) {
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) continue;
     const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
-    const _localEstorno = localDoReceb[it.recebimento_id] || 'ESTOQUE_LOJA';
+    const _localEstorno = it.local || localDoReceb[it.recebimento_id] || 'ESTOQUE_LOJA';   // item do P10: ESTOQUE DELIVERY
     await movimentar({
       produto_id: pid, local: _localEstorno, tipo: 'recebimento',
       quantidade: -_uso.quantidade, custo_unit: _uso.custo_unit || 0,
@@ -9570,7 +9643,7 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
 
   // Busca dados do pedido (forma_pagamento + itens + acréscimo para quando _pedidosGrupos estiver vazio)
   const { data: pedRows } = await sb.from('cmp_compras')
-    .select('forma_pagamento,parcelas,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome,acrescimo')
+    .select('forma_pagamento,parcelas,categoria,plano_conta,quantidade,custo_unit,unidade_uso,fornecedor_id,fornecedor_nome,acrescimo,bonificado')
     .eq('pedido_num', pedido_num);
   const pedRow0    = pedRows?.[0] || {};
   const formaPgto  = pedRow0.forma_pagamento || '';
@@ -9625,7 +9698,7 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
       pedido_num, forn, fornecedor_id: fornId || pedRow0.fornecedor_id || '',
       itens: pedRows.map(r => ({
         categoria: r.categoria, plano_conta: r.plano_conta,
-        quantidade: r.quantidade, custo_unit: r.custo_unit, unidade_uso: r.unidade_uso,
+        quantidade: r.quantidade, custo_unit: r.custo_unit, unidade_uso: r.unidade_uso, bonificado: r.bonificado,
       })),
     };
   }
@@ -9647,11 +9720,15 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
     const pcId     = (storedId && cPlanoConta.find(p => p.id === storedId) ? storedId : null)
       || cPlanoConta.find(p => p.nome.toLowerCase() === pcNome.toLowerCase())?.id
       || null;
-    const key = pcId || pcNome;
-    if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, valor: 0 };
-    rateioMap[key].valor += (it.quantidade || 0) * (it.custo_unit || 0);
+    // Pedido conjunto (Centro + Delivery P10): a linha do rateio tambem leva a unidade
+    const uni = cUnidades.find(u => u.nome.toLowerCase() === (it.unidade_uso || it.uso || '').toLowerCase()) || null;
+    const key = (pcId || pcNome) + '|' + (uni?.id || '');
+    if (!rateioMap[key]) rateioMap[key] = { plano_conta_id: pcId, nome: pcNome, unidade_id: uni?.id || null, unidade_nome: uni?.nome || '', valor: 0 };
+    rateioMap[key].valor += it.bonificado ? 0 : (it.quantidade || 0) * (it.custo_unit || 0);
   });
-  _rateioItensAtual = Object.values(rateioMap);
+  _rateioItensAtual = Object.values(rateioMap).filter(r => r.valor > 0);
+  const _rateioMultiUni = new Set(_rateioItensAtual.map(r => r.unidade_id).filter(Boolean)).size > 1;
+  if (!_rateioMultiUni) _rateioItensAtual.forEach(r => { delete r.unidade_id; });
 
   // Fallback: busca subcategorias direto do banco para itens que ainda estão sem ID
   const semId = _rateioItensAtual.filter(r => !r.plano_conta_id && r.nome !== '—');
@@ -9678,7 +9755,7 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
     rateioSection.classList.remove('d-none');
     planoSection.classList.add('d-none');
     rateioBody.innerHTML = _rateioItensAtual.map(r =>
-      `<tr><td>${esc(r.nome)}</td><td class="text-end">${brl(r.valor)}</td></tr>`
+      `<tr><td>${esc(r.nome)}${_rateioMultiUni && r.unidade_nome ? ` <span class="badge bg-light text-dark border ms-1">${esc(r.unidade_nome)}</span>` : ''}</td><td class="text-end">${brl(r.valor)}</td></tr>`
     ).join('');
   } else {
     rateioSection.classList.add('d-none');
@@ -9938,15 +10015,32 @@ async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf)
             { onConflict: 'pedido_num' })
     .select('id').single();
 
+  // Rateio pelo que foi recebido: plano de contas x unidade. Uma linha so = sem
+  // rateio (o de sempre). Antes ia tudo no plano e na unidade do PRIMEIRO item.
+  const { linhas, unidadePrincipal } = await _rateioDoPedido(pedido_num);
+  const temRateio = linhas.length > 1;
   await gerarContaFinanceiro({
     parcelas: conta?.parcelas || 1, parcelaIntervalo: conta?.parcela_intervalo || 'mensal',
     pedido_num, vencimento: venc, valor: totalAcumulado, acrescimo: 0,
     fornecedor_id: ref?.fornecedor_id || null,
     fornecedor_nome: ref?.fornecedor_nome || '',
-    plano_conta: ref?.plano_conta || '',
-    nf_numero: nf, conta_id: contaUp?.id || conta?.id || null, unidade_id,
+    plano_conta: (linhas.length === 1 ? linhas[0].nome : null) || ref?.plano_conta || '',
+    nf_numero: nf, conta_id: contaUp?.id || conta?.id || null,
+    unidade_id: unidadePrincipal || unidade_id,
+    temRateio, rateioItensResolvidos: temRateio ? _rateioProporcional(linhas, totalAcumulado) : [],
     obs: nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
   });
+}
+
+// O rateio soma o valor dos itens; a conta e o total recebido (com acrescimo).
+// Espalha a diferenca na proporcao, para o rateio fechar com o valor da conta.
+function _rateioProporcional(linhas, total) {
+  const soma = linhas.reduce((s, l) => s + l.valor, 0);
+  if (!(soma > 0) || Math.abs(soma - total) < 0.01) return linhas;
+  const out = linhas.map(l => ({ ...l, valor: Math.round(l.valor * total / soma * 100) / 100 }));
+  const dif = Math.round((total - out.reduce((s, l) => s + l.valor, 0)) * 100) / 100;
+  if (dif) out[0].valor = Math.round((out[0].valor + dif) * 100) / 100;
+  return out;
 }
 
 async function finalizarPedidoRegular(pedido_num) {
@@ -9977,16 +10071,26 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
 
   const totalItens = Math.max(0, totalRecebido - acrescimo);
 
-  // Agrupa por plano_conta usando os itens originais abertos
+  // Agrupa por plano_conta x unidade (pedido conjunto Centro + Delivery P10) usando os itens originais abertos
+  if (!cUnidades.length) await carregarCaches();
   const grupos = {};
   for (const ir of itensReceb) {
-    const orig = _recebItensAbertos.find(o => o.id === ir.compra_id);
+    if (ir.bonificado) continue;
+    const orig  = _recebItensAbertos.find(o => o.id === ir.compra_id);
     const plano = orig?.plano_conta || '';
-    if (!grupos[plano]) grupos[plano] = { plano_conta: plano, subtotal: 0 };
-    grupos[plano].subtotal += ir.total_recebido;
+    const uni   = cUnidades.find(u => u.nome.toLowerCase() === (orig?.unidade_uso || '').toLowerCase())?.id || '';
+    const k = plano + '|' + uni;
+    if (!grupos[k]) grupos[k] = { plano_conta: plano, unidade_id: uni || null, subtotal: 0 };
+    grupos[k].subtotal += ir.total_recebido;
   }
   const gruposList = Object.values(grupos);
   const temRateio  = gruposList.length > 1;
+  const _uniDoPedido = [...new Set(gruposList.map(g => g.unidade_id).filter(Boolean))];
+  if (_uniDoPedido.length > 1) {   // a unidade do lancamento vira a de maior valor; cada linha leva a sua
+    const porUni = {};
+    gruposList.forEach(g => { if (g.unidade_id) porUni[g.unidade_id] = (porUni[g.unidade_id] || 0) + g.subtotal; });
+    unidade_id = _uniDoPedido.sort((a, b) => porUni[b] - porUni[a])[0];
+  } else gruposList.forEach(g => { g.unidade_id = null; });
 
   // Resolve plano_conta_id por grupo
   for (const g of gruposList) {
@@ -10022,7 +10126,7 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
 
   if (temRateio && lanc?.id && gruposList.length) {
     await sb.from('rateio_itens').insert(
-      gruposList.map(g => ({ lancamento_id: lanc.id, plano_conta_id: g.plano_conta_id, valor: g.subtotal, descricao: '' }))
+      gruposList.map(g => _linhaRateio({ plano_conta_id: g.plano_conta_id, valor: g.subtotal, unidade_id: g.unidade_id }, { lancamento_id: lanc.id }))
     );
   }
 
@@ -10049,7 +10153,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
 
   // Rateio: usa itens já resolvidos (plano_conta_id vem direto de cCat)
   const rateioItens = temRateio
-    ? rateioItensResolvidos.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: '' }))
+    ? rateioItensResolvidos.map(r => _linhaRateio(r))
     : [];
 
   // 1x (padrão) devolve uma parcela só — o fluxo antigo, inteiro.
@@ -10108,7 +10212,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
       // Grava itens de rateio do rascunho
       if (temRateio && rasc?.id && p.rateioItens.length) {
         const { error: errRateio } = await sb.from('rascunho_rateio_itens').insert(
-          p.rateioItens.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '', rascunho_id: rasc.id }))
+          p.rateioItens.map(r => _linhaRateio(r, { rascunho_id: rasc.id }))
         );
         if (errRateio) { toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro'); return; }
       } else if (temRateio) {
@@ -10145,7 +10249,7 @@ async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo =
     // Grava rateio_itens
     if (temRateio && lanc?.id && p.rateioItens.length) {
       const { error: errRateio } = await sb.from('rateio_itens').insert(
-        p.rateioItens.map(r => ({ plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '', lancamento_id: lanc.id }))
+        p.rateioItens.map(r => _linhaRateio(r, { lancamento_id: lanc.id }))
       );
       if (errRateio) toast('Aviso: rateio não gravado — ' + errRateio.message, 'erro');
     }
@@ -10964,7 +11068,7 @@ async function dvCarregarItens() {
   if (!recId) { box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Selecione um recebimento.</td></tr>'; return; }
   box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
   const { data } = await sb.from('cmp_recebimento_itens')
-    .select('id,produto,produto_id,unidade,qtd_recebida,valor_unitario')
+    .select('*')   // inclui 'local' (onde o item entrou), quando houver
     .eq('recebimento_id', recId);
   _devRecItens = (data || []).filter(it => Number(it.qtd_recebida) > 0);
   if (!_devRecItens.length) { box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Sem itens recebidos.</td></tr>'; return; }
@@ -11018,7 +11122,8 @@ async function salvarDevolucao() {
   // 2) itens
   const itensRows = itens.map(x => ({
     devolucao_id: hdr.id, produto_id: x.it.produto_id || null, produto: x.it.produto,
-    local, unidade: x.it.unidade || null, quantidade: x.qtd,
+    local: x.it.local || local,   // item que entrou no Estoque Delivery volta de la
+    unidade: x.it.unidade || null, quantidade: x.qtd,
     valor_unitario: Number(x.it.valor_unitario) || 0, recebimento_item_id: x.it.id,
   }));
   const { data: itensSalvos, error: ei } = await sb.from('cmp_devolucao_itens').insert(itensRows).select();
