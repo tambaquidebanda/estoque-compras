@@ -262,6 +262,7 @@
     <select id="rec-local" onchange="_pintarLocalRecebMob()" style="width:100%">
       <option value="ESTOQUE_LOJA" selected>🏪 Estoque da Loja</option>
       <option value="CENTRAL">🏭 Estoque Central</option>
+      <option value="ESTOQUE DELIVERY">🛵 Estoque Delivery P10</option>
     </select>
     <div id="rec-local-hint" style="font-size:.72rem;color:var(--txt2);margin-top:.3rem">O padrão é a loja.</div>
   </div>
@@ -1588,9 +1589,10 @@ async function _recebimentoAtualizaCustos(itensReceb) {
 // ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por produto_id ──
 // Fora da loja a caixa muda de cor e avisa o que isso significa.
 // Local de Recebimento do pedido -> lugar. Estoque Central e Producao (que chega no
-// Central) abrem no CENTRAL; o resto, na loja.
+// Central) abrem no CENTRAL; Estoque Delivery no ESTOQUE DELIVERY (P10); o resto, na loja.
 function _localRecebDoPedidoMob(setor) {
   const n = _normNome(setor || '');
+  if (n === _normNome('Estoque Delivery')) return 'ESTOQUE DELIVERY';
   return (n === _normNome('Estoque Central') || n === _normNome('Produção')) ? 'CENTRAL' : 'ESTOQUE_LOJA';
 }
 function _pintarLocalRecebMob(doPedido = false) {
@@ -1605,7 +1607,9 @@ function _pintarLocalRecebMob(doPedido = false) {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + (v === 'ESTOQUE DELIVERY'
+        ? 'Esta nota entra no Estoque Delivery do P10 — não no estoque do Centro.'
+        : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.');
     hint.style.color = naLoja ? 'var(--txt2)' : '#fbbf24';
   }
 }

@@ -943,7 +943,8 @@ async function prepararFormCompra() {
   if (setorSel) {
     setorSel.innerHTML = '<option value="">— Selecione —</option>' +
       '<option value="Estoque Loja">🏪 Estoque da Loja (Centro)</option>' +
-      '<option value="Estoque Central">🏭 Estoque Central</option>';
+      '<option value="Estoque Central">🏭 Estoque Central</option>' +
+      '<option value="Estoque Delivery">🛵 Estoque Delivery P10</option>';
   }
 
   const usoSel = document.getElementById('c-uso');
@@ -6832,10 +6833,12 @@ function _localPedidoNorm(setor) {
   const n = norm((setor || '').trim());
   if (n === norm('Estoque Central') || n === norm('Produção')) return 'Estoque Central';
   if (n === norm('Estoque Loja')) return 'Estoque Loja';
+  if (n === norm('Estoque Delivery')) return 'Estoque Delivery';
   return '';
 }
 function _localRecebDoPedido(setor) {
-  return _localPedidoNorm(setor) === 'Estoque Central' ? 'CENTRAL' : 'ESTOQUE_LOJA';
+  const l = _localPedidoNorm(setor);
+  return l === 'Estoque Central' ? 'CENTRAL' : l === 'Estoque Delivery' ? LOCAL_ESTOQUE_P10 : 'ESTOQUE_LOJA';
 }
 function _pintarLocalReceb(doPedido = false) {
   const v    = document.getElementById('receb-local')?.value || 'ESTOQUE_LOJA';
@@ -6849,7 +6852,9 @@ function _pintarLocalReceb(doPedido = false) {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + (v === 'ESTOQUE DELIVERY'
+        ? 'Esta nota entra no Estoque Delivery do P10 — não no estoque do Centro.'
+        : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.');
     hint.className = naLoja ? 'small text-muted' : 'small fw-semibold text-danger';
   }
 }
@@ -11133,6 +11138,9 @@ async function dvCarregarItens() {
     .select('*')   // inclui 'local' (onde o item entrou), quando houver
     .eq('recebimento_id', recId);
   _devRecItens = (data || []).filter(it => Number(it.qtd_recebida) > 0);
+  // Recebimento no Central ou no Estoque Delivery: a devolucao sai de la, nao da loja
+  const { data: _rcab } = await sb.from('cmp_recebimentos').select('local').eq('id', recId).maybeSingle();
+  if (_rcab?.local && _rcab.local !== 'ESTOQUE_LOJA') _devRecItens.forEach(it => { if (!it.local) it.local = _rcab.local; });
   if (!_devRecItens.length) { box.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Sem itens recebidos.</td></tr>'; return; }
   box.innerHTML = _devRecItens.map((it, i) => `<tr>
     <td style="width:36px"><input type="checkbox" class="form-check-input dv-it-chk" data-i="${i}"></td>
