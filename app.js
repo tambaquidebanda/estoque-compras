@@ -3116,12 +3116,12 @@ async function selecionarGrupoInv(grupo) {
     // Agrega adições de todos os setores reais que têm este grupo
     Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
       if (s === 'ESTOQUE DA LOJA') return;
-      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(`${s}|${grupo}`);
+      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(_chaveAdic(_invLocal, s, grupo));
     });
     // Adições feitas direto no Estoque da Loja (produtos que só existem aqui)
     _addDe(`ESTOQUE DA LOJA|${grupo}`);
   } else {
-    _addDe(`${_invSetor}|${grupo}`);
+    _addDe(_chaveAdic(_invLocal, _invSetor, grupo));
   }
 
   // Breadcrumb
@@ -3201,13 +3201,24 @@ function filtrarProdAdd(query) {
 // Relê 'adicoes' fresco do banco antes de gravar. Sem isso, uma aba/dispositivo com
 // dados velhos na memória sobrescreve o objeto inteiro e apaga adições feitas em outro
 // lugar (era a causa dos itens sumirem "sem motivo" da contagem).
+// ADICAO ("+") POR UNIDADE (02/10/2026). A chave era so "SETOR|GRUPO": no P10 a Cozinha
+// e a Churrasqueira tem o mesmo nome do Centro, entao o "+" (e a lixeira do adicionado)
+// valia para as duas lojas. Agora: setor que existe no Centro, numa unidade que NAO e o
+// Centro, usa a chave "UNIDADE>SETOR|GRUPO". Setor com nome proprio (ESTOQUE CENTRAL,
+// BEBIDAS, ESTOQUE DELIVERY...) continua "SETOR|GRUPO" — ja era so dele.
+function _chaveAdic(unidade, setor, grupo) {
+  const u = unidade || 'Centro';
+  const compartilhado = u !== 'Centro' && !!_todasEstruturas?.['Centro']?.[setor];
+  return (compartilhado ? `${u}>` : '') + `${setor}|${grupo}`;
+}
+
 async function _recarregarAdicoes() {
   const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'adicoes').limit(1);
   _invAdicoes = (data && data[0] && data[0].valor) || {};
   return _invAdicoes;
 }
 async function confirmarAdicionarProdInv(nome) {
-  const key = `${_invSetor}|${_invGrupo}`;
+  const key = _chaveAdic(_invLocal, _invSetor, _invGrupo);
   await _recarregarAdicoes();
   const atual = Array.isArray(_invAdicoes[key]) ? _invAdicoes[key] : [];
   if (atual.find(n => norm(n) === norm(nome))) { toast('Produto já está no grupo.', 'erro'); return; }
@@ -3219,7 +3230,7 @@ async function confirmarAdicionarProdInv(nome) {
 }
 async function removerProdInv(nome) {
   if (!confirm(`Remover "${nome}" deste grupo?`)) return;
-  const key = `${_invSetor}|${_invGrupo}`;
+  const key = _chaveAdic(_invLocal, _invSetor, _invGrupo);
   await _recarregarAdicoes();
   const atual = Array.isArray(_invAdicoes[key]) ? _invAdicoes[key] : [];
   _invAdicoes[key] = atual.filter(n => norm(n) !== norm(nome));
@@ -3264,7 +3275,7 @@ async function _excluirProdDaUnidade(nome, unidade, setor, grupo) {
   // A adicao ("+") e guardada por setor|grupo, sem unidade: se o nome tambem foi
   // adicionado assim, ele continua aparecendo. Avisa em vez de mexer na adicao,
   // que valeria para as duas lojas.
-  const viaMais = (_invAdicoes[`${setor}|${grupo}`] || []).some(n => norm(n) === norm(nome));
+  const viaMais = (_invAdicoes[_chaveAdic(unidade, setor, grupo)] || []).some(n => norm(n) === norm(nome));
   toast(viaMais
     ? `"${nome}" saiu da lista de ${unidade}, mas também foi adicionado com "+" neste grupo e continua aparecendo. Use o botão de remover adição.`
     : `"${nome}" excluído da contagem de ${unidade}.`, viaMais ? 'erro' : 'ok');
@@ -5416,7 +5427,7 @@ async function abrirNovaTransferencia(modo = 'pedir') {
     const ordem  = _invOrdemGrupos?.[daLista]?.[setor] || [];
     const grupos = [...ordem.filter(g => gr?.[g]), ...Object.keys(gr || {}).filter(g => !ordem.includes(g))];
     grupos.forEach(g => {
-      const nomes = [...(gr[g] || []).filter(n => !_invExcluidos.has(n)), ...(_invAdicoes[`${setor}|${g}`] || [])];
+      const nomes = [...(gr[g] || []).filter(n => !_invExcluidos.has(n)), ...(_invAdicoes[_chaveAdic(daLista, setor, g)] || [])];
       nomes.forEach(n => {
         const p = porNome.get(norm((_invMapeamentos[n] || n).trim()));
         if (!p || vistos.has(p.id)) return;

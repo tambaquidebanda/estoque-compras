@@ -1518,7 +1518,9 @@ async function selecionarGrupo(grupo) {
       return { nome, produto_id: prod?.id || null, unidade: prod?.unidade_uso || prod?.unidade_comp || '' };
     });
 
-  // Adições manuais do setor atual
+  // Adições manuais do setor atual. Chave por unidade quando o setor tem o mesmo nome
+  // de um setor do Centro (Cozinha/Churrasqueira do P10) — mesma regra do app.js.
+  const _chaveAdic = (s, g) => ((_local !== 'Centro' && _todasEstruturasMob?.['Centro']?.[s]) ? `${_local}>` : '') + `${s}|${g}`;
   const nomesExistentes = new Set(_grupoProds.map(p => norm(p.nome)));
   const _addDe = (chave) => {
     (_invAdicoes[chave] || []).forEach(nome => {
@@ -1533,12 +1535,12 @@ async function selecionarGrupo(grupo) {
     // Agrega adições de todos os setores reais que têm este grupo
     Object.keys(INVENTARIO_ESTRUTURA).forEach(s => {
       if (s === 'ESTOQUE DA LOJA') return;
-      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(`${s}|${grupo}`);
+      if (INVENTARIO_ESTRUTURA[s]?.[grupo]) _addDe(_chaveAdic(s, grupo));
     });
     // Adições feitas direto no Estoque da Loja (produtos que só existem aqui)
     _addDe(`ESTOQUE DA LOJA|${grupo}`);
   } else {
-    _addDe(`${_setor}|${grupo}`);
+    _addDe(_chaveAdic(_setor, grupo));
   }
 
   renderProdutos();
@@ -2389,8 +2391,9 @@ function _buildProdutosEmerg() {
   const estruturaSetor = INVENTARIO_ESTRUTURA[_setor] || {};
   const nomesEstrut = [];
   Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n) nomesEstrut.push(n); }); });
+  const _prefAdic = ((_local !== 'Centro' && _todasEstruturasMob?.['Centro']?.[_setor]) ? `${_local}>` : '') + _setor + '|';
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
-    if (chave.startsWith(_setor + '|') && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
+    if (chave.startsWith(_prefAdic) && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
   });
   // Monta a lista SÓ com os produtos deste setor (sem cair para "todos os produtos").
   // Resolve cada nome da estrutura para o produto do cadastro (mapeamento/norm), igual à
