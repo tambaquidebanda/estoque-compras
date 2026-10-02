@@ -2852,6 +2852,10 @@ _gerarEstoqueLojaEstrutura(); // initial call (replaces IIFE)
 
 const _UNIDADES_LOCAIS = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
 let _todasEstruturas = {};
+// Como a estrutura estava no banco quando esta tela a leu. Gravar a estrutura INTEIRA
+// a partir da memoria de uma tela aberta ha horas desfaria o que mudou depois (SQL,
+// outro computador, exclusao feita no celular). _salvarEstruturaSupabase compara antes.
+let _estruturaSnap = null;
 
 function _aplicarEstruturaLocal(local) {
   const base = _todasEstruturas[local] || _todasEstruturas['Centro'] || {};
@@ -2932,7 +2936,7 @@ async function carregarMapeamentosInv() {
       if (row.chave === 'adicoes')     _invAdicoes  = row.valor || {};
       if (row.chave === 'padroes')     _invPadroes      = row.valor || {};
       if (row.chave === 'ordem_grupos') _invOrdemGrupos = row.valor || {};
-      if (row.chave === 'estrutura')   _todasEstruturas = row.valor || {};
+      if (row.chave === 'estrutura')   { _todasEstruturas = row.valor || {}; _estruturaSnap = JSON.stringify(_todasEstruturas); }
     });
   }
 
@@ -3009,7 +3013,7 @@ async function carregarMapeamentosInv() {
       }
     });
   });
-  if (_estruturaMudou) await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
+  if (_estruturaMudou) { await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas }); await _releSnapEstrutura(); }
   _aplicarEstruturaLocal(_invLocal || 'Centro');
   _renderizarSetoresBtns();
 
@@ -3253,6 +3257,7 @@ async function _excluirProdDaUnidade(nome, unidade, setor, grupo) {
   const { error: eGrava } = await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: est });
   if (eGrava) { toast('Erro ao excluir: ' + eGrava.message, 'erro'); return; }
   _todasEstruturas = est;
+  _estruturaSnap   = JSON.stringify(est);
   _aplicarEstruturaLocal(unidade);
   _invProds = _invProds.filter(p => p.nome !== nome);
   renderInventario();
@@ -8788,11 +8793,13 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
   // Garante que estrutura/adições/mapeamentos estejam carregados. Se o produto for salvo
   // sem ter aberto a Contagem, os globais estariam vazios — a renomeação não acharia nada
   // e (pior) NUNCA devemos gravar estrutura vazia. Carrega do Supabase quando preciso.
-  if (!_todasEstruturas || !Object.keys(_todasEstruturas).length) {
+  // Le SEMPRE do banco (02/10/2026): renomear a partir da copia em memoria de uma tela
+  // aberta ha horas gravava a estrutura velha por cima do que mudou depois.
+  {
     const { data } = await sb.from('inv_configuracoes').select('chave,valor')
       .in('chave', ['estrutura', 'adicoes', 'mapeamentos']);
     (data || []).forEach(row => {
-      if (row.chave === 'estrutura')   _todasEstruturas = row.valor || {};
+      if (row.chave === 'estrutura')   { _todasEstruturas = row.valor || {}; _estruturaSnap = JSON.stringify(_todasEstruturas); }
       if (row.chave === 'adicoes')     _invAdicoes      = row.valor || {};
       if (row.chave === 'mapeamentos') _invMapeamentos  = row.valor || {};
     });
@@ -8837,6 +8844,7 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
     sb.from('inv_configuracoes').upsert({ chave: 'mapeamentos', valor: _invMapeamentos }),
   );
   if (upserts.length) await Promise.all(upserts);
+  if (mudouEstrutura) await _releSnapEstrutura();
 
   // Re-aplica estrutura na tela atual
   if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
@@ -14623,10 +14631,28 @@ async function exportarInventarioValorado(id) {
 
 // ─── GERENCIAR SETORES / GRUPOS POR UNIDADE ──────────────────────
 
+// Depois que ESTA tela grava a estrutura, a referencia passa a ser o que ficou no banco
+// (relido: a ordem das chaves no banco pode diferir da memoria).
+async function _releSnapEstrutura() {
+  const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'estrutura').single();
+  if (data?.valor) _estruturaSnap = JSON.stringify(data.valor);
+}
+
+// Trava (02/10/2026): so grava se o banco ainda estiver como esta tela leu. Se mudou
+// (SQL, outro aparelho), nao grava — senao a lista inteira voltaria para a versao velha
+// desta tela. Devolve true quando gravou.
 async function _salvarEstruturaSupabase() {
+  const { data: fr, error: eFr } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'estrutura').single();
+  if (eFr) { toast('Não consegui conferir as listas agora. Nada foi salvo — tente de novo.', 'erro'); return false; }
+  if (_estruturaSnap !== null && JSON.stringify(fr?.valor || {}) !== _estruturaSnap) {
+    toast('As listas de contagem mudaram em outro aparelho desde que esta tela abriu. Nada foi salvo — aperte F5 e refaça.', 'erro');
+    return false;
+  }
   const { error } = await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas });
-  if (error) { toast('Erro ao salvar estrutura: ' + error.message, 'erro'); console.error('_salvarEstruturaSupabase:', error); return; }
+  if (error) { toast('Erro ao salvar estrutura: ' + error.message, 'erro'); console.error('_salvarEstruturaSupabase:', error); return false; }
+  await _releSnapEstrutura();
   _aplicarEstruturaLocal(_invLocal || 'Centro');
+  return true;
 }
 
 function gerenciarSetoresUnidade() {
@@ -14693,7 +14719,7 @@ async function salvarSetoresUnidade() {
     delete est[s];
   });
 
-  await _salvarEstruturaSupabase();
+  if (!await _salvarEstruturaSupabase()) return;
   bootstrap.Modal.getInstance(document.getElementById('modal-gerenciar-setores'))?.hide();
 
   // Re-render setor buttons
@@ -14756,7 +14782,7 @@ async function adicionarGrupoUnidade() {
 
   _todasEstruturas[local][setor][nome] = [];
   if (_invOrdemGrupos[local]?.[setor]) _invOrdemGrupos[local][setor].push(nome);
-  await _salvarEstruturaSupabase();
+  if (!await _salvarEstruturaSupabase()) return;
   await sb.from('inv_configuracoes').upsert({ chave: 'ordem_grupos', valor: _invOrdemGrupos });
   selecionarSetorInv(_invSetor);
   toast(`Grupo ${nome} adicionado!`, 'ok');
@@ -14774,7 +14800,7 @@ async function removerGrupoUnidade() {
     _invOrdemGrupos[local][setor] = _invOrdemGrupos[local][setor].filter(g => g !== grupo);
     await sb.from('inv_configuracoes').upsert({ chave: 'ordem_grupos', valor: _invOrdemGrupos });
   }
-  await _salvarEstruturaSupabase();
+  if (!await _salvarEstruturaSupabase()) return;
   _invGrupo = null;
   _invProds = [];
   document.getElementById('inv-tabela-section')?.classList.add('d-none');
