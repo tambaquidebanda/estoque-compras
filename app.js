@@ -5865,8 +5865,8 @@ async function _enviarEmergencia() {
 // ATENCAO: salvarPins regrava o objeto inteiro — aba antiga sem estas chaves as apaga.
 // salvarPins grava SO estas chaves (o objeto inteiro): chave fora da lista some ao salvar.
 const _PIN_CHAVES = ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR',
-                     'ESTOQUE CENTRAL','PRODUCAO','ESTOQUE DELIVERY',
-                     'MATERIAL DE LIMPEZA','BEBIDAS','DESCARTAVEL'];   // setores so do Delivery P10 (02/10/2026)
+                     'ESTOQUE CENTRAL','PRODUCAO','ESTOQUE DELIVERY'];
+// Delivery P10: um PIN so (ESTOQUE DELIVERY) para todos os setores dele — ver _pinDoSetorMob no celular.
 async function abrirConfigurarPins() {
   const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave','pins').single();
   const pinsAtual = data?.valor || {};

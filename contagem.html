@@ -1277,7 +1277,15 @@ function _abrirSubTabEstoque() {
 // pedidos da COZINHA pela aba Meus Pedidos. Quem contou o setor já digitou o PIN dele
 // (pedirPinSetor) e não precisa repetir. ESTOQUE DA LOJA usa o PIN do Estoque.
 const _meusLiberados = new Set();
-function _pinDoSetorMeus(setor) { return setor === 'ESTOQUE DA LOJA' ? _pins['ESTOQUE'] : _pins[setor]; }
+// Delivery P10: UM PIN so para todos os setores e o estoque (a mesma pessoa conta tudo,
+// pedido do Wagner em 02/10/2026) — o PIN do Estoque Delivery. Vale com a pilula do P10
+// escolhida e para os setores que so o P10 tem (Bebidas, Descartavel...).
+function _pinDoSetorMob(setor) {
+  const soP10 = !!_todasEstruturasMob?.['Delivery P10']?.[setor] && !_todasEstruturasMob?.['Centro']?.[setor];
+  if ((_local === 'Delivery P10' || soP10) && _pins['ESTOQUE DELIVERY']) return _pins['ESTOQUE DELIVERY'];
+  return _pins[setor];
+}
+function _pinDoSetorMeus(setor) { return setor === 'ESTOQUE DA LOJA' ? _pins['ESTOQUE'] : _pinDoSetorMob(setor); }
 function _meusSetorLiberado(setor) { return !setor || !_pinDoSetorMeus(setor) || _meusLiberados.has(setor); }
 function pedirPinMeus(setor) {
   _pinTarget = { tipo: 'meus', setor };
@@ -1289,7 +1297,7 @@ function pedirPinMeus(setor) {
 }
 
 function pedirPinSetor(setor) {
-  const pin = _pins[setor];
+  const pin = _pinDoSetorMob(setor);
   if (!pin) { _pedirNomeParaSetor(setor); return; }
   _pinTarget = { tipo: 'setor', setor };
   _pinBuffer = '';
@@ -1338,7 +1346,7 @@ function atualizarPinDisplay() {
 }
 function pinConfirm() {
   if (!_pinTarget) return;
-  const esperado = _pinTarget.tipo === 'setor' ? _pins[_pinTarget.setor]
+  const esperado = _pinTarget.tipo === 'setor' ? _pinDoSetorMob(_pinTarget.setor)
     : _pinTarget.tipo === 'meus' ? _pinDoSetorMeus(_pinTarget.setor)
     : _pinTarget.tipo === 'estoque_loja' ? _pins[_pinTarget.pinKey || 'ESTOQUE']
     : _pins['ESTOQUE'];
