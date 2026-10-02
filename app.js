@@ -934,10 +934,16 @@ async function prepararFormCompra() {
 
   const compSel = document.getElementById('c-comp');
 
+  // LOCAL DE RECEBIMENTO (era "Setor", 02/10/2026). Grava em cmp_compras.setor, a
+  // mesma coluna, com os mesmos nomes de antes. O recebimento abre neste lugar.
+  // Rastro: em setembro, 149 recebimentos de pedidos marcados Estoque Central ou
+  // Producao (R$ 144 mil) entraram no Estoque da Loja, porque o recebimento abria
+  // sempre na loja e ninguem trocava. Producao chega no Central e vai por transferencia.
   const setorSel = document.getElementById('c-setor');
   if (setorSel) {
-    setorSel.innerHTML = '<option value="">— Nenhum —</option>' +
-      cSetores.map(s => `<option value="${esc(s.nome)}">${esc(s.nome)}</option>`).join('');
+    setorSel.innerHTML = '<option value="">— Selecione —</option>' +
+      '<option value="Estoque Loja">🏪 Estoque da Loja (Centro)</option>' +
+      '<option value="Estoque Central">🏭 Estoque Central</option>';
   }
 
   const usoSel = document.getElementById('c-uso');
@@ -956,7 +962,7 @@ async function prepararFormCompra() {
       document.getElementById('c-forn').value  = primeiro.fornNome || '';
       document.getElementById('c-forn-id').value = primeiro.fornId || '';
       if (compSel) compSel.value = primeiro.comp || '';
-      if (setorSel) setorSel.value = primeiro.setor || '';
+      if (setorSel) setorSel.value = _localPedidoNorm(primeiro.setor);
       const fmSel = document.getElementById('c-forma-pgto');
       if (fmSel) fmSel.value = primeiro.formaPagamento || '';
       _preencherSelectParcelas('c-parcelas', primeiro.parcelas || 1);
@@ -1383,6 +1389,12 @@ async function finalizarPedido() {
   const pedido_num    = _pedidoEditando || await _gerarNumeroPedido();
   const acrescimo     = parseMoeda('c-acrescimo');
   const setor         = document.getElementById('c-setor')?.value || '';
+  if (!setor) {
+    toast('Selecione o Local de Recebimento (onde a mercadoria vai chegar).', 'erro');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+    return;
+  }
   const forma_pagamento = document.getElementById('c-forma-pgto')?.value || '';
   const parcelas      = Math.max(1, parseInt(document.getElementById('c-parcelas')?.value, 10) || 1);
   const data_entrega  = document.getElementById('c-data-entrega')?.value || '';
@@ -6740,7 +6752,7 @@ async function excluirPedidoReceb(pedido_num) {
 
 async function abrirModalReceber(pedido_num) {
   const { data: itens } = await sb.from('cmp_compras')
-    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso,bonificado,forma_pagamento,parcelas')
+    .select('id,produto,produto_id,categoria,plano_conta,unidade_med,quantidade,custo_unit,fornecedor_id,fornecedor_nome,comprador,acrescimo,unidade_uso,bonificado,forma_pagamento,parcelas,setor')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
@@ -6804,25 +6816,29 @@ async function abrirModalReceber(pedido_num) {
     </tr>`).join('');
 
   calcTotalReceb();
-  // O lugar abre com a ULTIMA escolha DESTE aparelho (pedido do Wagner, 02/10/2026:
-  // o computador do Estoque Central recebe sempre la). Ate entao voltava sempre para
-  // a loja — licao da pilula da contagem (29/08): escolha lembrada e escolha que
-  // ninguem confere. Por isso, fora da loja a faixa fica laranja E diz que veio lembrada.
+  // O lugar abre com o LOCAL DE RECEBIMENTO do pedido (02/10/2026) — quem comprou
+  // sabe para onde vai. Pedido antigo sem local abre na loja, como sempre. Fora da
+  // loja a faixa fica laranja e diz que veio do pedido; quem recebe pode trocar.
   const _sel = document.getElementById('receb-local');
-  if (_sel) { _sel.value = _recebLocalLembrado(); _pintarLocalReceb(true); }
+  if (_sel) { _sel.value = _localRecebDoPedido(_recebItensAbertos[0]?.setor); _pintarLocalReceb(true); }
   new bootstrap.Modal(document.getElementById('modal-receber')).show();
 }
 
 // Fora da loja a caixa muda de cor e diz para onde vai — ninguem confirma um
 // recebimento de R$ 20 mil no lugar errado sem ver.
-const _RECEB_LOCAL_KEY = 'gc_receb_local_ultimo';
-function _recebLocalLembrado() {
-  try { const v = localStorage.getItem(_RECEB_LOCAL_KEY); return v === 'CENTRAL' ? v : 'ESTOQUE_LOJA'; }
-  catch (_) { return 'ESTOQUE_LOJA'; }
+// Local de Recebimento do pedido (cmp_compras.setor) -> lugar do razao. Producao
+// chega no Central (decisao de 02/10/2026). Bar/Cozinha/vazio (pedidos antigos) = loja.
+function _localPedidoNorm(setor) {
+  const n = norm((setor || '').trim());
+  if (n === norm('Estoque Central') || n === norm('Produção')) return 'Estoque Central';
+  if (n === norm('Estoque Loja')) return 'Estoque Loja';
+  return '';
 }
-function _pintarLocalReceb(lembrado = false) {
+function _localRecebDoPedido(setor) {
+  return _localPedidoNorm(setor) === 'Estoque Central' ? 'CENTRAL' : 'ESTOQUE_LOJA';
+}
+function _pintarLocalReceb(doPedido = false) {
   const v    = document.getElementById('receb-local')?.value || 'ESTOQUE_LOJA';
-  if (!lembrado) { try { localStorage.setItem(_RECEB_LOCAL_KEY, v); } catch (_) {} }
   const box  = document.getElementById('receb-local-box');
   const hint = document.getElementById('receb-local-hint');
   const naLoja = v === 'ESTOQUE_LOJA';
@@ -6833,7 +6849,7 @@ function _pintarLocalReceb(lembrado = false) {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : (lembrado ? '↺ Lembrado deste computador. ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
     hint.className = naLoja ? 'small text-muted' : 'small fw-semibold text-danger';
   }
 }

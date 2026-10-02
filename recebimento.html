@@ -901,7 +901,7 @@ function esc(s) {
 async function abrirPedido(pedido_num) {
   const { data: itens, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo,bonificado,forma_pagamento,parcelas')
+    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo,bonificado,forma_pagamento,parcelas,setor')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('id');
@@ -927,10 +927,10 @@ async function abrirPedido(pedido_num) {
   // O lugar volta SEMPRE para a loja ao abrir um pedido. Escolha lembrada e
   // escolha que ninguem mais confere — foi assim que a unidade errada atravessou
   // a noite de 29/08 na contagem.
-  // Abre com a ULTIMA escolha deste celular (02/10/2026: o celular do Estoque Central
-  // recebe sempre la). Fora da loja a caixa fica laranja e diz que veio lembrada.
+  // Abre com o LOCAL DE RECEBIMENTO do pedido (02/10/2026; mesma regra do app.js).
+  // Fora da loja a caixa fica laranja e diz que veio do pedido; quem recebe pode trocar.
   const _selLocal = document.getElementById('rec-local');
-  if (_selLocal) { _selLocal.value = _recebLocalLembradoMob(); _pintarLocalRecebMob(true); }
+  if (_selLocal) { _selLocal.value = _localRecebDoPedidoMob(_pedidoAtual?.itens?.[0]?.setor); _pintarLocalRecebMob(true); }
   setMoeda('rec-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
 
   // Mostra nome do responsável (usuário logado)
@@ -1587,14 +1587,14 @@ async function _recebimentoAtualizaCustos(itensReceb) {
 
 // ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por produto_id ──
 // Fora da loja a caixa muda de cor e avisa o que isso significa.
-const _RECEB_LOCAL_KEY_MOB = 'gc_receb_local_ultimo';
-function _recebLocalLembradoMob() {
-  try { const v = localStorage.getItem(_RECEB_LOCAL_KEY_MOB); return v === 'CENTRAL' ? v : 'ESTOQUE_LOJA'; }
-  catch (_) { return 'ESTOQUE_LOJA'; }
+// Local de Recebimento do pedido -> lugar. Estoque Central e Producao (que chega no
+// Central) abrem no CENTRAL; o resto, na loja.
+function _localRecebDoPedidoMob(setor) {
+  const n = _normNome(setor || '');
+  return (n === _normNome('Estoque Central') || n === _normNome('Produção')) ? 'CENTRAL' : 'ESTOQUE_LOJA';
 }
-function _pintarLocalRecebMob(lembrado = false) {
+function _pintarLocalRecebMob(doPedido = false) {
   const v      = document.getElementById('rec-local')?.value || 'ESTOQUE_LOJA';
-  if (!lembrado) { try { localStorage.setItem(_RECEB_LOCAL_KEY_MOB, v); } catch (_) {} }
   const box    = document.getElementById('rec-local-box');
   const hint   = document.getElementById('rec-local-hint');
   const naLoja = v === 'ESTOQUE_LOJA';
@@ -1605,7 +1605,7 @@ function _pintarLocalRecebMob(lembrado = false) {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : (lembrado ? '↺ Lembrado deste celular. ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (doPedido ? 'Veio do pedido (Local de Recebimento). ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
     hint.style.color = naLoja ? 'var(--txt2)' : '#fbbf24';
   }
 }
