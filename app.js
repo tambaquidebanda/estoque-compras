@@ -3225,7 +3225,47 @@ async function removerProdInv(nome) {
   toast(`${nome} removido do grupo.`, 'ok');
 }
 
+// EXCLUIR DA CONTAGEM — so desta unidade (02/10/2026).
+// Antes ia para inv_configuracoes['excluidos'], uma lista UNICA, sem unidade: excluir
+// no Delivery P10 tirava o produto tambem do Centro (as listas do P10 sao copia das do
+// Centro). Agora o nome sai SO da lista desta unidade/setor/grupo, na estrutura —
+// que ja e separada por unidade. Le a estrutura fresca do banco antes de gravar, para
+// nao apagar mudanca feita em outro aparelho. Para voltar: o "+" do grupo.
+// O ESTOQUE DA LOJA do Centro e montado juntando os setores (nao tem lista propria):
+// la continua o jeito antigo.
 async function excluirProdInv(nome) {
+  const unidade = _invLocal || 'Centro';
+  if (_invSetor && _invSetor !== 'ESTOQUE DA LOJA') return _excluirProdDaUnidade(nome, unidade, _invSetor, _invGrupo);
+  return _excluirProdGlobal(nome);
+}
+
+async function _excluirProdDaUnidade(nome, unidade, setor, grupo) {
+  if (!confirm(`Excluir "${nome}" da contagem de ${unidade}?\n\nSai só desta lista (${setor} / ${grupo}). As outras unidades não mudam.\nPara voltar, use o "+" do grupo.`)) return;
+  const { data: fe, error: eLe } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'estrutura').single();
+  const est = fe?.valor;
+  if (eLe || !est?.[unidade]?.[setor]) { toast('Não consegui ler a lista agora. Nada foi excluído — tente de novo.', 'erro'); return; }
+  const lista = est[unidade][setor][grupo];
+  if (!Array.isArray(lista) || !lista.includes(nome)) {
+    // Nao esta na lista da unidade: veio de uma adicao ("+") — tira de la
+    return removerProdInv(nome);
+  }
+  est[unidade][setor][grupo] = lista.filter(n => n !== nome);
+  const { error: eGrava } = await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: est });
+  if (eGrava) { toast('Erro ao excluir: ' + eGrava.message, 'erro'); return; }
+  _todasEstruturas = est;
+  _aplicarEstruturaLocal(unidade);
+  _invProds = _invProds.filter(p => p.nome !== nome);
+  renderInventario();
+  // A adicao ("+") e guardada por setor|grupo, sem unidade: se o nome tambem foi
+  // adicionado assim, ele continua aparecendo. Avisa em vez de mexer na adicao,
+  // que valeria para as duas lojas.
+  const viaMais = (_invAdicoes[`${setor}|${grupo}`] || []).some(n => norm(n) === norm(nome));
+  toast(viaMais
+    ? `"${nome}" saiu da lista de ${unidade}, mas também foi adicionado com "+" neste grupo e continua aparecendo. Use o botão de remover adição.`
+    : `"${nome}" excluído da contagem de ${unidade}.`, viaMais ? 'erro' : 'ok');
+}
+
+async function _excluirProdGlobal(nome) {
   if (!confirm(`Excluir "${nome}" da contagem?\n\nO produto não aparecerá mais nas listas. Para desfazer, use o painel de divergências.`)) return;
   // Relê fresco antes de gravar (evita sobrescrever exclusões feitas em outro dispositivo)
   const { data: _fe } = await sb.from('inv_configuracoes').select('valor').eq('chave', 'excluidos').limit(1);
