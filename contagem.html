@@ -754,9 +754,13 @@ let _estoqueDesbloqueado = false;
 // Bar — o Bar libera a cerveja à noite, e só isso. Rastro: 28/09/2026 23:00-23:06 o celular do
 // Bar, com o PIN do Estoque, liberou e recebeu os 21 pedidos da noite (Cozinha e Bar) que o
 // estoque libera de manhã (Logs do Supabase: mesma sessão das contagens do Bar).
-let _estoqueEscopo = null;   // null = acesso completo | 'BAR_ALCOOLICAS'
+let _estoqueEscopo = null;   // null = acesso completo | 'BAR_ALCOOLICAS' | 'P10_TRANSF'
+// PIN do Estoque Delivery (pins['ESTOQUE DELIVERY']) em "Pedidos dos Setores": abre SO as
+// transferencias que chegam no P10 (02/10/2026). Nao libera nem recebe pedido de setor —
+// esses continuam com o estoque do Centro (a mesma licao do PIN do Bar, 28/09).
 function _ehAlcoolicas(obs) { return norm(obs).replace(/[^a-z]/g, '') === 'alcoolicas'; }
 function _pedNoEscopo(ped) {
+  if (_estoqueEscopo === 'P10_TRANSF') return false;
   if (_estoqueEscopo !== 'BAR_ALCOOLICAS') return true;
   return ped?.setor === 'BAR' && ped?.tipo === 'normal' && _ehAlcoolicas(ped?.obs);
 }
@@ -1318,8 +1322,9 @@ function pinConfirm() {
     : _pinTarget.tipo === 'estoque_loja' ? _pins[_pinTarget.pinKey || 'ESTOQUE']
     : _pins['ESTOQUE'];
   const pinBar = _pinTarget.tipo === 'estoque' && _pins['ESTOQUE_BAR'] && _pinBuffer === _pins['ESTOQUE_BAR'];
-  if (_pinBuffer === esperado || pinBar) {
-    if (_pinTarget.tipo === 'estoque') _estoqueEscopo = pinBar && _pinBuffer !== esperado ? 'BAR_ALCOOLICAS' : null;
+  const pinP10 = _pinTarget.tipo === 'estoque' && _pins['ESTOQUE DELIVERY'] && _pinBuffer === _pins['ESTOQUE DELIVERY'];
+  if (_pinBuffer === esperado || pinBar || pinP10) {
+    if (_pinTarget.tipo === 'estoque') _estoqueEscopo = _pinBuffer === esperado ? null : pinBar ? 'BAR_ALCOOLICAS' : 'P10_TRANSF';
     fecharModal('modal-pin');
     if (_pinTarget.tipo === 'meus') {
       _meusLiberados.add(_pinTarget.setor);
@@ -1875,6 +1880,7 @@ async function carregarPedidosEstoque() {
   // como pedido interno e creditaria um setor 'TRANSFERENCIA' que nao existe.
   // Ela tem o bloco proprio logo acima da lista (_blocoTransfMob).
   const restrito = _estoqueEscopo === 'BAR_ALCOOLICAS';
+  const soP10    = _estoqueEscopo === 'P10_TRANSF';
   const selSetor = document.getElementById('fil-ped-setor');
   if (selSetor) { if (restrito) selSetor.value = 'BAR'; selSetor.disabled = restrito; }
   let q = sb.from('pedidos_internos').select('*').neq('tipo','transferencia').order('criado_em',{ascending:false}).limit(80);
@@ -1885,7 +1891,10 @@ async function carregarPedidosEstoque() {
   const peds = (pedsQ || []).filter(_pedNoEscopo);
   const blocoTransf = (restrito
     ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🍺 PIN do Bar: aqui aparecem só os pedidos de ALCOÓLICAS do Bar.</div>'
+    : soP10
+    ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🛵 PIN do Estoque Delivery: aqui aparece só o que chega do Estoque Central para o P10.</div>'
     : '') + (blocoTransfQ || '');
+  if (soP10) { document.getElementById('lst-pedidos-estoque').innerHTML = blocoTransf || ''; if (!blocoTransfQ) document.getElementById('lst-pedidos-estoque').innerHTML += '<div class="vazio">Nada chegando agora.</div>'; return; }
   const el = document.getElementById('lst-pedidos-estoque');
   if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
@@ -1894,13 +1903,18 @@ async function carregarPedidosEstoque() {
 
 // ─── TRANSFERENCIA CHEGANDO DO ESTOQUE CENTRAL ──────────────────
 // O estoque da loja confirma aqui ou no computador (decisao de 25/09/2026).
-// So o Centro por enquanto: o P10 espera o prefixo P10_ do razao (ver app.js,
-// _localDaContagem). Mesma trava de toque duplo do computador: a troca de status
-// so vale se ainda estiver 'liberado'. ref_id = id do ITEM (indice uq_est_mov_ref).
+// Centro (entra no ESTOQUE_LOJA) e, desde 02/10/2026, Delivery P10 (entra no
+// ESTOQUE DELIVERY — o estoque proprio do P10). Qual das duas: a pilula escolhida,
+// ou o P10 direto quando a tela foi aberta com o PIN do Estoque Delivery.
+// Mesma trava de toque duplo do computador: a troca de status so vale se ainda
+// estiver 'liberado'. ref_id = id do ITEM (indice uq_est_mov_ref).
+const _LUGAR_TRANSF_MOB = { 'Centro': 'ESTOQUE_LOJA', 'Delivery P10': 'ESTOQUE DELIVERY' };
+function _unidadeTransfMob() { return _estoqueEscopo === 'P10_TRANSF' ? 'Delivery P10' : _local; }
 async function _blocoTransfMob() {
-  if (_local !== 'Centro') return '';
+  const uni = _unidadeTransfMob();
+  if (!_LUGAR_TRANSF_MOB[uni]) return '';
   const { data: peds } = await sb.from('pedidos_internos').select('*')
-    .eq('tipo','transferencia').eq('local', _local).eq('status','liberado')
+    .eq('tipo','transferencia').eq('local', uni).eq('status','liberado')
     .order('criado_em',{ascending:true}).limit(20);
   if (!peds?.length) return '';
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
@@ -1932,13 +1946,14 @@ async function confirmarChegadaTransfMob(pedidoId) {
     if (i.value === '' || isNaN(v) || v < 0) { toast('Quantidade inválida — use 0 para o que não chegou.','err'); return; }
     qtds[i.dataset.transfRecebidaMob] = v;
   }
-  if (!confirm('Confirmar que estas quantidades chegaram no Estoque da Loja?')) return;
+  const _uniConf = _unidadeTransfMob();
+  if (!confirm(`Confirmar que estas quantidades chegaram no ${_uniConf === 'Delivery P10' ? 'Estoque Delivery (P10)' : 'Estoque da Loja'}?`)) return;
   _transfMobEmVoo = true;
   try {
     if (!await _garantirSessao()) return;
     const { data: ok, error } = await sb.from('pedidos_internos')
       .update({ status:'recebido', recebido_em:new Date().toISOString(), ...await _campoQuem('recebido_por', _quemCom(_nomeResponsavel)) })
-      .eq('id',pedidoId).eq('status','liberado').select('id,num_pedido,unidade_origem');
+      .eq('id',pedidoId).eq('status','liberado').select('id,num_pedido,unidade_origem,local');
     if (error) { toast(_msgErroBanco(error),'err'); return; }
     if (!ok?.length) { toast('Esta transferência já tinha sido confirmada. Nada foi lançado de novo.','err'); carregarPedidosEstoque(); return; }
     const p = ok[0];
@@ -1947,7 +1962,7 @@ async function confirmarChegadaTransfMob(pedidoId) {
     for (const it of itens || []) {
       const v = qtds[it.id] ?? 0;
       await sb.from('pedidos_internos_itens').update({ qtd_recebida: v }).eq('id', it.id);
-      if (v > 0) await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'transferencia_entrada', quantidade: v,
+      if (v > 0) await movimentar({ produto_id: it.produto_id, local: _LUGAR_TRANSF_MOB[p.local] || 'ESTOQUE_LOJA', tipo: 'transferencia_entrada', quantidade: v,
         origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id, responsavel: resp || null, data: hojeLocal(),
         motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}` });
     }

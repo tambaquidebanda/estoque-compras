@@ -430,14 +430,17 @@ const BANCO_CAIXA_ID_MOB  = '5f8f152e-8ef7-47ad-8df3-b251f4225a1f';
 
 // ════════════════════════════════════════════════════════════════
 // PEDIDO CONJUNTO — CENTRO + DELIVERY P10 (01/10/2026) — mesma regra do app.js
-//   1. item do Delivery P10 entra no ESTOQUE DELIVERY (gravado no item, em
+//   1. "Onde a mercadoria entrou" manda: no Estoque da Loja, o item do Delivery P10
+//      vai direto para o ESTOQUE DELIVERY; no Estoque Central, TUDO entra no CENTRAL
+//      e cada loja pede o seu por transferencia (gravado no item, em
 //      cmp_recebimento_itens.local, para o estorno desfazer no mesmo lugar);
 //   2. um lancamento so, com rateio por plano de contas x unidade
 //      (rascunho_rateio_itens.unidade_id) — a DRE leva cada linha para a sua loja.
 // ════════════════════════════════════════════════════════════════
 const LOCAL_ESTOQUE_P10 = 'ESTOQUE DELIVERY';
 function _localDoItemReceb(unidade_uso, localReceb) {
-  return _normNome(unidade_uso || '') === _normNome('Delivery P10') ? LOCAL_ESTOQUE_P10 : (localReceb || 'ESTOQUE_LOJA');
+  const l = localReceb || 'ESTOQUE_LOJA';
+  return l === 'ESTOQUE_LOJA' && _normNome(unidade_uso || '') === _normNome('Delivery P10') ? LOCAL_ESTOQUE_P10 : l;
 }
 function _linhaRateio(r, extra) {
   return { plano_conta_id: r.plano_conta_id, valor: r.valor, descricao: r.descricao || '',

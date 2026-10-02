@@ -4610,17 +4610,21 @@ function _localDaContagem(unidade, setor) {
 // Fornecedor com faturamento minimo: um pedido so, um boleto so, com itens das
 // duas lojas. Cada item ja diz de quem e (cmp_compras.unidade_uso). Duas coisas
 // seguem essa unidade:
-//   1. ESTOQUE — item do Delivery P10 entra direto no ESTOQUE DELIVERY (decisao do
-//      Wagner: a mercadoria do P10 chega no P10). O lugar fica gravado no item
-//      (cmp_recebimento_itens.local) para o estorno desfazer no mesmo lugar.
-//      Vazio = o lugar do cabecalho, como sempre foi.
+//   1. ESTOQUE — "Onde a mercadoria entrou" manda, porque e onde ela ESTA:
+//      - recebido no Estoque da Loja: item do Delivery P10 vai direto para o
+//        ESTOQUE DELIVERY (o fornecedor deixa a parte do P10 la);
+//      - recebido no Estoque Central: TUDO entra no CENTRAL, inclusive o do P10, e
+//        cada loja pede o seu por transferencia (02/10/2026, pedido #01614).
+//      O lugar fica gravado no item (cmp_recebimento_itens.local) para o estorno
+//      desfazer no mesmo lugar. Vazio = o lugar do cabecalho, como sempre foi.
 //   2. FINANCEIRO — um lancamento so (bate com o boleto e com o extrato), com o
 //      rateio por plano de contas E unidade (rateio_itens.unidade_id). A DRE abre o
 //      rateio linha a linha e cada linha vai para a unidade dela.
 // ════════════════════════════════════════════════════════════════
 const LOCAL_ESTOQUE_P10 = 'ESTOQUE DELIVERY';
 function _localDoItemReceb(unidade_uso, localReceb) {
-  return norm((unidade_uso || '').trim()) === norm('Delivery P10') ? LOCAL_ESTOQUE_P10 : (localReceb || 'ESTOQUE_LOJA');
+  const l = localReceb || 'ESTOQUE_LOJA';
+  return l === 'ESTOQUE_LOJA' && norm((unidade_uso || '').trim()) === norm('Delivery P10') ? LOCAL_ESTOQUE_P10 : l;
 }
 
 // Rateio do pedido pelo que foi RECEBIDO (cmp_recebimento_itens.total_recebido),
@@ -5047,8 +5051,11 @@ async function _confirmarRecebimentoInv() {
 // (ref_tabela, ref_id, local, tipo) barraria o segundo item do mesmo pedido.
 // ════════════════════════════════════════════════════════════════
 
-const _TRANSF_UNIDADES = ['Centro', 'Produção', 'Estoque Central'];
-const _transfLugar = u => _localRazao(u, 'ESTOQUE DA LOJA');
+// Delivery P10 entrou em 02/10/2026: pede ao Central e recebe no ESTOQUE DELIVERY
+// (o estoque proprio dele, o mesmo da contagem do P10). Os outros setores do P10
+// continuam fora — eles ainda gravam nos lugares do Centro (ver _localDaContagem).
+const _TRANSF_UNIDADES = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
+const _transfLugar = u => u === 'Delivery P10' ? LOCAL_ESTOQUE_P10 : _localRazao(u, 'ESTOQUE DA LOJA');
 const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
   : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central) | 'enviar' (Centro -> Central)
@@ -5370,6 +5377,20 @@ async function abrirNovaTransferencia(modo = 'pedir') {
     (data || []).forEach(s => { saldo[s.produto_id] = Number(s.saldo); });
   }
   cat.forEach(c => { c.saldo = saldo[c.produto_id] ?? null; });
+  // Pedir ao Central: o que tem saldo no Central mas nao esta na lista dele tambem pode
+  // ser pedido. Compra recebida no Central (ex.: #01614, queijo para o Centro e o P10)
+  // nem sempre e item da lista — sem isto ficava preso la, sem ninguem conseguir pedir.
+  if (modo === 'pedir') {
+    const { data: fora, error: eFora } = await sb.from('est_saldo_local').select('produto_id,saldo')
+      .eq('local', lugar).gt('saldo', 0).limit(1000);
+    if (eFora) toast('Erro ao carregar o que está fora da lista: ' + eFora.message, 'erro');
+    (fora || []).filter(s => !vistos.has(s.produto_id)).forEach(s => {
+      const p = cProdutosFT.find(x => x.id === s.produto_id);
+      if (!p) return;
+      vistos.add(p.id);
+      cat.push({ produto_id: p.id, nome: p.nome, unidade: p.unidade_uso || p.unidade_comp || '', grupo: '⚠ FORA DA LISTA', saldo: Number(s.saldo) });
+    });
+  }
   _transfCatalogo = cat;
   const grupos = [...new Set(cat.map(c => c.grupo))];
   document.getElementById('transf-grupos').innerHTML = ['', ...grupos].map(g =>
