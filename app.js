@@ -5842,8 +5842,10 @@ async function _enviarEmergencia() {
 // 'ESTOQUE CENTRAL', 'PRODUCAO' e 'ESTOQUE DELIVERY' = contagem do estoque de cada
 // unidade no celular (contagem.html, _ESTOQUES_MOB). O id do campo troca espaco por _.
 // ATENCAO: salvarPins regrava o objeto inteiro — aba antiga sem estas chaves as apaga.
+// salvarPins grava SO estas chaves (o objeto inteiro): chave fora da lista some ao salvar.
 const _PIN_CHAVES = ['CHURRASQUEIRA','COZINHA','BAR','SALAO','ASG','DELIVERY','ESTOQUE','ESTOQUE_BAR',
-                     'ESTOQUE CENTRAL','PRODUCAO','ESTOQUE DELIVERY'];
+                     'ESTOQUE CENTRAL','PRODUCAO','ESTOQUE DELIVERY',
+                     'MATERIAL DE LIMPEZA','BEBIDAS','DESCARTAVEL'];   // setores so do Delivery P10 (02/10/2026)
 async function abrirConfigurarPins() {
   const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave','pins').single();
   const pinsAtual = data?.valor || {};
@@ -10607,9 +10609,11 @@ function fecharAjusteHistoricoCompExterno() {
 }
 
 // ─── SALDO ESTOQUE DA LOJA ────────────────────────────────────────
-const _SETOR_EMOJI = { CHURRASQUEIRA:'🔥', COZINHA:'🍳', BAR:'🍹', SALAO:'🪑', ASG:'🧹', DELIVERY:'🛵' };
+const _SETOR_EMOJI = { CHURRASQUEIRA:'🔥', COZINHA:'🍳', BAR:'🍹', SALAO:'🪑', ASG:'🧹', DELIVERY:'🛵',
+                      'MATERIAL DE LIMPEZA':'🧹', BEBIDAS:'🥤', DESCARTAVEL:'🥡' };
 const _SETOR_COR   = { CHURRASQUEIRA:'#dc3545', COZINHA:'#fd7e14', BAR:'#6f42c1', SALAO:'#0d6efd', ASG:'#20c997', DELIVERY:'#e6ac00' };
-const _SETOR_LABEL = { CHURRASQUEIRA:'Churrasqueira', COZINHA:'Cozinha', BAR:'Bar', SALAO:'Salão', ASG:'ASG', DELIVERY:'Delivery' };
+const _SETOR_LABEL = { CHURRASQUEIRA:'Churrasqueira', COZINHA:'Cozinha', BAR:'Bar', SALAO:'Salão', ASG:'ASG', DELIVERY:'Delivery',
+                      'MATERIAL DE LIMPEZA':'Material de Limpeza', BEBIDAS:'Bebidas', DESCARTAVEL:'Descartável' };
 
 let _saldoList   = [];
 let _saldoGrupo  = null;

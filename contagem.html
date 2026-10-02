@@ -1117,6 +1117,9 @@ const _ESTOQUES_MOB = {
 function _estoqueMob() { return _ESTOQUES_MOB[_local] || _ESTOQUES_MOB['Centro']; }
 function _modoSaldo()  { return !!_setor && _setor === _estoqueMob().setor; }   // contagem so de saldo, sem pedido
 
+// Setores que so o Delivery P10 tem (02/10/2026): ASG virou MATERIAL DE LIMPEZA e os
+// grupos do DELIVERY viraram setores. Os botoes saem da estrutura da unidade.
+const _SETORES_EXTRA_MOB = { 'MATERIAL DE LIMPEZA': ['🧹', 'Material de Limpeza'], 'BEBIDAS': ['🥤', 'Bebidas'], 'DESCARTAVEL': ['🥡', 'Descartável'] };
 const _SETORES_BTN_MOB = [
   ['CHURRASQUEIRA', '🔥', 'Churrasqueira'], ['COZINHA', '🍳', 'Cozinha'], ['BAR', '🍹', 'Bar'],
   ['SALAO', '🪑', 'Salão'], ['ASG', '🧹', 'ASG'], ['DELIVERY', '🛵', 'Delivery'],
@@ -1128,8 +1131,14 @@ function _renderSetorGrid() {
   // So os setores que a unidade tem (Gerenciar Setores no computador). Unidade sem
   // estrutura propria mostra todos, como sempre.
   const daUni = _todasEstruturasMob[_local];
-  const setores = est.unico ? '' : _SETORES_BTN_MOB.filter(([k]) => !daUni || daUni[k]).map(([k, e, r]) =>
-    `<button class="setor-btn" onclick="pedirPinSetor('${k}')">${e}<br>${r}</button>`).join('');
+  const lista = _SETORES_BTN_MOB.filter(([k]) => !daUni || daUni[k]);
+  if (daUni) Object.keys(daUni).forEach(k => {   // setor proprio da unidade (fora da lista fixa)
+    if (k === 'ESTOQUE DA LOJA' || k === est.setor || lista.some(([x]) => x === k)) return;
+    const [e, r] = _SETORES_EXTRA_MOB[k] || ['📦', k.charAt(0) + k.slice(1).toLowerCase()];
+    lista.push([k, e, r]);
+  });
+  const setores = est.unico ? '' : lista.map(([k, e, r]) =>
+    `<button class="setor-btn" onclick="pedirPinSetor('${esc(k)}')">${e}<br>${esc(r)}</button>`).join('');
   grid.innerHTML = setores +
     `<button class="setor-btn" onclick="pedirPinEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">${est.emoji}<br>${est.nome}</button>`;
 }
