@@ -6804,17 +6804,25 @@ async function abrirModalReceber(pedido_num) {
     </tr>`).join('');
 
   calcTotalReceb();
-  // O lugar volta SEMPRE para a loja ao abrir. Mesma licao da pilula de unidade
-  // na contagem (29/08/2026): escolha lembrada e escolha que ninguem mais confere.
+  // O lugar abre com a ULTIMA escolha DESTE aparelho (pedido do Wagner, 02/10/2026:
+  // o computador do Estoque Central recebe sempre la). Ate entao voltava sempre para
+  // a loja — licao da pilula da contagem (29/08): escolha lembrada e escolha que
+  // ninguem confere. Por isso, fora da loja a faixa fica laranja E diz que veio lembrada.
   const _sel = document.getElementById('receb-local');
-  if (_sel) { _sel.value = 'ESTOQUE_LOJA'; _pintarLocalReceb(); }
+  if (_sel) { _sel.value = _recebLocalLembrado(); _pintarLocalReceb(true); }
   new bootstrap.Modal(document.getElementById('modal-receber')).show();
 }
 
 // Fora da loja a caixa muda de cor e diz para onde vai — ninguem confirma um
 // recebimento de R$ 20 mil no lugar errado sem ver.
-function _pintarLocalReceb() {
+const _RECEB_LOCAL_KEY = 'gc_receb_local_ultimo';
+function _recebLocalLembrado() {
+  try { const v = localStorage.getItem(_RECEB_LOCAL_KEY); return v === 'CENTRAL' ? v : 'ESTOQUE_LOJA'; }
+  catch (_) { return 'ESTOQUE_LOJA'; }
+}
+function _pintarLocalReceb(lembrado = false) {
   const v    = document.getElementById('receb-local')?.value || 'ESTOQUE_LOJA';
+  if (!lembrado) { try { localStorage.setItem(_RECEB_LOCAL_KEY, v); } catch (_) {} }
   const box  = document.getElementById('receb-local-box');
   const hint = document.getElementById('receb-local-hint');
   const naLoja = v === 'ESTOQUE_LOJA';
@@ -6825,7 +6833,7 @@ function _pintarLocalReceb() {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (lembrado ? '↺ Lembrado deste computador. ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
     hint.className = naLoja ? 'small text-muted' : 'small fw-semibold text-danger';
   }
 }

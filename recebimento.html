@@ -927,8 +927,10 @@ async function abrirPedido(pedido_num) {
   // O lugar volta SEMPRE para a loja ao abrir um pedido. Escolha lembrada e
   // escolha que ninguem mais confere — foi assim que a unidade errada atravessou
   // a noite de 29/08 na contagem.
+  // Abre com a ULTIMA escolha deste celular (02/10/2026: o celular do Estoque Central
+  // recebe sempre la). Fora da loja a caixa fica laranja e diz que veio lembrada.
   const _selLocal = document.getElementById('rec-local');
-  if (_selLocal) { _selLocal.value = 'ESTOQUE_LOJA'; _pintarLocalRecebMob(); }
+  if (_selLocal) { _selLocal.value = _recebLocalLembradoMob(); _pintarLocalRecebMob(true); }
   setMoeda('rec-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
 
   // Mostra nome do responsável (usuário logado)
@@ -1585,8 +1587,14 @@ async function _recebimentoAtualizaCustos(itensReceb) {
 
 // ── ACRÉSCIMO DE ESTOQUE: mercadoria recebida soma no saldo (ESTOQUE_LOJA), casada por produto_id ──
 // Fora da loja a caixa muda de cor e avisa o que isso significa.
-function _pintarLocalRecebMob() {
+const _RECEB_LOCAL_KEY_MOB = 'gc_receb_local_ultimo';
+function _recebLocalLembradoMob() {
+  try { const v = localStorage.getItem(_RECEB_LOCAL_KEY_MOB); return v === 'CENTRAL' ? v : 'ESTOQUE_LOJA'; }
+  catch (_) { return 'ESTOQUE_LOJA'; }
+}
+function _pintarLocalRecebMob(lembrado = false) {
   const v      = document.getElementById('rec-local')?.value || 'ESTOQUE_LOJA';
+  if (!lembrado) { try { localStorage.setItem(_RECEB_LOCAL_KEY_MOB, v); } catch (_) {} }
   const box    = document.getElementById('rec-local-box');
   const hint   = document.getElementById('rec-local-hint');
   const naLoja = v === 'ESTOQUE_LOJA';
@@ -1597,7 +1605,7 @@ function _pintarLocalRecebMob() {
   if (hint) {
     hint.textContent = naLoja
       ? 'O padrão é a loja.'
-      : 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
+      : (lembrado ? '↺ Lembrado deste celular. ' : '') + 'Esta nota NÃO entra no estoque da loja — vai para o Estoque Central e só chega à loja por transferência.';
     hint.style.color = naLoja ? 'var(--txt2)' : '#fbbf24';
   }
 }
