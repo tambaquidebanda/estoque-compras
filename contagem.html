@@ -993,8 +993,17 @@ async function registrarContagem(rows, opts) {
   return { error };
 }
 
+// Pedido padrao por unidade (02/10/2026) — mesma regra do app.js (_prefUnid).
+const _SETORES_CENTRO_FIXOS_MOB = ['CHURRASQUEIRA', 'COZINHA', 'BAR', 'SALAO', 'ASG', 'DELIVERY'];
+function _prefUnidMob(unidade, setor) {
+  const u = unidade || 'Centro';
+  if (u === 'Centro') return '';
+  const centro = _todasEstruturasMob?.['Centro'];
+  const compartilhado = centro && Object.keys(centro).length ? !!centro[setor] : _SETORES_CENTRO_FIXOS_MOB.includes(setor);
+  return compartilhado ? `${u}>` : '';
+}
 function getPadrao(nome) {
-  const key   = `${_setor}|${_grupo}|${nome.trim().toUpperCase()}`;
+  const key   = `${_prefUnidMob(_local, _setor)}${_setor}|${_grupo}|${nome.trim().toUpperCase()}`;
   const entry = _padroes[key];
   if (entry === undefined || entry === null) return null;
   if (typeof entry === 'number') return entry;
@@ -1520,7 +1529,7 @@ async function selecionarGrupo(grupo) {
 
   // Adições manuais do setor atual. Chave por unidade quando o setor tem o mesmo nome
   // de um setor do Centro (Cozinha/Churrasqueira do P10) — mesma regra do app.js.
-  const _chaveAdic = (s, g) => ((_local !== 'Centro' && _todasEstruturasMob?.['Centro']?.[s]) ? `${_local}>` : '') + `${s}|${g}`;
+  const _chaveAdic = (s, g) => _prefUnidMob(_local, s) + `${s}|${g}`;
   const nomesExistentes = new Set(_grupoProds.map(p => norm(p.nome)));
   const _addDe = (chave) => {
     (_invAdicoes[chave] || []).forEach(nome => {
@@ -2069,7 +2078,7 @@ async function abrirLiberarPedido(id) {
   }
 
   const getPad = (nome) => {
-    const entry = _padroes[`${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
+    const entry = _padroes[`${_prefUnidMob(ped?.local, ped?.setor)}${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
     if (entry === undefined || entry === null) return '—';
     if (typeof entry === 'number') return entry;
     const chave = _feriado ? 'feriado' : _dia;
@@ -2391,7 +2400,7 @@ function _buildProdutosEmerg() {
   const estruturaSetor = INVENTARIO_ESTRUTURA[_setor] || {};
   const nomesEstrut = [];
   Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n) nomesEstrut.push(n); }); });
-  const _prefAdic = ((_local !== 'Centro' && _todasEstruturasMob?.['Centro']?.[_setor]) ? `${_local}>` : '') + _setor + '|';
+  const _prefAdic = _prefUnidMob(_local, _setor) + _setor + '|';
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
     if (chave.startsWith(_prefAdic) && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
   });

@@ -3206,10 +3206,18 @@ function filtrarProdAdd(query) {
 // valia para as duas lojas. Agora: setor que existe no Centro, numa unidade que NAO e o
 // Centro, usa a chave "UNIDADE>SETOR|GRUPO". Setor com nome proprio (ESTOQUE CENTRAL,
 // BEBIDAS, ESTOQUE DELIVERY...) continua "SETOR|GRUPO" — ja era so dele.
-function _chaveAdic(unidade, setor, grupo) {
+// Prefixo da unidade para chaves "SETOR|..." (adicao e pedido padrao). Sem a estrutura
+// carregada (ex.: detalhe de pedido aberto direto), usa os setores do Centro conhecidos.
+const _SETORES_CENTRO_FIXOS = ['CHURRASQUEIRA', 'COZINHA', 'BAR', 'SALAO', 'ASG', 'DELIVERY'];
+function _prefUnid(unidade, setor) {
   const u = unidade || 'Centro';
-  const compartilhado = u !== 'Centro' && !!_todasEstruturas?.['Centro']?.[setor];
-  return (compartilhado ? `${u}>` : '') + `${setor}|${grupo}`;
+  if (u === 'Centro') return '';
+  const centro = _todasEstruturas?.['Centro'];
+  const compartilhado = centro && Object.keys(centro).length ? !!centro[setor] : _SETORES_CENTRO_FIXOS.includes(setor);
+  return compartilhado ? `${u}>` : '';
+}
+function _chaveAdic(unidade, setor, grupo) {
+  return _prefUnid(unidade, setor) + `${setor}|${grupo}`;
 }
 
 async function _recarregarAdicoes() {
@@ -3311,8 +3319,10 @@ function calcPedidoInv(i) {
   pedEl.textContent = _fmtPed(ped);
 }
 
+// Pedido padrao por unidade (02/10/2026): Cozinha/Churrasqueira do P10 tem o padrao
+// proprio ("Delivery P10>COZINHA|GRUPO|PRODUTO"); antes mudar no P10 mudava no Centro.
 function _padKey(nome) {
-  return `${_invSetor}|${_invGrupo}|${nome.trim().toUpperCase()}`;
+  return `${_prefUnid(_invLocal, _invSetor)}${_invSetor}|${_invGrupo}|${nome.trim().toUpperCase()}`;
 }
 
 function _getPadrao(nome) {
@@ -4416,7 +4426,7 @@ async function abrirLiberarPedido(pedidoId) {
   }
 
   const getPad = (nome) => {
-    const entry = _invPadroes[`${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
+    const entry = _invPadroes[`${_prefUnid(ped?.local, ped?.setor)}${ped?.setor}|${ped?.obs}|${nome.trim().toUpperCase()}`];
     if (entry === undefined || entry === null) return '—';
     if (typeof entry === 'number') return entry;
     const val = entry[ped?.dia_semana];
