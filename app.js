@@ -1234,6 +1234,15 @@ function adicionarItemPedido(e) {
   _renderItensPedido();
 }
 
+// Unidade do item no pedido (pedido conjunto Centro + Delivery P10, 02/10/2026).
+// O campo Unidade nao limpa depois de Adicionar: sem esta coluna, um item do Centro
+// podia ir como P10 sem ninguem ver. P10 em laranja para saltar aos olhos.
+function _badgeUnidadePedido(uso) {
+  const nome = uso || '—';
+  const p10  = norm(nome) === norm('Delivery P10');
+  return `<span class="badge ${p10 ? 'text-white' : 'bg-light text-dark border'}" style="${p10 ? 'background:#ea580c' : ''};font-weight:600">${p10 ? '🛵 ' : ''}${esc(nome)}</span>`;
+}
+
 function _renderItensPedido() {
   const bloco   = document.getElementById('bloco-itens-pedido');
   const tbody   = document.getElementById('tb-itens-pedido');
@@ -1260,6 +1269,7 @@ function _renderItensPedido() {
       <td class="text-center">${esc(it.un)}</td>
       <td class="text-end">${brl(it.custo)}</td>
       <td class="text-end fw-bold">${brl(it.total)}</td>
+      <td>${_badgeUnidadePedido(it.uso)}</td>
       <td class="text-center">
         <input class="form-check-input" type="checkbox" ${it.bonificado ? 'checked' : ''}
           onchange="_pedidoItens[${idx}].bonificado = this.checked; _renderItensPedido();"
@@ -1289,19 +1299,26 @@ function _renderItensPedido() {
   const totalGeral  = totalItens + acrescimo;
 
   const linhasGrupo = Object.entries(grupos).map(([k, v]) =>
-    `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td colspan="2"></td></tr>`
+    `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Subtotal ${esc(k)}</td><td class="text-end fw-semibold">${brl(v)}</td><td colspan="3"></td></tr>`
   ).join('');
 
   const linhaAcr = acrescimo > 0
-    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Acréscimo (frete/taxa)</td><td class="text-end fw-semibold" style="color:#FF6B35">${brl(acrescimo)}</td><td colspan="2"></td></tr>`
+    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Acréscimo (frete/taxa)</td><td class="text-end fw-semibold" style="color:#FF6B35">${brl(acrescimo)}</td><td colspan="3"></td></tr>`
     : '';
 
   const linhaBonif = totalBonif > 0
-    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">🎁 Bonificado (entra no estoque, não gera conta)</td><td class="text-end fw-semibold text-muted">${brl(totalBonif)}</td><td colspan="2"></td></tr>`
+    ? `<tr class="table-light"><td colspan="5" class="text-end text-muted small">🎁 Bonificado (entra no estoque, não gera conta)</td><td class="text-end fw-semibold text-muted">${brl(totalBonif)}</td><td colspan="3"></td></tr>`
     : '';
 
-  tfoot.innerHTML = linhasGrupo + linhaAcr + linhaBonif +
-    `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total a pagar</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td colspan="2"></td></tr>`;
+  // Pedido conjunto: quanto vai para cada loja (estoque e DRE de cada uma)
+  const porUni = {};
+  _pedidoItens.forEach(it => { if (!it.bonificado) porUni[it.uso || '—'] = (porUni[it.uso || '—'] || 0) + it.total; });
+  const linhasUni = Object.keys(porUni).length > 1
+    ? Object.entries(porUni).map(([u, v]) =>
+        `<tr class="table-light"><td colspan="5" class="text-end text-muted small">Para ${_badgeUnidadePedido(u)}</td><td class="text-end fw-semibold">${brl(v)}</td><td colspan="3"></td></tr>`).join('')
+    : '';
+  tfoot.innerHTML = linhasGrupo + linhasUni + linhaAcr + linhaBonif +
+    `<tr class="table-success"><td colspan="5" class="text-end fw-bold">Total a pagar</td><td class="text-end fw-bold fs-6">${brl(totalGeral)}</td><td colspan="3"></td></tr>`;
 }
 
 function removerItemPedido(idx) {
