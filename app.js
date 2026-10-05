@@ -6957,9 +6957,12 @@ async function abrirModalReceber(pedido_num) {
   setMoeda('receb-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
   document.getElementById('alerta-diverg').style.display   = 'none';
 
+  // Pedido conjunto (Centro + P10): mostra de que unidade e cada linha. So aparece
+  // quando o pedido tem 2+ unidades — pedido de uma unidade so fica como era.
+  const _multiUni = new Set(itens.map(x => norm(x.unidade_uso || ''))).size > 1;
   document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
     <tr id="row-rec-${x.id}">
-      <td><strong>${esc(x.produto)}</strong></td>
+      <td><strong>${esc(x.produto)}</strong>${_multiUni ? `<div class="mt-1 small">Para ${_badgeUnidadePedido(x.unidade_uso)}</div>` : ''}</td>
       <td><small class="text-muted">${esc(x.categoria||'—')}</small></td>
       <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
       <td class="text-center">

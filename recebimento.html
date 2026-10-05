@@ -939,6 +939,12 @@ async function abrirPedido(pedido_num) {
   const elResp = document.getElementById('rec-responsavel');
   if (elResp) elResp.textContent = nomeResp || '—';
 
+  // Pedido conjunto (Centro + P10): mostra de que unidade e cada linha (so com 2+ unidades).
+  const _multiUni = new Set(itens.map(x => _normNome(x.unidade_uso || ''))).size > 1;
+  const _badgeUni = uso => {
+    const p10 = _normNome(uso || '') === _normNome('Delivery P10');
+    return `<div style="margin-top:.3rem"><span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;${p10 ? 'background:#ea580c;color:#fff' : 'background:#e9ecef;color:#212529'}">Para ${p10 ? '🛵 ' : ''}${esc(uso || '—')}</span></div>`;
+  };
   document.getElementById('rec-itens').innerHTML = itens.map(it => {
     const qtdFmt  = (it.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3});
     const precoFmt = (it.custo_unit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:4});
@@ -952,6 +958,7 @@ async function abrirPedido(pedido_num) {
         <div class="item-header-left">
           <div class="item-nome">${esc(it.produto)}${dispBadge}</div>
           <div class="item-cat">${esc(it.categoria || '')}</div>
+          ${_multiUni ? _badgeUni(it.unidade_uso) : ''}
         </div>
         <div class="item-header-right">
           <div id="tot-${sid}" class="item-total">${brl(total)}</div>
