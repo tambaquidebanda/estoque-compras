@@ -1514,7 +1514,7 @@ function renderGrupos() {
 async function selecionarGrupo(grupo) {
   const _hoje = hojeLocal();
   const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _setor).eq('obs', grupo)
+    .select('num_pedido,status').eq('setor', _setor).eq('obs', grupo).eq('local', _local)
     .eq('data', _hoje).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
     toast(`${_setor} / ${grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err');
@@ -1834,7 +1834,7 @@ async function _enviarPedido() {
   if (!data) { toast('Selecione a data.', 'err'); return; }
 
   const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _setor).eq('obs', _grupo)
+    .select('num_pedido,status').eq('setor', _setor).eq('obs', _grupo).eq('local', _local)
     .eq('data', data).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
     toast(`${_setor} / ${_grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err'); return;

@@ -3031,6 +3031,7 @@ async function carregarInventario() {
 async function selecionarSetorInv(setor) {
   _invSetor = setor;
   _invGrupo = null;
+  _invSoLista = null;
   _invProds = [];
 
   // Destaca botão de setor
@@ -3068,16 +3069,22 @@ async function selecionarSetorInv(setor) {
     '<tr><td colspan="4" class="text-center text-muted py-4">Selecione um grupo acima.</td></tr>';
 }
 
+// Pedido do dia ainda pendente NAO fecha mais o grupo: a lista (+, excluir, padrao)
+// mora nesta mesma tela, e quem cuida dela ficava esperando a liberacao para mexer.
+// O grupo abre em modo "so lista" (_invSoLista = numero do pedido): campos de contagem
+// e botoes de gravar desligados; o _enviarPedidoInterno confere de novo no banco.
+// A trava filtra pela UNIDADE: Cozinha/Congelados do Centro nao segura a do P10.
+let _invSoLista = null;
+
 async function selecionarGrupoInv(grupo) {
   _liberarTela('pedido-interno');   // outro grupo = outro pedido
   const _hoje = hojeLocal();
   const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo)
+    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', grupo).eq('local', _invLocal)
     .eq('data', _hoje).eq('status', 'pendente').limit(1);
-  if (pedAberto?.length) {
-    toast(`${_invSetor} / ${grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro');
-    return;
-  }
+  _invSoLista = pedAberto?.length ? pedAberto[0].num_pedido : null;
+  if (_invSoLista)
+    toast(`${_invSetor} / ${grupo} — ${_invSoLista} aguardando liberação. Dá para ajustar a lista; a contagem fica para depois.`, 'warn');
 
   _invGrupo = grupo;
 
@@ -3139,9 +3146,24 @@ async function selecionarGrupoInv(grupo) {
   renderInventario();
 }
 
+function _pintarSoLista() {
+  const aviso = document.getElementById('inv-so-lista-aviso');
+  if (aviso) {
+    aviso.classList.toggle('d-none', !_invSoLista);
+    aviso.innerHTML = _invSoLista
+      ? `<i class="bi bi-hourglass-split"></i> <strong>${esc(_invSoLista)}</strong> aguardando liberação. Dá para ajustar a lista (+, excluir, padrões); a contagem e o envio ficam desligados até ele ser liberado.`
+      : '';
+  }
+  ['inv-btn-enviar', 'inv-btn-saldo-inicial', 'inv-btn-salvar-saldo'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = !!_invSoLista;
+  });
+}
+
 function renderInventario() {
   const tbody = document.getElementById('lst-inventario');
   const isEL  = _invSetor === 'ESTOQUE DA LOJA';
+  _pintarSoLista();
   if (!_invProds.length) {
     tbody.innerHTML = `<tr><td colspan="${isEL ? 3 : 5}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
     return;
@@ -3162,7 +3184,7 @@ function renderInventario() {
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
       <td class="text-center">
         <input type="number" class="form-control form-control-sm text-center"
-          id="inv-est-${i}" min="0" step="any" value="0"
+          id="inv-est-${i}" min="0" step="any" value="0"${_invSoLista ? ' disabled' : ''}
           style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
       ${isEL ? '' : `<td class="text-center">
@@ -4080,7 +4102,7 @@ async function _enviarPedidoInterno() {
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
   const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', _invGrupo)
+    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', _invGrupo).eq('local', _invLocal)
     .eq('data', data).eq('status', 'pendente').limit(1);
   if (pedAberto?.length) {
     toast(`${_invSetor} / ${_invGrupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro'); return;
