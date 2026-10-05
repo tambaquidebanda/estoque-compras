@@ -3452,6 +3452,98 @@ async function salvarPadroes() {
   renderInventario();
 }
 
+// ─── HISTORICO DAS LISTAS (05/10/2026) ───────────────────────────
+// Quem mexeu na lista e quando. Quem anota e um gatilho no banco
+// (SQL_HISTORICO_LISTAS.sql) que compara o antes/depois de cada gravacao em
+// inv_configuracoes — pega qualquer tela, inclusive aberta ha horas, e SQL.
+// Aqui so le. Mostra o LOGIN que gravou: login compartilhado (ex.: estoque da loja)
+// aparece como o login, nao como a pessoa.
+const _HIST_ROTULO = {
+  'estrutura|entrou':   '➕ Entrou na lista',
+  'estrutura|saiu':     '➖ Saiu da lista',
+  'adicoes|entrou':     '➕ Adicionado pelo "+"',
+  'adicoes|saiu':       '➖ Adição "+" removida',
+  'padroes|entrou':     '🎯 Pedido padrão criado',
+  'padroes|alterou':    '🎯 Pedido padrão mudou',
+  'padroes|saiu':       '🎯 Pedido padrão apagado',
+  'excluidos|entrou':   '🚫 Excluído de todas as listas',
+  'excluidos|saiu':     '↩️ Exclusão geral desfeita',
+  'mapeamentos|entrou': '🔗 Apelido criado',
+  'mapeamentos|alterou':'🔗 Apelido mudou',
+  'mapeamentos|saiu':   '🔗 Apelido apagado',
+};
+function _histPadraoTxt(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v !== 'object') return String(v);
+  const dias = ['seg','ter','qua','qui','sex','sab','dom','feriado'];
+  const vals = dias.map(d => v[d]);
+  if (vals.every(x => x === vals[0])) return vals[0] === undefined ? '—' : `${vals[0]} todo dia`;
+  return dias.filter(d => v[d] !== undefined).map(d => `${d} ${v[d]}`).join(' · ');
+}
+function _histDoGrupo(r) {
+  if (_invSetor === 'ESTOQUE DA LOJA') return r.grupo === _invGrupo;
+  if (r.setor !== _invSetor || r.grupo !== _invGrupo) return false;
+  if (r.unidade) return r.unidade === _invLocal;
+  return _prefUnid(_invLocal, _invSetor) === '';   // chave sem unidade = Centro ou setor so desta unidade
+}
+async function abrirHistoricoLista(todas) {
+  document.getElementById('modal-hist-lista')?.remove();
+  const el = document.createElement('div');
+  el.className = 'modal fade'; el.id = 'modal-hist-lista'; el.tabIndex = -1;
+  el.innerHTML = `
+    <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Histórico — ${todas ? 'todas as listas' : esc(`${_invLocal} · ${_invSetor} / ${_invGrupo}`)}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body p-0" id="hist-lista-corpo"><div class="text-center text-muted py-4">Carregando…</div></div>
+      <div class="modal-footer justify-content-between">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirHistoricoLista(${!todas})">
+          ${todas ? 'Só este grupo' : 'Ver todas as listas'}</button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(el);
+  el.addEventListener('hidden.bs.modal', () => el.remove());
+  new bootstrap.Modal(el).show();
+
+  let q = sb.from('inv_config_historico').select('*').order('criado_em', { ascending: false }).limit(400);
+  if (!todas) {
+    q = q.eq('grupo', _invGrupo);
+    if (_invSetor !== 'ESTOQUE DA LOJA') q = q.eq('setor', _invSetor);
+  }
+  const { data, error } = await q;
+  const corpo = document.getElementById('hist-lista-corpo');
+  if (!corpo) return;
+  if (error) {
+    corpo.innerHTML = `<div class="text-danger p-3">Não consegui ler o histórico: ${esc(error.message)}.
+      ${/does not exist|schema cache/i.test(error.message) ? '<br>O SQL_HISTORICO_LISTAS.sql ainda não foi rodado.' : ''}</div>`;
+    return;
+  }
+  const linhas = (data || []).filter(r => todas || _histDoGrupo(r));
+  if (!linhas.length) {
+    corpo.innerHTML = '<div class="text-center text-muted py-4">Nenhuma mudança registrada ainda. O histórico começou a contar quando o SQL_HISTORICO_LISTAS.sql foi rodado.</div>';
+    return;
+  }
+  corpo.innerHTML = `<table class="table table-sm align-middle mb-0">
+    <thead style="background:#f8f9fa;position:sticky;top:0"><tr>
+      <th style="white-space:nowrap">Quando</th><th>Quem</th><th>O quê</th><th>Produto</th>
+    </tr></thead>
+    <tbody>${linhas.map(r => {
+      const quando = new Date(r.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      let det = '';
+      if (r.chave === 'padroes')     det = `${_histPadraoTxt(r.antes)} → ${_histPadraoTxt(r.depois)}`;
+      if (r.chave === 'mapeamentos') det = `${r.antes ?? '—'} → ${r.depois ?? '—'}`;
+      const onde = todas && r.setor ? `<div class="text-muted small">${esc([r.unidade, r.setor, r.grupo].filter(Boolean).join(' · '))}</div>` : '';
+      return `<tr>
+        <td class="small text-muted" style="white-space:nowrap">${esc(quando)}</td>
+        <td class="small">${esc(r.usuario || '—')}</td>
+        <td class="small" style="white-space:nowrap">${esc(_HIST_ROTULO[`${r.chave}|${r.acao}`] || `${r.chave} ${r.acao}`)}</td>
+        <td class="small"><strong>${esc(r.produto || '')}</strong>${det ? `<div class="text-muted">${esc(det)}</div>` : ''}${onde}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
 function _copiarPadraoDia(origem, destinos) {
   const alvos = destinos.filter(d => d !== origem);
   if (!alvos.length) return;
