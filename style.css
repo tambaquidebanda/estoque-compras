@@ -480,3 +480,22 @@ h1 {
 .saldo-grupo-btn.inv-feriado-btn.ativo { color: #d97706; border-bottom-color: #d97706; }
 .saldo-grupo-btn.inv-setor-el { color: #16a34a; }
 .saldo-grupo-btn.inv-setor-el.ativo { color: #16a34a; border-bottom-color: #16a34a; }
+
+/* ─── META DE PRODUÇÃO ─────────────────────────────────────── */
+.meta-unis { display: flex; gap: 6px; padding: 6px; background: #e8edeb; border-radius: 12px; width: fit-content; max-width: 100%; flex-wrap: wrap; }
+.meta-uni { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 170px; padding: 8px 18px;
+  border: 2px solid transparent; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
+.meta-uni:hover { background: rgba(255,255,255,.55); }
+.meta-uni.ativo { background: #fff; border-color: #0e6b68; }
+.meta-uni.meta-uni-2.ativo { border-color: #8a4513; }
+.meta-uni-nome { font-weight: 800; font-size: 1rem; color: #18201d; }
+.meta-uni.ativo .meta-uni-nome { color: #0e6b68; }
+.meta-uni.meta-uni-2.ativo .meta-uni-nome { color: #8a4513; }
+.meta-uni-sub { font-size: .75rem; color: #6c757d; }
+.meta-eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #0e6b68; }
+.meta-tabela td, .meta-tabela th { font-variant-numeric: tabular-nums; }
+.meta-tabela thead th { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #2c3a36; background: #e3efee; }
+.meta-ajuste { width: 76px; margin: 0 auto; text-align: center; background: #fffaf0; }
+.meta-final { font-weight: 800; color: #0e6b68; font-size: 1.02rem; white-space: nowrap; }
+.meta-dia { width: auto; min-width: 118px; }
+.meta-rodape td { background: #f7f9f8; color: #4f5c58; font-size: .85rem; }

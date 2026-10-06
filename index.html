@@ -116,6 +116,16 @@
           <i class="bi bi-arrow-return-left"></i> Devoluções
         </a>
       </div>
+      <!-- Grupo PRODUÇÃO -->
+      <div class="nav-grupo-btn" id="nav-grupo-producao" onclick="toggleNavGrupo('producao')">
+        <i class="bi bi-fire"></i> Produção
+        <span class="seta">▶</span>
+      </div>
+      <div class="nav-submenu" id="nav-submenu-producao">
+        <a href="#" onclick="ir('meta-producao',this)">
+          <i class="bi bi-bullseye"></i> Meta da Semana
+        </a>
+      </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
       </a>
@@ -3317,6 +3327,69 @@
     </section>
 
     <!-- ═══════════ PERDAS (D3) ═══════════ -->
+    <section id="pg-meta-producao" class="pagina">
+      <div class="meta-unis mb-3" id="meta-unis"></div>
+
+      <div class="d-flex justify-content-between align-items-end flex-wrap gap-3 mb-3">
+        <div>
+          <div class="meta-eyebrow" id="meta-eyebrow">Meta de Produção</div>
+          <h1 class="mb-1" id="meta-titulo">Meta da Semana</h1>
+          <div class="text-muted small" id="meta-base"></div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <div class="input-group input-group-sm" style="width:auto">
+            <button class="btn btn-outline-secondary" onclick="metaMudarSemana(-7)" title="Semana anterior"><i class="bi bi-chevron-left"></i></button>
+            <span class="input-group-text" id="meta-semana-lbl">—</span>
+            <button class="btn btn-outline-secondary" onclick="metaMudarSemana(7)" title="Próxima semana"><i class="bi bi-chevron-right"></i></button>
+          </div>
+          <span class="badge" id="meta-status"></span>
+          <button class="btn btn-sm btn-outline-secondary" id="meta-btn-mp" onclick="abrirMpMeta()">MP para comprar</button>
+          <button class="btn btn-sm btn-outline-primary" id="meta-btn-salvar" onclick="salvarMeta(false)">Salvar rascunho</button>
+          <button class="btn btn-sm btn-primary" id="meta-btn-aprovar" onclick="salvarMeta(true)">Aprovar</button>
+          <button class="btn btn-sm btn-outline-danger d-none" id="meta-btn-reabrir" onclick="reabrirMeta()">Reabrir</button>
+        </div>
+      </div>
+
+      <div id="meta-avisos"></div>
+      <div class="row g-3 mb-3" id="meta-kpis"></div>
+
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0 meta-tabela">
+            <thead>
+              <tr>
+                <th>SA</th>
+                <th class="text-end">Vendeu (10 dias)</th>
+                <th class="text-end">Precisa (+<span id="meta-margem-lbl">25</span>%)</th>
+                <th class="text-end">Tem</th>
+                <th class="text-end">Meta</th>
+                <th class="text-center">Ajuste</th>
+                <th class="text-end">Meta final</th>
+                <th>Dia de produzir</th>
+              </tr>
+            </thead>
+            <tbody id="meta-tbody">
+              <tr><td colspan="8" class="text-center text-muted py-4">Carregando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="text-muted small mt-2" style="max-width:90ch" id="meta-nota"></p>
+
+      <!-- Modal: MP para comprar -->
+      <div class="modal fade" id="modal-meta-mp" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="meta-mp-titulo">MP para a meta</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="meta-mp-corpo"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="pg-perdas" class="pagina">
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h1 class="mb-0"><i class="bi bi-dash-circle"></i> Perdas</h1>

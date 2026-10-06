@@ -1,0 +1,41 @@
+name: Venda de SA por dia (meta da Produção)
+
+# Grava em prod_venda_sa_dia quanto de cada SA a venda de cada loja consumiu por
+# dia. É a base da Meta de Produção (quinta-feira). Só MEDE: não mexe em saldo,
+# razão nem pedido.
+#
+# Duas tentativas de madrugada, em minuto quebrado (o schedule do GitHub atrasa e
+# descarta mais em :00 e :30 — ver baixa-estoque-pdv.yml). Rodar de novo é seguro:
+# o script apaga o dia+unidade e regrava.
+#
+# Para carregar o histórico da primeira vez: Run workflow com dias = 40.
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'Quantos dias para trás (a partir de ontem)'
+        required: false
+        default: '3'
+  schedule:
+    - cron: '37 9 * * *'    # 05:37 Manaus
+    - cron: '19 11 * * *'   # 07:19 Manaus
+
+concurrency:
+  group: venda-sa-dia
+  cancel-in-progress: false
+
+jobs:
+  venda-sa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Gravar venda de SA por dia
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          VENDA_SA_DIAS: ${{ github.event.inputs.dias || '3' }}
+        run: python scripts/venda_sa_dia.py
