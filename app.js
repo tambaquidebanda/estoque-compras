@@ -4775,6 +4775,7 @@ const LOCAL_PRODUCAO = 'PRODUCAO';
 
 function _localRazao(unidade, setor) {
   if (unidade === 'Estoque Central') return LOCAL_CENTRAL;
+  if (unidade === 'Produção P10')    return 'PRODUCAO P10';
   if (unidade === 'Produção')        return LOCAL_PRODUCAO;
   const s = setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
   if (unidade === 'Delivery P10')    return 'P10_' + s;
@@ -15861,6 +15862,14 @@ async function _metaCarregar(semana) {
   ]);
   const ids = metas.map(m => m.id);
   const salvos = ids.length ? await _metaSelect('prod_meta_itens', '*', q => q.in('meta_id', ids)) : [];
+  // Pedidos de MP que a aprovacao criou (coluna do SQL_PRODUCAO_FASE2.sql). Sem a
+  // coluna a meta continua funcionando; so os pedidos automaticos ficam desligados.
+  let pedidosMp = [], semColunaPedido = false;
+  if (ids.length) {
+    try {
+      pedidosMp = await _metaSelect('pedidos_internos', 'id,num_pedido,status,data,local,unidade_origem,prod_meta_id', q => q.in('prod_meta_id', ids));
+    } catch (e) { semColunaPedido = true; console.warn('pedidos de MP da meta:', e.message); }
+  }
 
   const venda = {}, diasCom = {};
   vendas.forEach(v => {
@@ -15910,7 +15919,7 @@ async function _metaCarregar(semana) {
     }
     linhas[u.unidade] = { u, meta, margem, arr };
   });
-  const D = { semana, vIni, vFim, unidades, linhas, saldo, fichaDe, ingsDe, diasCom };
+  const D = { semana, vIni, vFim, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido };
   _metaSugerirDias(D);
   return D;
 }
@@ -15966,7 +15975,7 @@ function metaDia(pid, iso) {
 // MP que a meta da unidade pede: explode a meta final pela ficha de cada SA até a
 // matéria-prima (o que não tem ficha). O pirarucu limpo vira pirarucu fresco aqui.
 // Desconta o que já está no estoque de MP da unidade e na Produção dela.
-function _metaMp(un) {
+function _metaMp(un, soLinhas) {
   const D = _metaD, L = D.linhas[un], u = L.u;
   const acc = {}, usos = {}, semFicha = [];
   const expl = (pid, q, raiz, pilha) => {
@@ -15980,7 +15989,7 @@ function _metaMp(un) {
     (D.ingsDe[f.id] || []).forEach(([ing, qq]) => { if (ing && qq > 0) expl(ing, q * qq / f.rend, raiz, pilha); });
     pilha.delete(pid);
   };
-  L.arr.forEach(l => {
+  (soLinhas || L.arr).forEach(l => {
     const fin = _metaFinal(l);
     if (!(fin > 0)) return;
     if (!D.fichaDe[l.pid]) { semFicha.push(l.pid); return; }
@@ -16039,7 +16048,19 @@ function _pintarMeta() {
   if (!aprovada && nd < 10) avisos.push(`Só <strong>${nd} dos 10 dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). Até o robô "Venda de SA por dia" carregar o resto, a meta sai menor do que deveria.`);
   if (!aprovada && L.arr.length && L.arr.every(l => !l.tem)) avisos.push(`${esc(rotLocais)} ainda não tem saldo de SA no sistema: a coluna <strong>Tem</strong> está zerada e a meta é a venda inteira + ${pct}%. Depois da primeira contagem, a conta passa a descontar o que o ${esc(u.rotulo)} tem.`);
   if (mp.semFicha.length) avisos.push(`Sem ficha técnica, a MP destas SA não entra na conta: ${mp.semFicha.map(p => esc(prodFT(p)?.nome || p)).join(', ')}.`);
-  document.getElementById('meta-avisos').innerHTML = avisos.map(a => `<div class="alert alert-warning py-2 small mb-2">${a}</div>`).join('');
+  let infoPed = '';
+  if (aprovada && D.semColunaPedido) {
+    infoPed = `<div class="alert alert-secondary py-2 small mb-2">Pedidos de MP automáticos ainda desligados: falta rodar o SQL_PRODUCAO_FASE2.sql.</div>`;
+  } else if (aprovada) {
+    const peds = D.pedidosMp.filter(p => p.prod_meta_id === L.meta.id && p.status !== 'cancelado').sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+    const stx = { pendente: 'esperando o estoque enviar', liberado: 'a caminho', recebido: 'recebido' };
+    infoPed = peds.length
+      ? `<div class="alert alert-info py-2 small mb-2"><strong>Pedidos de MP para a Produção:</strong> ${peds.map(p =>
+          `${esc(p.num_pedido)} (${_ddmm(p.data)}, ${stx[p.status] || esc(p.status)})`).join(' · ')}</div>`
+      : `<div class="alert alert-warning py-2 small mb-2">Esta meta ainda não tem pedido de MP.
+          <button class="btn btn-sm btn-warning ms-2" onclick="metaCriarPedidosMp()">Criar pedidos de MP</button></div>`;
+  }
+  document.getElementById('meta-avisos').innerHTML = infoPed + avisos.map(a => `<div class="alert alert-warning py-2 small mb-2">${a}</div>`).join('');
 
   const comMeta = L.arr.filter(l => _metaFinal(l) > 0 || l.ajuste !== null).sort((a, b) => _metaFinal(b) - _metaFinal(a));
   const cobre   = L.arr.filter(l => l.vendeu > 0 && !(_metaFinal(l) > 0) && l.ajuste === null).sort((a, b) => b.vendeu - a.vendeu);
@@ -16162,6 +16183,8 @@ async function salvarMeta(aprovar) {
         .update({ status: 'aprovada', aprovado_em: new Date().toISOString(), aprovado_por: _nomeUsuario() })
         .eq('id', m.id).eq('status', 'rascunho');
       if (e4) throw e4;
+      const n = await _criarPedidosMp(_metaUn, m.id);
+      if (n) toast(`${n} ${n === 1 ? 'pedido' : 'pedidos'} de MP criados para a Produção do ${u.rotulo}`, 'ok');
     }
     toast(aprovar ? `Meta do ${u.rotulo} aprovada ✅` : `Rascunho do ${u.rotulo} salvo`, 'ok');
     await carregarMetaProducao();
@@ -16183,10 +16206,81 @@ async function reabrirMeta() {
     .eq('unidade', u.unidade).gte('data', D.semana).lte('data', _isoMais(D.semana, 6)).limit(1);
   if (error) { toast('Erro ao conferir a produção da semana: ' + error.message, 'erro'); return; }
   if (reg?.length) { toast(`A Produção já registrou produção do ${u.rotulo} nesta semana; a meta não pode mais ser reaberta.`, 'erro'); return; }
-  if (!confirm(`Reabrir a meta do ${u.rotulo}?\n\nEla volta a rascunho e os números são recalculados com o estoque de agora.`)) return;
+  const peds = D.pedidosMp.filter(p => p.prod_meta_id === L.meta.id && p.status !== 'cancelado');
+  const saiu = peds.filter(p => p.status !== 'pendente');
+  if (saiu.length) { toast(`A MP já saiu do estoque (${saiu.map(p => p.num_pedido).join(', ')}); a meta não pode mais ser reaberta.`, 'erro'); return; }
+  if (!confirm(`Reabrir a meta do ${u.rotulo}?\n\nEla volta a rascunho e os números são recalculados com o estoque de agora.` +
+    (peds.length ? `\nOs ${peds.length} pedidos de MP desta meta que ainda não saíram serão cancelados.` : ''))) return;
+  if (peds.length) {
+    const { error: ec } = await sb.from('pedidos_internos').update({ status: 'cancelado', obs: 'Cancelado: a meta da Produção foi reaberta' })
+      .in('id', peds.map(p => p.id)).eq('status', 'pendente');
+    if (ec) { toast('Erro ao cancelar os pedidos de MP: ' + ec.message, 'erro'); return; }
+  }
   const { error: e2 } = await sb.from('prod_metas').update({ status: 'rascunho', aprovado_em: null, aprovado_por: null })
     .eq('id', L.meta.id).eq('status', 'aprovada');
   if (e2) { toast('Erro ao reabrir: ' + e2.message, 'erro'); return; }
   toast(`Meta do ${u.rotulo} voltou a rascunho.`, 'ok');
+  await carregarMetaProducao();
+}
+
+
+// PEDIDO DE MP AUTOMÁTICO (aprovação da meta). Um pedido por dia de produção, da
+// unidade de MP (Estoque Central / Estoque Delivery) para a Produção da unidade,
+// com a data do dia de produzir. Quantidade = a meta do dia aberta pela ficha até
+// a matéria-prima; o que já está na Produção da unidade abate dos primeiros dias.
+// O estoque confere e ajusta ao enviar (embalagem fechada), como em qualquer
+// transferência. Fica amarrado à meta por pedidos_internos.prod_meta_id.
+const _PROD_UNI_DO_LOCAL = { CENTRAL: 'Estoque Central', 'ESTOQUE DELIVERY': 'Delivery P10',
+                             PRODUCAO: 'Produção', 'PRODUCAO P10': 'Produção P10', ESTOQUE_LOJA: 'Centro' };
+
+async function _criarPedidosMp(un, metaId) {
+  const D = _metaD, L = D.linhas[un], u = L.u;
+  if (D.semColunaPedido) { toast('Pedidos de MP não criados: rode o SQL_PRODUCAO_FASE2.sql e use "Criar pedidos de MP".', 'erro'); return 0; }
+  const deOnde = _PROD_UNI_DO_LOCAL[u.local_mp], para = _PROD_UNI_DO_LOCAL[u.local_producao];
+  if (!deOnde || !para) { toast(`Unidade ${u.rotulo} sem lugar de MP/Produção configurado.`, 'erro'); return 0; }
+  const dias = [...new Set(L.arr.filter(l => _metaFinal(l) > 0).map(l => l.dia || l.sug).filter(Boolean))].sort();
+  const disp = {};   // o que já está na Produção, gasto do primeiro dia em diante
+  Object.entries(D.saldo[u.local_producao] || {}).forEach(([pid, v]) => { if (v > 0) disp[pid] = v; });
+  let criados = 0;
+  for (const dia of dias) {
+    const { itens } = _metaMp(un, L.arr.filter(l => (l.dia || l.sug) === dia));
+    const pedir = [];
+    itens.forEach(i => {
+      const usa = Math.min(disp[i.pid] || 0, i.q);
+      disp[i.pid] = (disp[i.pid] || 0) - usa;
+      const q = i.q - usa;
+      if (q > 0.0001) pedir.push({ pid: i.pid, q: _metaArred(i.pid, q) || Math.ceil(q * 100) / 100 });
+    });
+    if (!pedir.length) continue;
+    const num_pedido = await _proximoNumPedido();
+    const { data: ped, error } = await sb.from('pedidos_internos').insert({
+      num_pedido, tipo: 'transferencia', setor: 'TRANSFERENCIA', origem: 'automatico',
+      local: para, unidade_origem: deOnde, status: 'pendente', responsavel: _nomeUsuario(), data: dia,
+      obs: `MP para a produção de ${['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][new Date(dia + 'T12:00:00').getDay()]} ${_ddmm(dia)} (meta ${u.rotulo})`,
+      prod_meta_id: metaId,
+    }).select().single();
+    if (error || !ped) { toast(`Erro ao criar o pedido de MP de ${_ddmm(dia)}: ${error?.message || ''}`, 'erro'); break; }
+    const { error: e2 } = await sb.from('pedidos_internos_itens').insert(pedir.map(x => ({
+      pedido_id: ped.id, produto_id: x.pid, nome: prodFT(x.pid)?.nome || null, qtd_pedida: x.q,
+    })));
+    if (e2) {
+      await sb.from('pedidos_internos').update({ status: 'cancelado', obs: 'Itens não gravaram' }).eq('id', ped.id);
+      toast(`Erro ao gravar os itens do pedido de ${_ddmm(dia)}: ${e2.message}`, 'erro');
+      break;
+    }
+    criados++;
+  }
+  return criados;
+}
+
+async function metaCriarPedidosMp() {
+  const D = _metaD;
+  if (!D) return;
+  const L = D.linhas[_metaUn];
+  if (L.meta?.status !== 'aprovada') return;
+  if (!confirm(`Criar os pedidos de MP da meta do ${L.u.rotulo}? Um por dia de produção.`)) return;
+  if (!await _garantirSessao()) return;
+  const n = await _criarPedidosMp(_metaUn, L.meta.id);
+  if (n) toast(`${n} ${n === 1 ? 'pedido' : 'pedidos'} de MP criados ✅`, 'ok');
   await carregarMetaProducao();
 }

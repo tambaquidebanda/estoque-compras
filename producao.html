@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Produção — Tambaqui de Banda</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Source+Sans+3:wght@400;600;700&display=swap">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase.js"></script>
+  <style>
+    /* Tablet da Producao (telas aprovadas pelo Wagner em 06/10/2026, canvas
+       "Telas da Producao"). Toque grande, um assunto por tela. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f3f5f2; --card: #ffffff; --tinta: #18201d; --tinta2: #4f5c58; --tinta3: #5d6a66;
+      --borda: #dde3e0; --borda2: #b9c4c0; --topo: #18201d;
+      --teal: #0e6b68; --teal-bg: #e3efee; --teal-txt: #0e5754;
+      --p10: #8a4513; --p10-bg: #f3e6da; --p10-mid: #b5672a;
+      --ok: #3f9a63; --ok-bg: #e3f3e8; --ok-txt: #1f6b3d;
+      --av: #b45309; --av-bg: #fdf0d9; --av-txt: #8a5300;
+      --erro: #b42318;
+    }
+    html, body { height: 100%; }
+    body { background: var(--bg); color: var(--tinta); font-family: 'Source Sans 3', -apple-system, 'Segoe UI', sans-serif; font-size: 17px; }
+    button { font-family: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #f2b45a; outline-offset: 2px; }
+    .disp { font-family: Archivo, 'Source Sans 3', sans-serif; }
+
+    /* login */
+    #tela-login { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .login { background: var(--card); border: 1px solid var(--borda); border-radius: 16px; padding: 32px; width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 12px; }
+    .login h1 { font: 800 26px Archivo, sans-serif; }
+    .login input { padding: 14px 16px; border: 1px solid var(--borda2); border-radius: 10px; font-size: 18px; width: 100%; }
+    .login .btn-pri { margin-top: 6px; }
+    .msg-erro { color: var(--erro); font-size: 15px; min-height: 1.2em; }
+
+    /* estrutura */
+    #tela-app { display: none; flex-direction: column; min-height: 100dvh; }
+    .topo { background: var(--topo); color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; flex-wrap: wrap; }
+    .topo .eyebrow { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #9fd3cf; }
+    .topo .titulo { font: 800 26px Archivo, sans-serif; }
+    .abas { display: flex; gap: 8px; flex-wrap: wrap; }
+    .aba { min-height: 56px; padding: 0 20px; border-radius: 10px; border: 1px solid #44524e; background: transparent; color: #fff; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .aba.ativa { background: #fff; color: var(--tinta); border-color: #fff; font-weight: 700; }
+    .aba .bolha { border-radius: 999px; padding: 2px 9px; font-size: 15px; color: var(--tinta); }
+    .btn-voltar { min-height: 56px; min-width: 56px; border-radius: 10px; border: 1px solid #44524e; background: transparent; color: #fff; display: flex; align-items: center; justify-content: center; }
+    .corpo { padding: 20px 24px 28px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
+    .linha-tit { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .linha-tit h2 { font: 600 21px Archivo, sans-serif; }
+    .sub { color: var(--tinta2); font-size: 16px; }
+    .vazio { background: var(--card); border: 2px dashed var(--borda); border-radius: 14px; padding: 28px; text-align: center; color: var(--tinta2); font-size: 18px; }
+
+    /* botoes */
+    .btn-pri { min-height: 64px; padding: 0 28px; border-radius: 14px; border: 0; background: var(--teal); color: #fff; font: 800 21px Archivo, sans-serif; }
+    .btn-pri:disabled { background: #9db5b3; cursor: not-allowed; }
+    .btn-sec { min-height: 56px; padding: 0 22px; border-radius: 12px; border: 2px solid var(--teal); background: #fff; color: var(--teal); font-size: 18px; font-weight: 700; }
+    .btn-ok { min-height: 58px; min-width: 160px; padding: 0 22px; border-radius: 12px; border: 0; background: var(--teal); color: #fff; font-size: 19px; font-weight: 700; }
+    .btn-ok.feito { background: var(--ok-bg); color: var(--ok-txt); }
+
+    /* chips de unidade */
+    .chip { display: inline-block; font-size: 14px; font-weight: 700; padding: 4px 12px; border-radius: 8px; white-space: nowrap; }
+    .chip-1 { background: var(--teal-bg); color: var(--teal-txt); }
+    .chip-2 { background: var(--p10-bg); color: var(--p10); }
+    .status { font-size: 14px; font-weight: 700; padding: 6px 12px; border-radius: 999px; white-space: nowrap; }
+    .st-and { background: var(--teal-bg); color: var(--teal-txt); }
+    .st-av  { background: var(--av-bg); color: var(--av-txt); }
+    .st-ok  { background: var(--ok-bg); color: var(--ok-txt); }
+
+    /* Hoje */
+    .faixa { background: var(--card); border: 2px dashed var(--av); border-radius: 14px; padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .faixa .t { font: 800 19px Archivo, sans-serif; }
+    .btn-faixa { min-height: 58px; padding: 0 22px; border-radius: 12px; border: 0; background: var(--av); color: #fff; font-size: 19px; font-weight: 700; }
+    .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+    .card { background: var(--card); border: 2px solid var(--borda); border-radius: 14px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+    .card.ok { border-color: var(--ok); }
+    .card .nome { font: 800 21px Archivo, sans-serif; line-height: 1.15; }
+    .uni-linha { display: grid; grid-template-columns: 74px 1fr 150px; align-items: center; gap: 12px; }
+    .uni-linha .chip { text-align: center; }
+    .barra { height: 10px; border-radius: 999px; background: #e3e9e6; overflow: hidden; }
+    .barra > div { height: 10px; border-radius: 999px; }
+    .num-feito { font-size: 15px; color: var(--tinta2); text-align: right; font-variant-numeric: tabular-nums; }
+    .num-feito strong { font: 800 19px Archivo, sans-serif; color: var(--tinta); }
+
+    /* telas de digitar (Produzi / Limpar) */
+    .duas { display: flex; gap: 22px; align-items: stretch; flex-wrap: wrap; }
+    .duas > .esq { flex: 1 1 460px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    .duas > .dir { flex: 0 1 380px; min-width: 300px; display: flex; flex-direction: column; gap: 12px; }
+    .campo-uni { background: var(--card); border: 2px solid var(--borda); border-radius: 14px; padding: 10px 18px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+    .campo-uni.ativo { border: 3px solid var(--teal); }
+    .campo-uni.ativo.u2 { border-color: var(--p10); }
+    .campo-uni .info { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; flex-wrap: wrap; }
+    .campo-uni .val { display: flex; align-items: baseline; gap: 10px; }
+    .campo-uni .val span.n { font: 800 44px Archivo, sans-serif; min-height: 54px; flex: 1; font-variant-numeric: tabular-nums; }
+    .campo-uni .val span.u { font-size: 18px; color: var(--tinta2); }
+    .pares { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .par { border: 2px solid var(--borda2); border-radius: 12px; padding: 6px 14px; background: #fff; cursor: pointer; }
+    .par.ativo { border: 3px solid var(--teal); }
+    .par .rot { font-size: 15px; color: var(--tinta2); }
+    .par .n { font: 800 34px Archivo, sans-serif; min-height: 42px; font-variant-numeric: tabular-nums; }
+    .teclado { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .tecla { min-height: 66px; border-radius: 12px; border: 1px solid #cfd8d4; background: #fff; color: var(--tinta); font: 700 26px Archivo, sans-serif; }
+    .tecla:active { background: var(--teal-bg); }
+    .painel { background: var(--card); border: 1px solid var(--borda); border-radius: 14px; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px; }
+    .painel .linha { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eef2f0; font-size: 17px; }
+    .painel .linha:last-child { border-bottom: 0; }
+    .dica { background: var(--teal-bg); border-radius: 12px; padding: 12px 16px; font-size: 16px; color: #1f3d3a; }
+    .aviso { background: var(--av-bg); border-radius: 12px; padding: 12px 16px; font-size: 16px; color: var(--av-txt); }
+    .neg { color: var(--erro); font-weight: 700; }
+    .rend { font-size: 15px; font-weight: 700; padding: 6px 12px; border-radius: 999px; }
+
+    /* listas (Receber / Entregar / Semana) */
+    .bloco { background: var(--card); border: 1px solid var(--borda); border-top: 6px solid var(--teal); border-radius: 14px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+    .bloco.u2 { border-top-color: var(--p10); }
+    .bloco .cab { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .bloco .cab .t { font: 800 20px Archivo, sans-serif; }
+    .bloco.u2 .cab .t { color: var(--p10); }
+    .bloco .cab .t { color: var(--teal); }
+    .item { display: flex; align-items: center; gap: 16px; border: 2px solid var(--borda); border-radius: 12px; padding: 10px 14px; }
+    .item.marcado { border-color: var(--ok); }
+    .check { flex: 0 0 58px; height: 58px; border-radius: 12px; border: 2px solid var(--borda); background: #fff; display: flex; align-items: center; justify-content: center; }
+    .item.marcado .check { background: var(--ok); border-color: var(--ok); }
+    .item .meio { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .item .meio b { font-size: 19px; }
+    .item .meio span { font-size: 14px; color: var(--tinta3); }
+    .qtd-in { width: 130px; min-height: 54px; border: 1px solid var(--borda2); border-radius: 10px; text-align: center; font: 800 22px Archivo, sans-serif; background: #f7f9f8; }
+    .mais-menos { width: 54px; height: 54px; border-radius: 12px; border: 1px solid var(--borda2); background: #fff; font: 800 26px Archivo, sans-serif; color: var(--tinta); }
+    table.sem { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; font-size: 16px; }
+    table.sem th { text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #2c3a36; background: var(--teal-bg); padding: 10px 14px; }
+    table.sem td { padding: 10px 14px; border-top: 1px solid #e6ebe9; font-variant-numeric: tabular-nums; }
+
+    /* picker */
+    #picker { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 50; }
+    #picker .caixa { background: #fff; border-radius: 16px; width: 100%; max-width: 640px; max-height: calc(100dvh - 80px); display: flex; flex-direction: column; overflow: hidden; }
+    #picker input { margin: 16px; padding: 14px 16px; font-size: 18px; border: 1px solid var(--borda2); border-radius: 10px; }
+    #picker .lista { overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+    #picker .op { text-align: left; min-height: 56px; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--borda); background: #fff; font-size: 18px; }
+
+    #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: var(--tinta); color: #fff; padding: 14px 22px; border-radius: 12px; font-size: 17px; display: none; z-index: 60; max-width: 90vw; }
+    #toast.erro { background: var(--erro); }
+    @media (prefers-reduced-motion: no-preference) { .tecla, .btn-pri, .btn-ok { transition: background .12s; } }
+  </style>
+</head>
+<body>
+
+<div id="tela-login">
+  <div class="login">
+    <h1>Produção</h1>
+    <div class="sub">Entre uma vez neste tablet. Depois ele abre direto.</div>
+    <input type="email" id="login-email" placeholder="e-mail" autocomplete="username">
+    <input type="password" id="login-senha" placeholder="senha" autocomplete="current-password"
+           onkeydown="if(event.key==='Enter')fazerLogin()">
+    <div class="msg-erro" id="login-erro"></div>
+    <button class="btn-pri" id="btn-login" onclick="fazerLogin()">Entrar</button>
+  </div>
+</div>
+
+<div id="tela-app">
+  <div class="topo" id="topo"></div>
+  <div class="corpo" id="corpo"></div>
+</div>
+
+<div id="picker" onclick="if(event.target.id==='picker')fecharPicker()">
+  <div class="caixa">
+    <input type="search" id="picker-busca" placeholder="Buscar SA ou pré-preparo..." oninput="pintarPicker()">
+    <div class="lista" id="picker-lista"></div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+// TABLET DA PRODUÇÃO (07/10/2026)
+//
+// A meta é aprovada no computador (Produção > Meta da Semana), uma por unidade.
+// Aqui a Produção: recebe a MP, limpa e pesa (pré-preparo com rendimento real),
+// registra o que produziu SEPARANDO por unidade, e entrega cada SA no estoque
+// da sua unidade. Sem PIN: o tablet entra uma vez com um login.
+//
+// Onde cada coisa mora vem de prod_unidades (configuração, não código):
+//   Centro       MP vem do CENTRAL,          Produção = PRODUCAO,     SA vai ao CENTRAL
+//   Delivery P10 MP vem do ESTOQUE DELIVERY, Produção = PRODUCAO P10, SA vai ao ESTOQUE DELIVERY
+// Cada unidade gasta a SUA MP: o saldo da Produção é separado por unidade.
+//
+// Consumo pela ficha, um nível só (mesma conta do registrarProducao do computador):
+//   consumo do ingrediente = quantidade na ficha / rendimento × quantidade produzida
+// O pré-preparo (ex.: PPP PIRARUCU FRESCO LIMPO) é registrado antes, com o peso real.
+// ════════════════════════════════════════════════════════════════
+let sb, user;
+const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const DIAS_LONGO = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+// Nome da unidade nas transferências (pedidos_internos.local / unidade_origem) x lugar do saldo
+const UNI_DO_LOCAL = { CENTRAL: 'Estoque Central', PRODUCAO: 'Produção', 'PRODUCAO P10': 'Produção P10',
+                       'ESTOQUE DELIVERY': 'Delivery P10', ESTOQUE_LOJA: 'Centro' };
+const ROTULO_LOCAL = { CENTRAL: 'Estoque Central', 'ESTOQUE DELIVERY': 'Estoque Delivery', PRODUCAO: 'Produção',
+                       'PRODUCAO P10': 'Produção P10', ESTOQUE_LOJA: 'Estoque da Loja' };
+
+let HOJE, SEMANA;          // 'YYYY-MM-DD'; SEMANA = a sexta que abre a semana de produção
+let U = [];                // prod_unidades
+let P = {};                // produto_id -> { id, nome, tipo, unidade_uso }
+let FIC = {}, INGS = {};   // produto_id -> { id, rend } ; ficha_id -> [[ingrediente, qtd]]
+let METAS = {};            // unidade -> prod_metas aprovada da semana
+let ITENS = [];            // prod_meta_itens das metas aprovadas, com .unidade
+let REG = [];              // prod_registros da semana
+let SAL = {};              // local -> produto_id -> saldo
+let CHEGANDO = [];         // transferências liberadas para a Produção, com ._itens
+let EST_PROD = new Set();  // SA/PPP da lista da Produção (para o "outra SA")
+
+let tela = { nome: 'hoje' };
+let emVoo = false;
+
+// ── utilitários ─────────────────────────────────────────────────
+function hojeLocal() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Manaus', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function isoMais(iso, n) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+function sextaDaSemana(iso) { const k = (new Date(iso + 'T12:00:00').getDay() - 5 + 7) % 7; return isoMais(iso, -k); }
+const ddmm = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '—';
+const diaSem = iso => DIAS[new Date(iso + 'T12:00:00').getDay()];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v, dec = 1) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec });
+const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const nomeP = pid => P[pid]?.nome || pid;
+const unP = pid => P[pid]?.unidade_uso || '';
+const ehInteiro = pid => !['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(unP(pid)).toUpperCase());
+const quem = () => (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0] || 'Produção';
+const uniDe = un => U.find(u => u.unidade === un);
+const chip = u => `<span class="chip chip-${u.ordem === 2 ? 2 : 1}">${esc(u.ordem === 2 ? 'P10' : u.rotulo)}</span>`;
+const corBarra = (u, fim) => fim ? 'var(--ok)' : (u.ordem === 2 ? 'var(--p10-mid)' : 'var(--teal)');
+const saldo = (local, pid) => SAL[local]?.[pid] || 0;
+
+function toast(msg, tipo) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = tipo === 'erro' ? 'erro' : '';
+  t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => { t.style.display = 'none'; }, tipo === 'erro' ? 6000 : 3500);
+}
+
+async function selAll(tabela, colunas, filtro) {
+  const out = [];
+  for (let de = 0; ; de += 1000) {
+    let q = sb.from(tabela).select(colunas).range(de, de + 999);
+    if (filtro) q = filtro(q);
+    const { data, error } = await q;
+    if (error) throw new Error(`${tabela}: ${error.message}`);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+// ── saldo + livro-razão (mesmas funções do app.js / contagem.html) ──
+async function _movSaldo(produto_id, local, delta) {
+  if (!produto_id || !delta) return;
+  const { data: cur } = await sb.from('est_saldo_local').select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
+  const novo = (cur?.saldo ?? 0) + delta;
+  const { error } = await sb.from('est_saldo_local')
+    .upsert({ produto_id, local, saldo: novo, updated_at: new Date().toISOString() }, { onConflict: 'produto_id,local' });
+  if (error) console.error('_movSaldo upsert falhou:', produto_id, local, error.message);
+}
+async function movimentar(mov) {
+  const m = mov || {};
+  const { produto_id, local, tipo } = m;
+  const quantidade = Number(m.quantidade);
+  if (!produto_id || !local || !tipo || !quantidade) return;
+  await _movSaldo(produto_id, local, quantidade);
+  try {
+    const linha = { produto_id, local, tipo, quantidade };
+    ['custo_unit', 'motivo', 'origem', 'ref_tabela', 'ref_id', 'responsavel', 'data']
+      .forEach(k => { if (m[k] !== undefined && m[k] !== null && m[k] !== '') linha[k] = m[k]; });
+    const { error } = await sb.from('est_movimentacoes').insert(linha);
+    if (error) console.error('movimentar: razão falhou (saldo OK):', tipo, produto_id, error.message);
+  } catch (e) { console.error('movimentar: exceção no razão (saldo OK):', e); }
+}
+async function proximoNumPedido() {
+  const { data, error } = await sb.rpc('proximo_num_pedido');
+  if (!error && data) return data;
+  const { data: ult } = await sb.from('pedidos_internos').select('num_pedido').order('criado_em', { ascending: false }).limit(1);
+  const n = ult?.[0]?.num_pedido ? parseInt(String(ult[0].num_pedido).replace(/\D/g, '')) || 0 : 0;
+  return 'PED-' + String(n + 1).padStart(4, '0');
+}
+
+// ── sessão ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  sb = supabase.createClient(SB_URL, SB_KEY);
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) { user = session.user; entrar(); }
+});
+async function fazerLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const senha = document.getElementById('login-senha').value;
+  const erro = document.getElementById('login-erro');
+  const btn = document.getElementById('btn-login');
+  if (!email || !senha) { erro.textContent = 'Preencha e-mail e senha.'; return; }
+  btn.disabled = true; btn.textContent = 'Entrando...'; erro.textContent = '';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
+  btn.disabled = false; btn.textContent = 'Entrar';
+  if (error) { erro.textContent = /fetch|network/i.test(error.message) ? 'Sem internet.' : 'E-mail ou senha incorretos.'; return; }
+  user = data.user;
+  entrar();
+}
+async function garantirSessao() {
+  try { const { data } = await sb.auth.getSession(); if (data?.session) return true; } catch (e) { console.warn(e); }
+  toast('O acesso deste tablet expirou. Entre de novo.', 'erro');
+  document.getElementById('tela-app').style.display = 'none';
+  document.getElementById('tela-login').style.display = 'flex';
+  return false;
+}
+async function entrar() {
+  document.getElementById('tela-login').style.display = 'none';
+  document.getElementById('tela-app').style.display = 'flex';
+  await carregar();
+}
+
+// ── dados ───────────────────────────────────────────────────────
+async function carregar() {
+  HOJE = hojeLocal();
+  SEMANA = sextaDaSemana(HOJE);
+  document.getElementById('topo').innerHTML = topoHtml();
+  document.getElementById('corpo').innerHTML = '<div class="vazio">Carregando...</div>';
+  try {
+    U = await selAll('prod_unidades', '*', q => q.order('ordem'));
+    const locaisProd = U.map(u => u.local_producao);
+    const [prods, metas, regs, fichas, ings, cfg] = await Promise.all([
+      selAll('est_produtos', 'id,nome,tipo,unidade_uso', q => q.eq('ativo', true)),
+      selAll('prod_metas', '*', q => q.eq('semana_ini', SEMANA).eq('status', 'aprovada')),
+      selAll('prod_registros', '*', q => q.gte('data', SEMANA).lte('data', isoMais(SEMANA, 6))),
+      selAll('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
+      selAll('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
+      selAll('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos'])),
+    ]);
+    P = {}; prods.forEach(p => { P[p.id] = p; });
+    FIC = {}; fichas.forEach(f => { FIC[f.produto_id] = { id: f.id, rend: Number(f.rendimento) || 1 }; });
+    INGS = {}; ings.forEach(i => (INGS[i.ficha_id] ||= []).push([i.ingrediente_id, Number(i.quantidade) || 0]));
+    METAS = {}; metas.forEach(m => { METAS[m.unidade] = m; });
+    ITENS = [];
+    if (metas.length) {
+      const its = await selAll('prod_meta_itens', '*', q => q.in('meta_id', metas.map(m => m.id)));
+      its.forEach(i => { i.unidade = metas.find(m => m.id === i.meta_id).unidade; i.meta_final = Number(i.meta_final) || 0; });
+      ITENS = its.filter(i => i.meta_final > 0);
+    }
+    REG = regs;
+    const sal = await selAll('est_saldo_local', 'produto_id,local,saldo', q => q.in('local', locaisProd));
+    SAL = {}; sal.forEach(s => { (SAL[s.local] ||= {})[s.produto_id] = Number(s.saldo) || 0; });
+    const nomesProd = U.map(u => UNI_DO_LOCAL[u.local_producao]).filter(Boolean);
+    const peds = await selAll('pedidos_internos', '*', q => q.eq('tipo', 'transferencia').eq('status', 'liberado').in('local', nomesProd).order('criado_em'));
+    CHEGANDO = peds;
+    if (peds.length) {
+      const its = await selAll('pedidos_internos_itens', '*', q => q.in('pedido_id', peds.map(p => p.id)));
+      peds.forEach(p => { p._itens = its.filter(i => i.pedido_id === p.id); p._marc = {}; });
+    }
+    // lista da Producao (para o "registrar outra")
+    const est = cfg.find(r => r.chave === 'estrutura')?.valor || {};
+    const apel = cfg.find(r => r.chave === 'mapeamentos')?.valor || {};
+    const porNome = {};
+    prods.forEach(p => { if (p.tipo === 'SA' || p.tipo === 'PPP') porNome[norm(p.nome)] = p.id; });
+    EST_PROD = new Set();
+    Object.values(est['Produção'] || {}).forEach(gr => Object.values(gr || {}).forEach(ns => (ns || []).forEach(n => {
+      const id = porNome[norm(apel[n] || n)]; if (id) EST_PROD.add(id);
+    })));
+  } catch (e) {
+    console.error(e);
+    document.getElementById('corpo').innerHTML = `<div class="vazio">Não consegui carregar (${esc(e.message)}).<br><br>
+      <button class="btn-sec" onclick="carregar()">Tentar de novo</button></div>`;
+    return;
+  }
+  pintar();
+}
+
+// feito na semana: soma dos registros de produção da SA na unidade
+function feito(pid, un) {
+  return REG.filter(r => r.tipo === 'producao' && r.produto_id === pid && r.unidade === un).reduce((s, r) => s + Number(r.quantidade || 0), 0);
+}
+// linhas por SA: { pid, dia (o mais cedo), porUni: { un: { item, meta, feito, falta } } }
+function porSA(filtro) {
+  const m = {};
+  ITENS.filter(filtro || (() => true)).forEach(i => {
+    const x = (m[i.produto_id] ||= { pid: i.produto_id, dia: i.dia, porUni: {} });
+    if (i.dia && (!x.dia || i.dia < x.dia)) x.dia = i.dia;
+    const f = feito(i.produto_id, i.unidade);
+    x.porUni[i.unidade] = { item: i, meta: i.meta_final, feito: f, falta: Math.max(0, i.meta_final - f) };
+  });
+  return Object.values(m);
+}
+
+// Pré-preparo que o dia pede: abre um nível a ficha de cada SA ainda em aberto
+// (até hoje) e soma os PPP; desconta o PPP que já está na Produção da unidade.
+function prePreparos() {
+  const req = {};   // ppp -> un -> { precisa, tem, para:Set }
+  porSA(i => i.dia <= HOJE).forEach(x => {
+    const f = FIC[x.pid]; if (!f) return;
+    Object.entries(x.porUni).forEach(([un, v]) => {
+      if (!(v.falta > 0)) return;
+      (INGS[f.id] || []).forEach(([ing, q]) => {
+        if (P[ing]?.tipo !== 'PPP' || !(q > 0)) return;
+        const r = ((req[ing] ||= {})[un] ||= { precisa: 0, para: new Set() });
+        r.precisa += v.falta * q / f.rend;
+        r.para.add(x.pid);
+      });
+    });
+  });
+  const out = [];
+  Object.entries(req).forEach(([ppp, porUn]) => {
+    const linhas = Object.entries(porUn).map(([un, r]) => {
+      const u = uniDe(un);
+      const tem = Math.max(0, saldo(u.local_producao, ppp));
+      return { un, u, precisa: r.precisa, tem, falta: Math.max(0, r.precisa - tem), para: [...r.para] };
+    });
+    if (linhas.some(l => l.falta > 0.0001)) out.push({ ppp, linhas });
+  });
+  return out;
+}
+
+// ── desenho ─────────────────────────────────────────────────────
+function topoHtml() {
+  const t = tela.nome;
+  if (['produzi', 'limpar'].includes(t)) {
+    const eb = t === 'limpar' ? 'Pré-preparo · Limpar e pesar' : 'Registrar produção';
+    return `<div style="display:flex;align-items:center;gap:16px">
+      <button class="btn-voltar" aria-label="Voltar" onclick="ir('hoje')"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div><div class="eyebrow">${eb}</div><div class="titulo">${esc(nomeP(tela.pid))}</div></div></div>`;
+  }
+  const nRec = CHEGANDO.length;
+  const nEnt = U.reduce((s, u) => s + paraEntregar(u).length, 0);
+  const ab = (id, rot, bolha, cor) => `<button class="aba${t === id ? ' ativa' : ''}" onclick="ir('${id}')">${rot}${bolha ? ` <span class="bolha" style="background:${cor}">${bolha}</span>` : ''}</button>`;
+  const d = HOJE ? new Date(HOJE + 'T12:00:00') : new Date();
+  return `<div><div class="eyebrow">Produção · semana de ${ddmm(SEMANA)} a ${ddmm(SEMANA && isoMais(SEMANA, 6))}</div>
+      <div class="titulo">${DIAS_LONGO[d.getDay()]}, ${ddmm(HOJE)}</div></div>
+    <div class="abas">${ab('hoje', 'Hoje')}${ab('semana', 'Semana')}${ab('receber', 'Receber MP', nRec, '#f2b45a')}${ab('entregar', 'Entregar', nEnt, '#9fd3cf')}
+      <button class="aba" onclick="carregar()" aria-label="Atualizar" title="Atualizar">⟳</button></div>`;
+}
+
+function ir(nome, extra) {
+  tela = { nome, ...(extra || {}) };
+  pintar();
+  window.scrollTo(0, 0);
+}
+function pintar() {
+  document.getElementById('topo').innerHTML = topoHtml();
+  const c = document.getElementById('corpo');
+  const f = { hoje: telaHoje, semana: telaSemana, receber: telaReceber, entregar: telaEntregar, produzi: telaProduzi, limpar: telaLimpar }[tela.nome] || telaHoje;
+  c.innerHTML = f();
+}
+
+function semMeta() {
+  return `<div class="vazio">Nenhuma meta aprovada para a semana de ${ddmm(SEMANA)} a ${ddmm(isoMais(SEMANA, 6))}.<br>
+    A meta é aprovada no computador, em <b>Produção › Meta da Semana</b>.<br><br>
+    <button class="btn-sec" onclick="abrirPicker()">+ Registrar produção mesmo assim</button></div>`;
+}
+
+function telaHoje() {
+  if (!ITENS.length) return semMeta();
+  const pre = prePreparos();
+  const faixa = pre.map(x => {
+    const det = x.linhas.map(l => `${chip(l.u)} precisa <b>${num(l.precisa)} ${esc(unP(x.ppp))}</b>${l.tem > 0 ? ` (tem ${num(l.tem)})` : ''}`).join(' &nbsp;·&nbsp; ');
+    return `<div class="faixa"><div><div class="t">Antes: ${esc(nomeP(x.ppp))}</div><div class="sub">${det}</div></div>
+      <button class="btn-faixa" onclick="abrirLimpar('${x.ppp}')">Limpar e pesar</button></div>`;
+  }).join('');
+  const lista = porSA(i => i.dia <= HOJE)
+    .filter(x => x.dia === HOJE || Object.values(x.porUni).some(v => v.falta > 0))
+    .sort((a, b) => (a.dia || '').localeCompare(b.dia || '') || nomeP(a.pid).localeCompare(nomeP(b.pid)));
+  const concl = lista.filter(x => Object.values(x.porUni).every(v => v.falta <= 0)).length;
+  const cards = lista.map(x => {
+    const fim = Object.values(x.porUni).every(v => v.falta <= 0);
+    const algum = Object.values(x.porUni).some(v => v.feito > 0);
+    const atras = x.dia < HOJE && !fim;
+    const st = fim ? ['st-ok', 'Meta concluída'] : atras ? ['st-av', `Atrasado · era ${diaSem(x.dia)}`] : algum ? ['st-and', 'Em produção'] : ['st-and', 'Para hoje'];
+    const linhas = U.filter(u => x.porUni[u.unidade]).map(u => {
+      const v = x.porUni[u.unidade];
+      const pct = v.meta > 0 ? Math.min(100, v.feito / v.meta * 100) : 100;
+      return `<div class="uni-linha">${chip(u)}<div class="barra"><div style="width:${pct}%;background:${corBarra(u, v.falta <= 0)}"></div></div>
+        <span class="num-feito"><strong>${num(v.feito)}</strong> de ${num(v.meta)}</span></div>`;
+    }).join('');
+    return `<div class="card${fim ? ' ok' : ''}">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><span class="nome">${esc(nomeP(x.pid))}</span><span class="status ${st[0]}">${st[1]}</span></div>
+      ${linhas}
+      <div style="display:flex;justify-content:flex-end"><button class="btn-ok${fim ? ' feito' : ''}" onclick="abrirProduzi('${x.pid}')">${fim ? 'Concluído' : 'Produzi'}</button></div>
+    </div>`;
+  }).join('');
+  return `${faixa}
+    <div class="linha-tit"><h2>Planejado até hoje</h2><span class="sub">${concl} de ${lista.length} concluídos · produz junto, conta separado</span></div>
+    ${lista.length ? `<div class="grade">${cards}</div>` : '<div class="vazio">Nada planejado para hoje. Veja a aba <b>Semana</b>.</div>'}
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px">
+      <span class="sub">Produziu algo fora do planejado de hoje?</span>
+      <button class="btn-sec" onclick="abrirPicker()">+ Registrar outra SA</button></div>`;
+}
+
+function telaSemana() {
+  if (!ITENS.length) return semMeta();
+  const lista = porSA().sort((a, b) => (a.dia || '').localeCompare(b.dia || '') || nomeP(a.pid).localeCompare(nomeP(b.pid)));
+  const rows = lista.map(x => `<tr>
+      <td><b>${esc(nomeP(x.pid))}</b></td>
+      <td>${x.dia ? `${diaSem(x.dia)} ${ddmm(x.dia)}` : '—'}</td>
+      ${U.map(u => { const v = x.porUni[u.unidade]; return `<td>${v ? `<b>${num(v.feito)}</b> de ${num(v.meta)}${v.falta <= 0 ? ' ✓' : ''}` : '—'}</td>`; }).join('')}
+      <td><button class="btn-sec" style="min-height:46px" onclick="abrirProduzi('${x.pid}')">Produzi</button></td></tr>`).join('');
+  return `<div class="linha-tit"><h2>Meta da semana</h2><span class="sub">feito de meta, por unidade</span></div>
+    <div style="overflow-x:auto"><table class="sem"><thead><tr><th>SA</th><th>Dia</th>${U.map(u => `<th>${esc(u.rotulo)}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+// ── PRODUZI ─────────────────────────────────────────────────────
+function abrirProduzi(pid) {
+  if (P[pid]?.tipo === 'PPP') { abrirLimpar(pid); return; }
+  if (!FIC[pid]) { toast(`${nomeP(pid)} está sem ficha técnica: não dá para saber o que sai.`, 'erro'); return; }
+  const unis = U.filter(u => ITENS.some(i => i.produto_id === pid && i.unidade === u.unidade));
+  const vals = {}; (unis.length ? unis : U).forEach(u => { vals[u.unidade] = ''; });
+  ir('produzi', { pid, vals, ativo: Object.keys(vals)[0] });
+}
+function teclado() {
+  return `<div class="teclado">${['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '⌫'].map(k =>
+    `<button class="tecla" onclick="tecla('${k}')" aria-label="${k === '⌫' ? 'Apagar' : k}">${k}</button>`).join('')}</div>`;
+}
+function tecla(k) {
+  const t = tela;
+  if (!t.vals || !t.ativo) return;
+  let v = t.vals[t.ativo] || '';
+  if (k === '⌫') v = v.slice(0, -1);
+  else if (k === ',') { if (!v.includes(',')) v = (v || '0') + ','; }
+  else if (v.length < 8) v = v === '0' ? k : v + k;
+  t.vals[t.ativo] = v;
+  pintar();
+}
+const lerNum = s => { const n = Number(String(s || '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+function ativar(chave) { tela.ativo = chave; pintar(); }
+
+function telaProduzi() {
+  const t = tela, pid = t.pid, f = FIC[pid];
+  const campos = Object.keys(t.vals).map(un => {
+    const u = uniDe(un);
+    const it = ITENS.find(i => i.produto_id === pid && i.unidade === un);
+    const fe = feito(pid, un);
+    const info = it ? `meta ${num(it.meta_final)} · já feito ${num(fe)} · falta <b style="color:var(--av)">${num(Math.max(0, it.meta_final - fe))}</b>` : 'sem meta nesta semana';
+    return `<div class="campo-uni${t.ativo === un ? ' ativo' : ''}${u.ordem === 2 ? ' u2' : ''}" onclick="ativar('${esc(un)}')">
+      <div class="info"><span style="font-weight:700;color:${u.ordem === 2 ? 'var(--p10)' : 'var(--teal-txt)'}">Para o ${esc(u.rotulo)}</span><span class="sub">${info}</span></div>
+      <div class="val"><span class="n">${esc(t.vals[un] || '') || '<span style="color:#b9c4c0">0</span>'}</span><span class="u">${esc(unP(pid))}</span></div></div>`;
+  }).join('');
+  const blocos = Object.keys(t.vals).map(un => {
+    const u = uniDe(un), q = lerNum(t.vals[un]);
+    const linhas = (INGS[f.id] || []).filter(([, qq]) => qq > 0).map(([ing, qq]) => {
+      const sai = q * qq / f.rend, fica = saldo(u.local_producao, ing) - sai;
+      return `<div class="linha"><span>${esc(nomeP(ing))}</span><span><b>${num(sai, 2)} ${esc(unP(ing))}</b> <span class="sub ${fica < -0.0001 ? 'neg' : ''}">· fica ${num(fica, 2)}</span></span></div>`;
+    }).join('');
+    return `<div style="padding-top:6px">${chip(u)}${q > 0 ? linhas : '<div class="sub" style="padding:6px 0">nada para esta unidade</div>'}</div>`;
+  }).join('');
+  const tot = Object.entries(t.vals).filter(([, v]) => lerNum(v) > 0);
+  const soma = tot.reduce((s, [, v]) => s + lerNum(v), 0);
+  const txt = tot.length ? `Confirmar ${num(soma)} (${tot.map(([un, v]) => `${num(lerNum(v))} ${uniDe(un).ordem === 2 ? 'P10' : uniDe(un).rotulo}`).join(' + ')})` : 'Digite a quantidade';
+  const neg = Object.keys(t.vals).some(un => {
+    const u = uniDe(un), q = lerNum(t.vals[un]);
+    return q > 0 && (INGS[f.id] || []).some(([ing, qq]) => qq > 0 && saldo(u.local_producao, ing) - q * qq / f.rend < -0.0001);
+  });
+  return `<div class="duas">
+    <div class="esq"><span style="font-size:18px;font-weight:700">Quanto ficou para cada unidade?</span>${campos}${teclado()}</div>
+    <div class="dir">
+      <div class="painel"><span style="font-size:18px;font-weight:700">Pela ficha, sai da Produção de cada unidade:</span>${blocos}</div>
+      ${neg ? '<div class="aviso">Algum item vai ficar negativo: a Produção não tem esse insumo registrado (falta receber a MP ou registrar o pré-preparo).</div>' : ''}
+      <div class="dica">Pode fazer tudo na mesma leva. Só separe aqui quanto fica para cada unidade: cada uma gasta o seu próprio insumo e recebe o seu envio em <b>Entregar</b>.</div>
+      <div style="flex:1"></div>
+      <button class="btn-pri" ${tot.length ? '' : 'disabled'} onclick="confirmarProduzi()">${esc(txt)}</button>
+    </div></div>`;
+}
+
+async function confirmarProduzi() {
+  if (emVoo) return;
+  const t = tela, pid = t.pid, f = FIC[pid];
+  const lotes = Object.entries(t.vals).map(([un, v]) => [un, lerNum(v)]).filter(([, q]) => q > 0);
+  if (!lotes.length) return;
+  const resumo = lotes.map(([un, q]) => `${num(q)} ${unP(pid)} para o ${uniDe(un).rotulo}`).join('\n');
+  if (!confirm(`Registrar a produção de ${nomeP(pid)}?\n\n${resumo}\n\nOs insumos da ficha saem da Produção de cada unidade.`)) return;
+  emVoo = true;
+  try {
+    if (!await garantirSessao()) return;
+    const hora = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Manaus', hour: '2-digit', minute: '2-digit' });
+    for (const [un, q] of lotes) {
+      const u = uniDe(un);
+      const it = ITENS.find(i => i.produto_id === pid && i.unidade === un);
+      // o registro vai PRIMEIRO: se o banco recusar, nada mexe no saldo
+      const { error } = await sb.from('prod_registros').insert({ data: HOJE, unidade: un, tipo: 'producao', produto_id: pid,
+        quantidade: q, meta_item_id: it?.id || null, responsavel: quem() });
+      if (error) { toast(`Não gravou (${error.message}). Nada foi alterado no ${u.rotulo}.`, 'erro'); continue; }
+      const base = { origem: 'producao', responsavel: quem(), data: HOJE, motivo: `Produção ${ddmm(HOJE)} ${hora} (${u.rotulo}): ${num(q)} ${unP(pid)} de ${nomeP(pid)}` };
+      for (const [ing, qq] of (INGS[f.id] || [])) {
+        const c = q * qq / f.rend;
+        if (ing && c > 0) await movimentar({ ...base, produto_id: ing, local: u.local_producao, tipo: 'producao_consumo', quantidade: -c });
+      }
+      await movimentar({ ...base, produto_id: pid, local: u.local_producao, tipo: 'producao_entrada', quantidade: q });
+    }
+    toast(`${nomeP(pid)} registrado ✅`);
+    tela = { nome: 'hoje' };
+    await carregar();
+  } finally { emVoo = false; }
+}
+
+// ── LIMPAR E PESAR (pré-preparo com peso real) ──────────────────
+// O PPP tem uma MP principal (a de maior quantidade na ficha: o pirarucu fresco).
+// Quem limpa digita quanto dessa MP usou e quanto deu pronto na balança. A MP
+// principal sai pelo peso REAL; os outros ingredientes (se houver) saem pela ficha,
+// proporcionais ao que deu. Fica gravado o rendimento real x o da ficha.
+function mpPrincipal(ppp) {
+  const f = FIC[ppp]; if (!f) return null;
+  const ings = (INGS[f.id] || []).filter(([, q]) => q > 0).sort((a, b) => b[1] - a[1]);
+  if (!ings.length) return null;
+  return { mp: ings[0][0], q: ings[0][1], rendFicha: f.rend / ings[0][1] };   // 0,75 kg limpo por kg de fresco
+}
+function abrirLimpar(ppp) {
+  const m = mpPrincipal(ppp);
+  if (!m) { toast(`${nomeP(ppp)} está sem ficha técnica.`, 'erro'); return; }
+  const pre = prePreparos().find(x => x.ppp === ppp);
+  const unis = pre ? pre.linhas.map(l => l.un) : U.map(u => u.unidade);
+  const vals = {};
+  U.filter(u => unis.includes(u.unidade)).forEach(u => { vals[u.unidade + '|usou'] = ''; vals[u.unidade + '|deu'] = ''; });
+  ir('limpar', { pid: ppp, vals, ativo: Object.keys(vals)[0] });
+}
+function telaLimpar() {
+  const t = tela, ppp = t.pid, m = mpPrincipal(ppp);
+  const pre = prePreparos().find(x => x.ppp === ppp);
+  const unis = [...new Set(Object.keys(t.vals).map(k => k.split('|')[0]))];
+  const blocos = unis.map(un => {
+    const u = uniDe(un), l = pre?.linhas.find(x => x.un === un);
+    const usou = lerNum(t.vals[un + '|usou']), deu = lerNum(t.vals[un + '|deu']);
+    let res = '';
+    if (usou > 0 && deu > 0) {
+      const r = deu / usou, ok = r >= m.rendFicha - 0.005;
+      const falta = l ? l.precisa - l.tem - deu : 0;
+      const msg = falta > 0.05 ? `Faltam ${num(falta)} ${esc(unP(ppp))} para a meta de hoje` : (l ? 'Dá para a meta de hoje' : '');
+      res = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="rend" style="background:${ok ? 'var(--ok-bg)' : 'var(--av-bg)'};color:${ok ? 'var(--ok-txt)' : 'var(--av-txt)'}">Rendeu ${num(r * 100, 0)}% · ficha ${num(m.rendFicha * 100, 0)}%</span>
+        ${msg ? `<span style="color:${falta > 0.05 ? 'var(--av-txt)' : 'var(--ok-txt)'}">${msg}</span>` : ''}</div>`;
+    }
+    const par = (k, rot) => `<div class="par${t.ativo === un + '|' + k ? ' ativo' : ''}" onclick="ativar('${esc(un)}|${k}')"><div class="rot">${rot}</div>
+      <div class="n">${esc(t.vals[un + '|' + k] || '') || '<span style="color:#b9c4c0">0</span>'} <span style="font-size:18px;font-weight:400">${k === 'usou' ? esc(unP(m.mp)) : esc(unP(ppp))}</span></div></div>`;
+    return `<div class="card" style="border:${u.ordem === 2 ? '2px solid var(--p10-bg)' : '2px solid var(--teal-bg)'}">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div>${chip(u)} ${l ? `<span style="font-size:18px">Precisa hoje <b class="disp" style="font-size:22px">${num(l.precisa - l.tem)} ${esc(unP(ppp))}</b></span>` : ''}</div>
+        <span class="sub">${l ? l.para.map(nomeP).map(esc).join(' · ') : ''}</span></div>
+      <div class="pares">${par('usou', `${esc(nomeP(m.mp))} que usou`)}${par('deu', 'Deu pronto na balança')}</div>${res}</div>`;
+  }).join('');
+  const prontos = unis.filter(un => lerNum(t.vals[un + '|usou']) > 0 && lerNum(t.vals[un + '|deu']) > 0);
+  const temFresco = unis.map(un => `${chip(uniDe(un))} ${num(saldo(uniDe(un).local_producao, m.mp))} ${esc(unP(m.mp))}`).join(' · ');
+  return `<div class="duas">
+    <div class="esq"><span class="sub">Pese antes e depois de limpar. Cada unidade limpa e pesa o seu separado.</span>${blocos}
+      <div class="dica">Ao confirmar, sai o ${esc(nomeP(m.mp))} e entra o ${esc(nomeP(ppp))} na Produção de cada unidade. Depois cada SA tira dele no <b>Produzi</b>.</div></div>
+    <div class="dir">${teclado()}
+      <div class="painel"><span class="sub">${esc(nomeP(m.mp))} na Produção agora</span><span>${temFresco}</span></div>
+      <div style="flex:1"></div>
+      <button class="btn-pri" ${prontos.length ? '' : 'disabled'} onclick="confirmarLimpar()">${prontos.length ? 'Confirmar limpeza' : 'Digite os dois pesos'}</button>
+    </div></div>`;
+}
+async function confirmarLimpar() {
+  if (emVoo) return;
+  const t = tela, ppp = t.pid, m = mpPrincipal(ppp), f = FIC[ppp];
+  const unis = [...new Set(Object.keys(t.vals).map(k => k.split('|')[0]))]
+    .map(un => [un, lerNum(t.vals[un + '|usou']), lerNum(t.vals[un + '|deu'])]).filter(([, a, b]) => a > 0 && b > 0);
+  if (!unis.length) return;
+  const estranho = unis.find(([, a, b]) => b > a * 1.05 || b < a * 0.3);
+  const resumo = unis.map(([un, a, b]) => `${uniDe(un).rotulo}: usou ${num(a)} ${unP(m.mp)}, deu ${num(b)} ${unP(ppp)} (${num(b / a * 100, 0)}%)`).join('\n');
+  if (!confirm(`${estranho ? '⚠️ Rendimento fora do normal — confira os pesos.\n\n' : ''}Confirmar a limpeza?\n\n${resumo}`)) return;
+  emVoo = true;
+  try {
+    if (!await garantirSessao()) return;
+    for (const [un, usou, deu] of unis) {
+      const u = uniDe(un);
+      const { error } = await sb.from('prod_registros').insert({ data: HOJE, unidade: un, tipo: 'limpeza', produto_id: ppp,
+        quantidade: deu, mp_produto_id: m.mp, mp_quantidade: usou, rendimento_ficha: Math.round(m.rendFicha * 10000) / 10000, responsavel: quem() });
+      if (error) { toast(`Não gravou (${error.message}). Nada foi alterado no ${u.rotulo}.`, 'erro'); continue; }
+      const base = { origem: 'producao', responsavel: quem(), data: HOJE,
+        motivo: `Limpeza ${ddmm(HOJE)} (${u.rotulo}): ${num(usou)} ${unP(m.mp)} → ${num(deu)} ${unP(ppp)} (${num(deu / usou * 100, 0)}%)` };
+      for (const [ing, qq] of (INGS[f.id] || [])) {
+        const c = ing === m.mp ? usou : deu * qq / f.rend;
+        if (ing && c > 0) await movimentar({ ...base, produto_id: ing, local: u.local_producao, tipo: 'producao_consumo', quantidade: -c });
+      }
+      await movimentar({ ...base, produto_id: ppp, local: u.local_producao, tipo: 'producao_entrada', quantidade: deu });
+    }
+    toast('Limpeza registrada ✅');
+    tela = { nome: 'hoje' };
+    await carregar();
+  } finally { emVoo = false; }
+}
+
+// ── RECEBER MP ──────────────────────────────────────────────────
+function telaReceber() {
+  if (!CHEGANDO.length) return '<div class="vazio">Nada chegando agora. Quando o estoque enviar a MP, ela aparece aqui.</div>';
+  return `<span class="sub">Cada unidade manda a sua MP num pedido separado. Toque em cada item que chegou; se veio quantidade diferente, corrija o número.</span>` +
+    CHEGANDO.map(p => {
+      const u = U.find(x => UNI_DO_LOCAL[x.local_producao] === p.local);
+      const todos = p._itens.every(i => p._marc[i.id]);
+      const itens = p._itens.map(i => `<div class="item${p._marc[i.id] ? ' marcado' : ''}">
+        <button class="check" aria-label="Marcar como recebido" onclick="marcar('${p.id}','${i.id}')"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="${p._marc[i.id] ? '#fff' : '#b9c4c0'}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></button>
+        <div class="meio"><b>${esc(i.nome || nomeP(i.produto_id))}</b><span>Enviado ${num(i.qtd_liberada, 3)} ${esc(unP(i.produto_id))}</span></div>
+        <input class="qtd-in" inputmode="decimal" data-rec="${i.id}" value="${String(i.qtd_liberada ?? '').replace('.', ',')}" aria-label="Quantidade que chegou"></div>`).join('');
+      return `<div class="bloco${u?.ordem === 2 ? ' u2' : ''}">
+        <div class="cab"><div><div class="t">${esc(u?.rotulo || p.local)}</div><div class="sub">Do ${esc(p.unidade_origem)} · ${esc(p.num_pedido || '')}${p.obs ? ' · ' + esc(p.obs) : ''}</div></div>
+          <button class="btn-pri" ${todos ? '' : 'disabled'} onclick="confirmarReceber('${p.id}')">${todos ? 'Confirmar recebimento' : 'Toque em cada item'}</button></div>
+        ${itens}</div>`;
+    }).join('');
+}
+function marcar(pedId, itId) {
+  const p = CHEGANDO.find(x => x.id === pedId); if (!p) return;
+  // guarda o que foi digitado antes de redesenhar
+  document.querySelectorAll('[data-rec]').forEach(inp => { const it = p._itens.find(i => i.id === inp.dataset.rec); if (it) it._dig = inp.value; });
+  p._marc[itId] = !p._marc[itId];
+  pintar();
+  p._itens.forEach(i => { const inp = document.querySelector(`[data-rec="${i.id}"]`); if (inp && i._dig !== undefined) inp.value = i._dig; });
+}
+async function confirmarReceber(pedId) {
+  if (emVoo) return;
+  const p = CHEGANDO.find(x => x.id === pedId); if (!p) return;
+  const q = {};
+  for (const i of p._itens) {
+    const raw = document.querySelector(`[data-rec="${i.id}"]`)?.value ?? '';
+    const v = Number(String(raw).replace(',', '.'));
+    if (raw === '' || isNaN(v) || v < 0) { toast('Quantidade inválida. Use 0 para o que não chegou.', 'erro'); return; }
+    q[i.id] = v;
+  }
+  const u = U.find(x => UNI_DO_LOCAL[x.local_producao] === p.local);
+  if (!u) { toast('Não sei em que Produção este pedido entra.', 'erro'); return; }
+  emVoo = true;
+  try {
+    if (!await garantirSessao()) return;
+    const { data: ok, error } = await sb.from('pedidos_internos')
+      .update({ status: 'recebido', recebido_em: new Date().toISOString(), recebido_por: quem() })
+      .eq('id', pedId).eq('status', 'liberado').select('id,num_pedido,unidade_origem');
+    if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
+    if (!ok?.length) { toast('Este pedido já foi recebido em outra tela.', 'erro'); await carregar(); return; }
+    for (const i of p._itens) {
+      const v = q[i.id];
+      await sb.from('pedidos_internos_itens').update({ qtd_recebida: v }).eq('id', i.id);
+      if (v > 0) await movimentar({ produto_id: i.produto_id, local: u.local_producao, tipo: 'transferencia_entrada', quantidade: v,
+        origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: i.id, responsavel: quem(), data: HOJE,
+        motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}` });
+    }
+    toast(`${p.num_pedido} recebido ✅`);
+    await carregar();
+    ir('receber');
+  } finally { emVoo = false; }
+}
+
+// ── ENTREGAR ────────────────────────────────────────────────────
+function paraEntregar(u) {
+  return Object.entries(SAL[u.local_producao] || {})
+    .filter(([pid, s]) => s > 0.0001 && P[pid]?.tipo === 'SA')
+    .map(([pid, s]) => ({ pid, saldo: s }))
+    .sort((a, b) => nomeP(a.pid).localeCompare(nomeP(b.pid)));
+}
+function telaEntregar() {
+  const blocos = U.map(u => {
+    const lista = paraEntregar(u);
+    const dest = ROTULO_LOCAL[u.local_destino] || u.local_destino;
+    if (!lista.length) return `<div class="bloco${u.ordem === 2 ? ' u2' : ''}"><div class="cab"><div><div class="t">${esc(u.rotulo)}</div><div class="sub">Para o ${esc(dest)}</div></div></div><div class="sub">Nada pronto para entregar.</div></div>`;
+    const itens = lista.map(x => `<div class="item">
+      <div class="meio"><b>${esc(nomeP(x.pid))}</b><span>Pronto na Produção: ${num(x.saldo)} ${esc(unP(x.pid))}</span></div>
+      <button class="mais-menos" aria-label="Menos" onclick="somar('${u.unidade}','${x.pid}',-1)">−</button>
+      <input class="qtd-in" inputmode="decimal" data-ent="${esc(u.unidade)}|${x.pid}" value="${ehInteiro(x.pid) ? Math.floor(x.saldo + 1e-9) : String(Math.round(x.saldo * 1000) / 1000).replace('.', ',')}" aria-label="Quantidade a entregar">
+      <button class="mais-menos" aria-label="Mais" onclick="somar('${u.unidade}','${x.pid}',1)">+</button></div>`).join('');
+    return `<div class="bloco${u.ordem === 2 ? ' u2' : ''}">
+      <div class="cab"><div><div class="t">${esc(u.rotulo)}</div><div class="sub">Para o ${esc(dest)}</div></div>
+        <button class="btn-pri" onclick="confirmarEntregar('${esc(u.unidade)}')">Enviar ao ${esc(dest)}</button></div>${itens}</div>`;
+  }).join('');
+  return `<span class="sub">O que foi produzido e ainda não saiu. Cada unidade recebe o seu envio. Ajuste se for entregar só uma parte.</span>${blocos}
+    <span class="sub">São transferências separadas. Ao enviar, sai da Produção daquela unidade; entra no estoque da unidade quando ela confirmar a chegada.</span>`;
+}
+function somar(un, pid, d) {
+  const inp = document.querySelector(`[data-ent="${un}|${pid}"]`); if (!inp) return;
+  inp.value = String(Math.max(0, lerNum(inp.value) + d)).replace('.', ',');
+}
+async function confirmarEntregar(un) {
+  if (emVoo) return;
+  const u = uniDe(un);
+  const destUni = UNI_DO_LOCAL[u.local_destino], prodUni = UNI_DO_LOCAL[u.local_producao];
+  if (!destUni || !prodUni) { toast('Destino da unidade não configurado.', 'erro'); return; }
+  const itens = [];
+  for (const x of paraEntregar(u)) {
+    const raw = document.querySelector(`[data-ent="${un}|${x.pid}"]`)?.value ?? '';
+    const v = lerNum(raw);
+    if (v < 0) { toast('Quantidade inválida.', 'erro'); return; }
+    if (v > x.saldo + 0.0001) { toast(`${nomeP(x.pid)}: só tem ${num(x.saldo)} pronto.`, 'erro'); return; }
+    if (v > 0) itens.push({ pid: x.pid, q: v });
+  }
+  if (!itens.length) { toast('Nada para enviar.', 'erro'); return; }
+  const dest = ROTULO_LOCAL[u.local_destino] || u.local_destino;
+  if (!confirm(`Enviar ao ${dest}?\n\n${itens.map(i => `${num(i.q)} ${unP(i.pid)} de ${nomeP(i.pid)}`).join('\n')}`)) return;
+  emVoo = true;
+  try {
+    if (!await garantirSessao()) return;
+    const agora = new Date().toISOString(), num_pedido = await proximoNumPedido();
+    const { data: ped, error } = await sb.from('pedidos_internos').insert({
+      num_pedido, tipo: 'transferencia', setor: 'TRANSFERENCIA', origem: 'manual',
+      local: destUni, unidade_origem: prodUni, status: 'liberado', liberado_em: agora, liberado_por: quem(),
+      responsavel: quem(), data: HOJE, obs: 'Entrega da Produção',
+    }).select().single();
+    if (error || !ped) { toast('Erro ao criar o envio: ' + (error?.message || ''), 'erro'); return; }
+    const { data: its, error: e2 } = await sb.from('pedidos_internos_itens').insert(itens.map(i => ({
+      pedido_id: ped.id, produto_id: i.pid, nome: nomeP(i.pid), qtd_pedida: i.q, qtd_liberada: i.q,
+    }))).select('id,produto_id,qtd_liberada');
+    if (e2 || !its?.length) {
+      await sb.from('pedidos_internos').update({ status: 'cancelado', obs: 'Itens não gravaram' }).eq('id', ped.id);
+      toast('Erro ao gravar os itens: ' + (e2?.message || ''), 'erro'); return;
+    }
+    for (const it of its) await movimentar({ produto_id: it.produto_id, local: u.local_producao, tipo: 'transferencia_saida',
+      quantidade: -Number(it.qtd_liberada), origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
+      responsavel: quem(), data: HOJE, motivo: `Transferência ${num_pedido} → ${destUni}` });
+    toast(`${num_pedido} enviado ao ${dest} 📦`);
+    await carregar();
+    ir('entregar');
+  } finally { emVoo = false; }
+}
+
+// ── REGISTRAR OUTRA (fora do planejado) ─────────────────────────
+function abrirPicker() {
+  document.getElementById('picker').style.display = 'flex';
+  document.getElementById('picker-busca').value = '';
+  pintarPicker();
+  setTimeout(() => document.getElementById('picker-busca').focus(), 50);
+}
+function fecharPicker() { document.getElementById('picker').style.display = 'none'; }
+function pintarPicker() {
+  const b = norm(document.getElementById('picker-busca').value);
+  const lista = Object.values(P).filter(p => (p.tipo === 'SA' || p.tipo === 'PPP') && FIC[p.id] && (!b || norm(p.nome).includes(b)))
+    .sort((a, c) => (EST_PROD.has(c.id) - EST_PROD.has(a.id)) || a.nome.localeCompare(c.nome)).slice(0, 60);
+  document.getElementById('picker-lista').innerHTML = lista.length
+    ? lista.map(p => `<button class="op" onclick="fecharPicker();abrirProduzi('${p.id}')">${esc(p.nome)}${p.tipo === 'PPP' ? ' <span class="sub">· limpar e pesar</span>' : ''}</button>`).join('')
+    : '<div class="sub" style="padding:12px">Nada encontrado (só aparece SA ou pré-preparo com ficha).</div>';
+}
+</script>
+</body>
+</html>
