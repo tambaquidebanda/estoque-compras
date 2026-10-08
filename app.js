@@ -15837,6 +15837,10 @@ function _metaArred(pid, v) {
   const u = String(prodFT(pid)?.unidade_uso || '').toUpperCase();
   return ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(u) ? Math.ceil(v * 10 - 1e-9) / 10 : Math.ceil(v - 1e-9);
 }
+// Na tela, SA contada em unidade (UN, PC, PO...) aparece sem casa decimal: a venda é
+// média e daria "273,3 batatas". A conta continua com o número inteiro, só o texto arredonda.
+const _metaFracao = pid => ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(prodFT(pid)?.unidade_uso || '').toUpperCase());
+const _metaNumU = (pid, v) => (v === null || v === undefined || v === '') ? '—' : _metaNum(_metaFracao(pid) ? v : Math.round(v));
 const _rotuloSemIcone = l => _rotuloLocal(l).replace(/^[^\p{L}]+/u, '');
 const _metaFinal = l => l.ajuste === null || l.ajuste === undefined ? l.meta : Math.max(0, l.meta + l.ajuste);
 
@@ -16199,14 +16203,14 @@ function _pintarMeta() {
     const sobra = l.fds === null || l.fds === undefined ? null : l.tem - l.fds;
     const sobraTd = sobra === null ? '<td class="text-end text-muted">—</td>'
       : sobra < 0 ? `<td class="text-end meta-falta-fds">0<span class="badge">falta ${_metaNum(_metaArred(l.pid, -sobra))}</span></td>`
-      : `<td class="text-end">${_metaNum(sobra)}</td>`;
+      : `<td class="text-end">${_metaNumU(l.pid, sobra)}</td>`;
     return `<tr>
       <td class="fw-semibold">${esc(prodFT(l.pid)?.nome || l.pid)}</td>
-      <td class="text-end">${_metaNum(l.tem)}</td>
-      <td class="text-end text-muted">${l.fds === null || l.fds === undefined ? '—' : '−' + _metaNum(l.fds)}</td>
+      <td class="text-end">${_metaNumU(l.pid, l.tem)}</td>
+      <td class="text-end text-muted">${l.fds === null || l.fds === undefined ? '—' : '−' + _metaNumU(l.pid, l.fds)}</td>
       ${sobraTd}
-      <td class="text-end text-muted">${_metaNum(l.vendeu)}</td>
-      <td class="text-end">${_metaNum(l.precisa)}</td>
+      <td class="text-end text-muted">${_metaNumU(l.pid, l.vendeu)}</td>
+      <td class="text-end">${_metaNumU(l.pid, l.precisa)}</td>
       <td class="text-end">${_metaNum(l.meta)}</td>
       <td class="text-center"><input type="text" inputmode="decimal" class="form-control form-control-sm meta-ajuste" value="${ajTxt}" placeholder="—"
           ${aprovada ? 'disabled' : ''} onchange="metaAjuste('${l.pid}', this.value)" aria-label="Ajuste"></td>
