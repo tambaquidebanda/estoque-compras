@@ -210,7 +210,7 @@ function ir(nome, el) {
     document.getElementById('nav-grupo-estoque')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-estoque')?.classList.add('aberto');
   }
-  if (nome === 'meta-producao') {
+  if (['meta-producao', 'ocorrencias-producao'].includes(nome)) {
     document.getElementById('nav-grupo-producao')?.classList.add('aberto', 'ativo');
     document.getElementById('nav-submenu-producao')?.classList.add('aberto');
   }
@@ -254,6 +254,7 @@ function ir(nome, el) {
   if (nome === 'venda-contagem')  carregarVendaContagem();
   if (nome === 'saude-fichas')    carregarSaudeFichas();
   if (nome === 'meta-producao')   carregarMetaProducao();
+  if (nome === 'ocorrencias-producao') carregarOcorrenciasProducao();
 }
 
 function irCad(tab, el) {
@@ -16509,4 +16510,100 @@ async function metaCriarPedidosMp() {
   const n = await _criarPedidosMp(_metaUn, L.meta.id);
   if (n) toast(`${n} ${n === 1 ? 'pedido' : 'pedidos'} de MP criados ✅`, 'ok');
   await carregarMetaProducao();
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// OCORRÊNCIAS DA PRODUÇÃO (08/10/2026 — pedido do Wagner, para Compras)
+//
+// O tablet grava em prod_ocorrencias o motivo de cada meta que não bateu (no
+// Produzi ou no Fechar o dia) e de cada MP que, contada no fim do dia, não bateu
+// com o que o sistema esperava. Aqui fica o histórico: resumo por item (motivo
+// que se repete aponta ficha, perda ou compra) e a lista uma a uma.
+// ════════════════════════════════════════════════════════════════
+const _OC_MOTIVO = {
+  faltou_tempo: 'Faltou tempo', faltou_mp: 'Faltou MP', produto_ruim: 'MP com problema', perda: 'Perda acima do normal',
+  ficha: 'Ficha desatualizada', processo: 'Falha no processo', registro: 'Produção registrada a mais',
+  sem_receber: 'MP chegou sem registrar no tablet', outro: 'Outro',
+};
+let _ocDados = null;
+
+async function carregarOcorrenciasProducao() {
+  const ini = document.getElementById('oc-ini'), fim = document.getElementById('oc-fim');
+  if (!fim.value) fim.value = hojeLocal();
+  if (!ini.value) ini.value = _isoMais(fim.value, -27);
+  const tb = document.getElementById('oc-tbody');
+  document.getElementById('oc-resumo').innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Carregando...</td></tr>';
+  tb.innerHTML = '';
+  try {
+    await carregarProdutosFT();
+    const [ocs, unis] = await Promise.all([
+      _metaSelect('prod_ocorrencias', '*', q => q.gte('data', ini.value).lte('data', fim.value).order('data', { ascending: false })),
+      _metaSelect('prod_unidades', 'unidade,rotulo,ordem', q => q.order('ordem')),
+    ]);
+    _ocDados = { ocs, unis };
+    const sel = document.getElementById('oc-uni'), atual = sel.value;
+    sel.innerHTML = '<option value="">As duas lojas</option>' + unis.map(u => `<option value="${esc(u.unidade)}">${esc(u.rotulo)}</option>`).join('');
+    sel.value = atual;
+  } catch (e) {
+    console.error(e);
+    _ocDados = null;
+    const dica = /prod_ocorrencias/.test(e.message) ? ' Falta rodar o SQL_PRODUCAO_OCORRENCIAS.sql.' : '';
+    document.getElementById('oc-resumo').innerHTML = `<tr><td colspan="5" class="text-center text-danger py-4">Não consegui carregar (${esc(e.message)}).${dica}</td></tr>`;
+    return;
+  }
+  pintarOcorrenciasProducao();
+}
+
+function pintarOcorrenciasProducao() {
+  if (!_ocDados) return;
+  const un = document.getElementById('oc-uni').value, tipo = document.getElementById('oc-tipo').value;
+  const rot = Object.fromEntries(_ocDados.unis.map(u => [u.unidade, u.rotulo]));
+  const L = _ocDados.ocs.filter(o => (!un || o.unidade === un) && (!tipo || o.tipo === tipo));
+  const motivo = o => o.motivo === 'outro' && o.obs ? `Outro: ${o.obs}` : (_OC_MOTIVO[o.motivo] || o.motivo);
+  const unid = pid => esc(prodFT(pid)?.unidade_uso || '');
+
+  const porMot = {};
+  L.forEach(o => { porMot[o.motivo] = (porMot[o.motivo] || 0) + 1; });
+  const top = Object.entries(porMot).sort((a, b) => b[1] - a[1])[0];
+  const kpi = (lab, val, cls) => `<div class="col-6 col-md-3"><div class="card-kpi ${cls}"><div class="kpi-label">${lab}</div><div class="kpi-val">${val}</div></div></div>`;
+  document.getElementById('oc-kpis').innerHTML =
+    kpi('Ocorrências no período', L.length, L.length ? 'kpi-ruim' : 'kpi-ok') +
+    kpi('Meta que não bateu', L.filter(o => o.tipo === 'meta').length, 'kpi-cinza') +
+    kpi('Diferença de MP', L.filter(o => o.tipo === 'mp').length, 'kpi-cinza') +
+    kpi('Motivo mais comum', top ? `${esc(_OC_MOTIVO[top[0]] || top[0])} (${top[1]})` : '—', 'kpi-cinza');
+
+  // resumo por item + loja: o que se repete
+  const grupos = {};
+  L.forEach(o => {
+    const g = (grupos[o.tipo + '|' + o.produto_id + '|' + o.unidade] ||= { o, n: 0, mot: {}, dif: 0 });
+    g.n++; g.dif += Number(o.diferenca) || 0;
+    const m = motivo(o); g.mot[m] = (g.mot[m] || 0) + 1;
+  });
+  const gs = Object.values(grupos).sort((a, b) => b.n - a.n || (prodFT(a.o.produto_id)?.nome || '').localeCompare(prodFT(b.o.produto_id)?.nome || ''));
+  document.getElementById('oc-resumo').innerHTML = gs.length ? gs.map(g => {
+    const o = g.o;
+    const difTxt = o.tipo === 'meta' ? `faltaram ${_metaNumU(o.produto_id, g.dif)} ${unid(o.produto_id)}`
+      : `${g.dif < 0 ? 'usou' : 'sobrou'} ${_metaNum(Math.abs(g.dif))} ${unid(o.produto_id)} ${g.dif < 0 ? 'a mais' : 'a mais que o esperado'}`;
+    return `<tr${g.n > 1 ? ' class="table-warning"' : ''}>
+      <td class="fw-semibold">${esc(prodFT(o.produto_id)?.nome || o.produto_id)}<div class="small text-muted">${o.tipo === 'meta' ? 'meta que não bateu' : 'diferença de MP'}</div></td>
+      <td>${esc(rot[o.unidade] || o.unidade)}</td>
+      <td class="text-end fw-bold">${g.n}</td>
+      <td>${Object.entries(g.mot).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${esc(m)}${n > 1 ? ` <span class="badge bg-warning text-dark">${n}x</span>` : ''}`).join(' · ')}</td>
+      <td class="text-end">${difTxt}</td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">Nenhuma ocorrência no período. ✅</td></tr>';
+
+  document.getElementById('oc-tbody').innerHTML = L.map(o => {
+    const det = o.tipo === 'meta'
+      ? `feito ${_metaNumU(o.produto_id, o.feito)} de ${_metaNumU(o.produto_id, o.meta)} ${unid(o.produto_id)}`
+      : `contou ${_metaNum(o.contado)}, sistema ${_metaNum(Math.max(0, o.esperado))} ${unid(o.produto_id)} <span class="${o.diferenca < 0 ? 'text-danger' : 'text-primary'} fw-semibold">(${o.diferenca > 0 ? '+' : ''}${_metaNum(o.diferenca)})</span>`;
+    return `<tr>
+      <td class="text-nowrap">${_ddmm(o.data)}</td>
+      <td>${esc(rot[o.unidade] || o.unidade)}</td>
+      <td class="small">${o.tipo === 'meta' ? 'Meta' : 'MP'}</td>
+      <td class="fw-semibold">${esc(prodFT(o.produto_id)?.nome || o.produto_id)}</td>
+      <td class="text-end text-nowrap">${det}</td>
+      <td>${esc(motivo(o))}</td>
+      <td class="small text-muted">${esc(o.responsavel || '')}</td></tr>`;
+  }).join('');
 }

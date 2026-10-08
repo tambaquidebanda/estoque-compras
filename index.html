@@ -125,6 +125,9 @@
         <a href="#" onclick="ir('meta-producao',this)">
           <i class="bi bi-bullseye"></i> Meta da Semana
         </a>
+        <a href="#" onclick="ir('ocorrencias-producao',this)">
+          <i class="bi bi-exclamation-diamond"></i> Ocorrências
+        </a>
       </div>
       <a href="#" onclick="ir('faturamento',this)">
         <i class="bi bi-cash-coin"></i> Faturamento
@@ -3401,6 +3404,45 @@
             </div>
             <div class="modal-body" id="meta-mp-corpo"></div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="pg-ocorrencias-producao" class="pagina">
+      <div class="d-flex justify-content-between align-items-end flex-wrap gap-3 mb-3">
+        <div>
+          <div class="meta-eyebrow">Produção · para Compras</div>
+          <h1 class="mb-1">Ocorrências da Produção</h1>
+          <div class="text-muted small" style="max-width:80ch">Meta que não bateu e MP que sobrou diferente do esperado, com o motivo que a Produção deu no tablet.
+            Motivo repetido no mesmo item é sinal de ficha, perda ou compra para revisar.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <label class="small text-muted" for="oc-ini">De</label>
+          <input type="date" id="oc-ini" class="form-control form-control-sm" style="width:auto" onchange="carregarOcorrenciasProducao()">
+          <label class="small text-muted" for="oc-fim">a</label>
+          <input type="date" id="oc-fim" class="form-control form-control-sm" style="width:auto" onchange="carregarOcorrenciasProducao()">
+          <select id="oc-uni" class="form-select form-select-sm" style="width:auto" onchange="pintarOcorrenciasProducao()" aria-label="Loja"></select>
+          <select id="oc-tipo" class="form-select form-select-sm" style="width:auto" onchange="pintarOcorrenciasProducao()" aria-label="Tipo">
+            <option value="">Tudo</option><option value="meta">Meta que não bateu</option><option value="mp">Diferença de MP</option>
+          </select>
+        </div>
+      </div>
+      <div class="row g-3 mb-3" id="oc-kpis"></div>
+      <div class="card-grafico p-0 overflow-hidden mb-3">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0 meta-tabela">
+            <thead><tr><th>Item</th><th>Loja</th><th class="text-end">Vezes</th><th>Motivos</th><th class="text-end">Diferença somada</th></tr></thead>
+            <tbody id="oc-resumo"><tr><td colspan="5" class="text-center text-muted py-4">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <h2 class="h6 text-muted text-uppercase mb-2" style="letter-spacing:.05em">Uma a uma</h2>
+      <div class="card-grafico p-0 overflow-hidden">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0 meta-tabela">
+            <thead><tr><th>Dia</th><th>Loja</th><th>Tipo</th><th>Item</th><th class="text-end">O que aconteceu</th><th>Motivo</th><th>Quem</th></tr></thead>
+            <tbody id="oc-tbody"></tbody>
+          </table>
         </div>
       </div>
     </section>

@@ -136,6 +136,19 @@
     #picker .lista { overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 8px; }
     #picker .op { text-align: left; min-height: 56px; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--borda); background: #fff; font-size: 18px; }
 
+    /* motivo (ocorrência) e fechar o dia */
+    #motivo { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; padding: 24px 16px; z-index: 55; }
+    #motivo .caixa { background: #fff; border-radius: 16px; width: 100%; max-width: 680px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+    #motivo .t { font: 800 22px Archivo, sans-serif; }
+    .motivos { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+    .mot { min-height: 56px; padding: 6px 14px; border-radius: 12px; border: 2px solid var(--borda2); background: #fff; font-size: 17px; font-weight: 600; color: var(--tinta); text-align: left; }
+    .mot.sel { border-color: var(--av); background: var(--av-bg); color: var(--av-txt); }
+    .fech-linha { display: flex; flex-direction: column; gap: 8px; border: 2px solid var(--borda); border-radius: 12px; padding: 10px 14px; }
+    .fech-linha .topo-l { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .fech-linha .topo-l .meio { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+    .fech-linha .topo-l .meio b { font-size: 19px; }
+    .fech-linha .topo-l .meio span { font-size: 15px; color: var(--tinta3); }
+    .fech-linha .pede { font-size: 15px; font-weight: 700; color: var(--av-txt); }
     #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: var(--tinta); color: #fff; padding: 14px 22px; border-radius: 12px; font-size: 17px; display: none; z-index: 60; max-width: 90vw; }
     #toast.erro { background: var(--erro); }
     @media (prefers-reduced-motion: no-preference) { .tecla, .btn-pri, .btn-ok { transition: background .12s; } }
@@ -166,6 +179,7 @@
     <div class="lista" id="picker-lista"></div>
   </div>
 </div>
+<div id="motivo"><div class="caixa" id="motivo-caixa"></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -205,6 +219,8 @@ let REG = [];              // prod_registros da semana
 let SAL = {};              // local -> produto_id -> saldo
 let CHEGANDO = [];         // transferências liberadas para a Produção, com ._itens
 let EST_PROD = new Set();  // SA/PPP da lista da Produção (para o "outra SA")
+let OCOR = [], FECH = [];  // prod_ocorrencias / prod_fechamentos (SQL_PRODUCAO_OCORRENCIAS.sql)
+let SEM_OCOR = false;      // tabelas ainda não criadas: o tablet funciona, só não pergunta motivo
 
 let tela = { nome: 'hoje' };
 let emVoo = false;
@@ -341,6 +357,13 @@ async function carregar() {
       ITENS = its.filter(i => i.meta_final > 0);
     }
     REG = regs;
+    try {
+      [OCOR, FECH] = await Promise.all([
+        selAll('prod_ocorrencias', '*', q => q.gte('data', isoMais(SEMANA, -7)).lte('data', isoMais(SEMANA, 6))),
+        selAll('prod_fechamentos', '*', q => q.gte('data', isoMais(SEMANA, -7))),
+      ]);
+      SEM_OCOR = false;
+    } catch (e) { OCOR = []; FECH = []; SEM_OCOR = true; console.warn('ocorrências:', e.message); }
     const sal = await selAll('est_saldo_local', 'produto_id,local,saldo', q => q.in('local', locaisProd));
     SAL = {}; sal.forEach(s => { (SAL[s.local] ||= {})[s.produto_id] = Number(s.saldo) || 0; });
     const nomesProd = U.map(u => UNI_DO_LOCAL[u.local_producao]).filter(Boolean);
@@ -415,11 +438,12 @@ function prePreparos() {
 // ── desenho ─────────────────────────────────────────────────────
 function topoHtml() {
   const t = tela.nome;
-  if (['produzi', 'limpar'].includes(t)) {
-    const eb = t === 'limpar' ? 'Pré-preparo · Limpar e pesar' : 'Registrar produção';
+  if (['produzi', 'limpar', 'fechar'].includes(t)) {
+    const eb = t === 'limpar' ? 'Pré-preparo · Limpar e pesar' : t === 'fechar' ? 'Fim do expediente' : 'Registrar produção';
+    const tit = t === 'fechar' ? `Fechar o dia · ${diaSem(tela.dia)} ${ddmm(tela.dia)}` : nomeP(tela.pid);
     return `<div style="display:flex;align-items:center;gap:16px">
       <button class="btn-voltar" aria-label="Voltar" onclick="ir('hoje')"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
-      <div><div class="eyebrow">${eb}</div><div class="titulo">${esc(nomeP(tela.pid))}</div></div></div>`;
+      <div><div class="eyebrow">${eb}</div><div class="titulo">${esc(tit)}</div></div></div>`;
   }
   const nRec = CHEGANDO.length;
   const nEnt = U.reduce((s, u) => s + paraEntregar(u).length, 0);
@@ -439,7 +463,7 @@ function ir(nome, extra) {
 function pintar() {
   document.getElementById('topo').innerHTML = topoHtml();
   const c = document.getElementById('corpo');
-  const f = { hoje: telaHoje, semana: telaSemana, receber: telaReceber, entregar: telaEntregar, produzi: telaProduzi, limpar: telaLimpar }[tela.nome] || telaHoje;
+  const f = { hoje: telaHoje, semana: telaSemana, receber: telaReceber, entregar: telaEntregar, produzi: telaProduzi, limpar: telaLimpar, fechar: telaFechar }[tela.nome] || telaHoje;
   c.innerHTML = f();
 }
 
@@ -478,12 +502,13 @@ function telaHoje() {
       <div style="display:flex;justify-content:flex-end"><button class="btn-ok${fim ? ' feito' : ''}" onclick="abrirProduzi('${x.pid}')">${fim ? 'Concluído' : 'Produzi'}</button></div>
     </div>`;
   }).join('');
-  return `${faixa}
+  return `${faixaFechar()}${faixa}
     <div class="linha-tit"><h2>Planejado até hoje</h2><span class="sub">${concl} de ${lista.length} concluídos · produz junto, conta separado</span></div>
     ${lista.length ? `<div class="grade">${cards}</div>` : '<div class="vazio">Nada planejado para hoje. Veja a aba <b>Semana</b>.</div>'}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px">
       <span class="sub">Produziu algo fora do planejado de hoje?</span>
-      <button class="btn-sec" onclick="abrirPicker()">+ Registrar outra SA</button></div>`;
+      <button class="btn-sec" onclick="abrirPicker()">+ Registrar outra SA</button></div>
+    ${botaoFechar()}`;
 }
 
 function telaSemana() {
@@ -567,7 +592,21 @@ async function confirmarProduzi() {
   const t = tela, pid = t.pid, f = FIC[pid];
   const lotes = Object.entries(t.vals).map(([un, v]) => [un, lerNum(v)]).filter(([, q]) => q > 0);
   if (!lotes.length) return;
-  const resumo = lotes.map(([un, q]) => `${num(q)} ${unP(pid)} para o ${uniDe(un).rotulo}`).join('\n');
+  // Abaixo da meta: o motivo é pedido na hora, enquanto a pessoa lembra. "Vou fazer
+  // mais hoje" não grava nada; se o dia acabar assim, o Fechar o dia pergunta.
+  const motivos = {};
+  if (!SEM_OCOR) for (const [un, q] of lotes) {
+    const it = ITENS.find(i => i.produto_id === pid && i.unidade === un);
+    if (!it || it.dia > HOJE || temMotivo(it)) continue;
+    const total = feito(pid, un) + q;
+    if (total >= it.meta_final - 1e-9) continue;
+    const r = await perguntarMotivo(`${uniDe(un).rotulo}: ${num(total)} de ${num(it.meta_final)} ${unP(pid)}`,
+      `${nomeP(pid)} ficou abaixo da meta. Por quê?`, MOTIVOS_META, true);
+    if (!r) return;
+    if (r.motivo !== 'depois') motivos[un] = r;
+  }
+  const resumo = lotes.map(([un, q]) => `${num(q)} ${unP(pid)} para o ${uniDe(un).rotulo}` +
+    (motivos[un] ? ` (abaixo da meta: ${rotMotivo(motivos[un])})` : '')).join('\n');
   if (!confirm(`Registrar a produção de ${nomeP(pid)}?\n\n${resumo}\n\nOs insumos da ficha saem da Produção de cada unidade.`)) return;
   emVoo = true;
   try {
@@ -580,6 +619,13 @@ async function confirmarProduzi() {
       const { error } = await sb.from('prod_registros').insert({ data: HOJE, unidade: un, tipo: 'producao', produto_id: pid,
         quantidade: q, meta_item_id: it?.id || null, responsavel: quem() });
       if (error) { toast(`Não gravou (${error.message}). Nada foi alterado no ${u.rotulo}.`, 'erro'); continue; }
+      if (motivos[un] && it) {
+        const fe = feito(pid, un) + q;
+        const { error: eo } = await sb.from('prod_ocorrencias').insert({ data: HOJE, unidade: un, tipo: 'meta', produto_id: pid,
+          meta_item_id: it.id, meta: it.meta_final, feito: fe, diferenca: it.meta_final - fe,
+          motivo: motivos[un].motivo, obs: motivos[un].obs || null, responsavel: quem() });
+        if (eo) toast(`A produção gravou, mas o motivo não (${eo.message}). O Fechar o dia vai perguntar de novo.`, 'erro');
+      }
       const base = { origem: 'producao', responsavel: quem(), data: HOJE, motivo: `Produção ${ddmm(HOJE)} ${hora} (${u.rotulo}): ${num(q)} ${unP(pid)} de ${nomeP(pid)}` };
       for (const [ing, qq] of (INGS[f.id] || [])) {
         const c = q * qq / f.rend;
@@ -674,6 +720,181 @@ async function confirmarLimpar() {
       await movimentar({ ...base, produto_id: ppp, local: u.local_producao, tipo: 'producao_entrada', quantidade: deu });
     }
     toast('Limpeza registrada ✅');
+    tela = { nome: 'hoje' };
+    await carregar();
+  } finally { emVoo = false; }
+}
+
+// ── OCORRÊNCIAS: MOTIVO E FECHAR O DIA ──────────────────────────
+// Pedido do Wagner (08/10/2026): meta não batida e MP que sobra diferente do
+// esperado precisam de motivo, com histórico para Compras (Produção › Ocorrências
+// no computador). O motivo é pedido no Produzi; o Fechar o dia pega o que ficou
+// sem motivo e a contagem da MP que sobrou na Produção de cada unidade.
+const MOTIVOS_META = [['faltou_tempo', 'Faltou tempo'], ['faltou_mp', 'Faltou MP'], ['produto_ruim', 'MP com problema'],
+  ['perda', 'Perda acima do normal'], ['ficha', 'Ficha desatualizada'], ['processo', 'Falha no processo'], ['outro', 'Outro motivo']];
+// MP: contou MENOS do que o sistema esperava = usou mais do que a ficha
+const MOTIVOS_MP_MENOS = [['perda', 'Perda acima do normal'], ['ficha', 'Ficha desatualizada'], ['produto_ruim', 'MP com problema (jogou fora)'],
+  ['processo', 'Falha no processo'], ['outro', 'Outro motivo']];
+// MP: contou MAIS = usou menos do que a ficha, ou o sistema não viu uma entrada
+const MOTIVOS_MP_MAIS = [['ficha', 'Ficha desatualizada'], ['registro', 'Produção registrada a mais'],
+  ['sem_receber', 'MP chegou sem registrar no tablet'], ['outro', 'Outro motivo']];
+const ROT_MOTIVO = Object.fromEntries([...MOTIVOS_META, ...MOTIVOS_MP_MENOS, ...MOTIVOS_MP_MAIS]);
+const rotMotivo = m => (m.motivo === 'outro' && m.obs) ? m.obs : (ROT_MOTIVO[m.motivo] || m.motivo);
+const temMotivo = it => OCOR.some(o => o.tipo === 'meta' && o.meta_item_id === it.id);
+const fechado = (dia, un) => FECH.some(f => f.data === dia && f.unidade === un);
+// diferença de contagem que já pede motivo: meia unidade, ou 3% (mínimo 50 g / 50 ml)
+const tolQ = (pid, ref) => ehInteiro(pid) ? 0.5 : Math.max(0.05, Math.abs(ref || 0) * 0.03);
+
+function perguntarMotivo(titulo, sub, opcoes, comDepois) {
+  return new Promise(res => {
+    const box = document.getElementById('motivo');
+    window._motivoFim = v => { box.style.display = 'none'; res(v); };
+    document.getElementById('motivo-caixa').innerHTML = `<div class="t">${esc(titulo)}</div><div class="sub">${esc(sub)}</div>
+      <div class="motivos">${opcoes.map(([c, r]) => `<button class="mot" onclick="_motivoEscolha('${c}')">${esc(r)}</button>`).join('')}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn-sec" style="border-color:var(--borda2);color:var(--tinta2)" onclick="_motivoFim(null)">Voltar</button>
+        ${comDepois ? '<button class="btn-sec" onclick="_motivoFim({motivo:\'depois\'})">Vou fazer mais hoje</button>' : ''}</div>`;
+    box.style.display = 'flex';
+  });
+}
+function _motivoEscolha(c) {
+  let obs = null;
+  if (c === 'outro') { obs = (prompt('Qual foi o motivo?') || '').trim(); if (!obs) return; }
+  window._motivoFim({ motivo: c, obs });
+}
+
+// Último dia de produção antes de hoje (seg a sex) e se ficou sem fechar
+function diaAnteriorProducao() {
+  let d = isoMais(HOJE, -1);
+  while (![1, 2, 3, 4, 5].includes(new Date(d + 'T12:00:00').getDay())) d = isoMais(d, -1);
+  return d;
+}
+function teveDia(dia, un) {
+  return REG.some(r => r.data === dia && r.unidade === un) || ITENS.some(i => i.dia === dia && i.unidade === un);
+}
+function faixaFechar() {
+  if (SEM_OCOR) return '';
+  const d = diaAnteriorProducao();
+  if (d < SEMANA || !U.some(u => teveDia(d, u.unidade) && !fechado(d, u.unidade))) return '';
+  return `<div class="faixa"><div><div class="t">O dia ${diaSem(d)} ${ddmm(d)} não foi fechado</div>
+    <div class="sub">Falta dizer o motivo do que não bateu e contar a MP que sobrou.</div></div>
+    <button class="btn-faixa" onclick="ir('fechar', { dia: '${d}' })">Fechar ${diaSem(d)} ${ddmm(d)}</button></div>`;
+}
+function botaoFechar() {
+  if (SEM_OCOR) return '';
+  const feitoHoje = U.every(u => fechado(HOJE, u.unidade));
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px;padding-top:14px;border-top:1px solid var(--borda)">
+    <span class="sub">${feitoHoje ? 'O dia de hoje já foi fechado. Dá para fechar de novo se produziu mais depois.' : 'No fim do expediente: o que não bateu e a contagem da MP que sobrou.'}</span>
+    <button class="btn-pri" onclick="ir('fechar', { dia: HOJE })">${feitoHoje ? 'Fechar de novo' : 'Fechar o dia'}</button></div>`;
+}
+
+// SA do dia (ou atrasada) abaixo da meta e ainda sem motivo
+function pendentesMeta(dia) {
+  return ITENS.filter(i => i.dia <= dia && i.meta_final - feito(i.produto_id, i.unidade) > 1e-9 && !temMotivo(i))
+    .sort((a, b) => nomeP(a.produto_id).localeCompare(nomeP(b.produto_id)));
+}
+// MP e pré-preparo que o sistema acha que estão na Produção da unidade
+function mpParaContar(u) {
+  return Object.entries(SAL[u.local_producao] || {})
+    .filter(([pid, s]) => Math.abs(s) > 1e-6 && ['MP', 'PPP'].includes(P[pid]?.tipo))
+    .map(([pid, s]) => ({ pid, esperado: s }))
+    .sort((a, b) => nomeP(a.pid).localeCompare(nomeP(b.pid)));
+}
+
+function telaFechar() {
+  if (SEM_OCOR) return '<div class="vazio">Falta rodar o SQL_PRODUCAO_OCORRENCIAS.sql para o Fechar o dia funcionar.</div>';
+  const t = tela, dia = t.dia;
+  t.mot ||= {}; t.cont ||= {};
+  const chips = (chave, opcoes) => `<div class="motivos">${opcoes.map(([c, r]) =>
+    `<button class="mot${t.mot[chave]?.motivo === c ? ' sel' : ''}" data-mot="${esc(chave)}" data-cod="${c}" onclick="marcarMotivo('${esc(chave)}','${c}')">${esc(c === 'outro' && t.mot[chave]?.motivo === 'outro' && t.mot[chave].obs ? t.mot[chave].obs : r)}</button>`).join('')}</div>`;
+  const pend = pendentesMeta(dia);
+  const blocoMeta = pend.length ? `<div class="linha-tit"><h2>Meta que não bateu</h2><span class="sub">diga o motivo de cada uma</span></div>` +
+    pend.map(i => {
+      const u = uniDe(i.unidade), fe = feito(i.produto_id, i.unidade);
+      return `<div class="fech-linha"><div class="topo-l">${chip(u)}<div class="meio"><b>${esc(nomeP(i.produto_id))}</b>
+        <span>feito ${num(fe)} de ${num(i.meta_final)} ${esc(unP(i.produto_id))}${i.dia < dia ? ` · era de ${diaSem(i.dia)} ${ddmm(i.dia)}` : ''}</span></div></div>
+        ${chips('meta|' + i.id, MOTIVOS_META)}</div>`;
+    }).join('') : '';
+  const blocosMp = U.map(u => {
+    const lista = mpParaContar(u);
+    if (!lista.length) return '';
+    return `<div class="bloco${u.ordem === 2 ? ' u2' : ''}"><div class="cab"><div><div class="t">${esc(u.rotulo)}</div>
+      <div class="sub">Conte o que sobrou na Produção e digite. Se acabou, digite 0.</div></div></div>` +
+      lista.map(x => {
+        const k = 'mp|' + u.unidade + '|' + x.pid, v = t.cont[k] ?? '';
+        const dif = v === '' ? 0 : lerNum(v) - Math.max(0, x.esperado);
+        const pede = v !== '' && Math.abs(dif) > tolQ(x.pid, x.esperado);
+        return `<div class="fech-linha" data-linha="${esc(k)}"><div class="topo-l"><div class="meio"><b>${esc(nomeP(x.pid))}</b>
+          <span>o sistema espera ${numP(Math.max(0, x.esperado))} ${esc(unP(x.pid))}${x.esperado < -1e-6 ? ` (usou ${numP(-x.esperado)} sem receber)` : ''}</span></div>
+          <input class="qtd-in" inputmode="decimal" data-cont="${esc(k)}" value="${esc(v)}" placeholder="?" aria-label="Quanto sobrou de ${esc(nomeP(x.pid))}"
+            onchange="contou(this)"></div>
+          ${pede ? `<div class="pede">${dif < 0 ? `Sobrou ${numP(-dif)} ${esc(unP(x.pid))} a menos do que o esperado: usou mais. Por quê?` : `Sobrou ${numP(dif)} ${esc(unP(x.pid))} a mais do que o esperado. Por quê?`}</div>
+            ${chips(k, dif < 0 ? MOTIVOS_MP_MENOS : MOTIVOS_MP_MAIS)}` : ''}</div>`;
+      }).join('') + '</div>';
+  }).join('');
+  const nada = !pend.length && !blocosMp;
+  return `${blocoMeta}
+    ${blocosMp ? `<div class="linha-tit"><h2>MP que sobrou</h2><span class="sub">a contagem corrige o estoque da Produção</span></div>${blocosMp}` : ''}
+    ${nada ? '<div class="vazio">Tudo certo: nenhuma meta sem motivo e nenhuma MP parada na Produção.</div>' : ''}
+    <div style="display:flex;justify-content:flex-end"><button class="btn-pri" onclick="confirmarFechar()">Fechar o dia ${diaSem(dia)} ${ddmm(dia)}</button></div>`;
+}
+function contou(inp) {
+  tela.cont[inp.dataset.cont] = inp.value.trim();
+  pintar();
+}
+function marcarMotivo(chave, cod) {
+  let obs = null;
+  if (cod === 'outro') { obs = (prompt('Qual foi o motivo?', tela.mot[chave]?.obs || '') || '').trim(); if (!obs) return; }
+  tela.mot[chave] = { motivo: cod, obs };
+  document.querySelectorAll('[data-cont]').forEach(i => { tela.cont[i.dataset.cont] = i.value.trim(); });
+  pintar();
+}
+
+async function confirmarFechar() {
+  if (emVoo) return;
+  const t = tela, dia = t.dia;
+  document.querySelectorAll('[data-cont]').forEach(i => { t.cont[i.dataset.cont] = i.value.trim(); });
+  const pend = pendentesMeta(dia);
+  const semMot = pend.filter(i => !t.mot['meta|' + i.id]);
+  if (semMot.length) { toast(`Falta o motivo de ${semMot.length} SA que não bateu a meta.`, 'erro'); return; }
+  const contagens = [];
+  for (const u of U) for (const x of mpParaContar(u)) {
+    const k = 'mp|' + u.unidade + '|' + x.pid, v = t.cont[k];
+    if (v === undefined || v === '' || isNaN(Number(String(v).replace(',', '.'))) || lerNum(v) < 0) {
+      toast(`Conte e digite quanto sobrou de ${nomeP(x.pid)} (${u.rotulo}). Se acabou, digite 0.`, 'erro'); return;
+    }
+    const contado = lerNum(v), dif = contado - Math.max(0, x.esperado);
+    if (Math.abs(dif) > tolQ(x.pid, x.esperado) && !t.mot[k]) { toast(`Falta o motivo da diferença de ${nomeP(x.pid)} (${u.rotulo}).`, 'erro'); return; }
+    contagens.push({ u, ...x, contado, mot: t.mot[k] });
+  }
+  const nDif = contagens.filter(c => Math.abs(c.contado - Math.max(0, c.esperado)) > tolQ(c.pid, c.esperado)).length;
+  if (!confirm(`Fechar o dia ${diaSem(dia)} ${ddmm(dia)}?\n\n${pend.length} SA abaixo da meta com motivo\n${contagens.length} MP contadas` +
+    (nDif ? ` (${nDif} com diferença)` : '') + '\n\nA contagem passa a ser o estoque da Produção.')) return;
+  emVoo = true;
+  try {
+    if (!await garantirSessao()) return;
+    const linhas = pend.map(i => {
+      const fe = feito(i.produto_id, i.unidade), m = t.mot['meta|' + i.id];
+      return { data: dia, unidade: i.unidade, tipo: 'meta', produto_id: i.produto_id, meta_item_id: i.id, meta: i.meta_final,
+               feito: fe, diferenca: i.meta_final - fe, motivo: m.motivo, obs: m.obs || null, responsavel: quem() };
+    });
+    for (const c of contagens) {
+      const d = c.contado - c.esperado;          // ajuste do saldo (o negativo também volta para o contado)
+      if (Math.abs(d) > 1e-6) await movimentar({ produto_id: c.pid, local: c.u.local_producao, tipo: 'ajuste', quantidade: d,
+        origem: 'producao', responsavel: quem(), data: dia,
+        motivo: `Fechar o dia ${ddmm(dia)} (${c.u.rotulo}): contou ${numP(c.contado)}, sistema ${numP(c.esperado)}` });
+      const dif = c.contado - Math.max(0, c.esperado);
+      if (c.mot && Math.abs(dif) > tolQ(c.pid, c.esperado)) linhas.push({ data: dia, unidade: c.u.unidade, tipo: 'mp', produto_id: c.pid,
+        esperado: c.esperado, contado: c.contado, diferenca: dif, motivo: c.mot.motivo, obs: c.mot.obs || null, responsavel: quem() });
+    }
+    if (linhas.length) {
+      const { error } = await sb.from('prod_ocorrencias').insert(linhas);
+      if (error) { toast('O estoque foi corrigido, mas os motivos não gravaram: ' + error.message, 'erro'); return; }
+    }
+    const { error: ef } = await sb.from('prod_fechamentos').upsert(U.map(u => ({ data: dia, unidade: u.unidade, responsavel: quem() })),
+      { onConflict: 'data,unidade' });
+    if (ef) { toast('Os motivos gravaram, mas o fechamento não: ' + ef.message, 'erro'); return; }
+    toast(`Dia ${ddmm(dia)} fechado ✅`);
     tela = { nome: 'hoje' };
     await carregar();
   } finally { emVoo = false; }

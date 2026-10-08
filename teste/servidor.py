@@ -30,7 +30,8 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(AQUI)
 BASE = os.path.join(AQUI, 'base')
-DADOS = os.path.join(AQUI, 'dados')
+# DADOS_TESTE: outra pasta = outra copia independente (ex.: a do Claude testar sem mexer na sua)
+DADOS = os.path.join(AQUI, os.environ.get('DADOS_TESTE', 'dados'))
 PORTA = int(os.environ.get('PORTA', '8090'))
 LOCK = threading.RLock()
 
@@ -39,6 +40,7 @@ UNICOS = {
     'est_saldo_local': [('produto_id', 'local')],
     'prod_metas': [('unidade', 'semana_ini')],
     'prod_venda_sa_dia': [('data', 'unidade', 'produto_id')],
+    'prod_fechamentos': [('data', 'unidade')],
 }
 
 # ───────────────────────── dados ─────────────────────────

@@ -7,6 +7,7 @@ gravado no banco: so GET. O servidor de teste (teste/servidor.py) trabalha em
 cima desta copia; "Recomecar do zero" na barra laranja volta para ela.
 
 Uso:  python3 teste/copiar_dados.py
+      python3 teste/copiar_dados.py --so-esquema   (depois de um SQL que cria tabela)
 """
 import datetime as dt
 import json
@@ -119,5 +120,27 @@ def main():
     print('Copia pronta em teste/base/')
 
 
+def so_esquema():
+    """Depois de rodar um SQL que cria tabela nova: atualiza so a lista de tabelas e
+    colunas da copia (base/ e dados*/), sem apagar o que foi feito no teste."""
+    spec = json.load(urllib.request.urlopen(urllib.request.Request(URL + '/rest/v1/', headers=H), timeout=120))
+    schema = {}
+    for t, d in spec.get('definitions', {}).items():
+        props = d.get('properties', {})
+        schema[t] = {'cols': {c: {'type': v.get('type'), 'format': v.get('format'), 'default': v.get('default')} for c, v in props.items()},
+                     'pk': [c for c, v in props.items() if 'Primary Key' in (v.get('description') or '')]}
+    pastas = [BASE] + [os.path.join(AQUI, n) for n in os.listdir(AQUI) if n.startswith('dados') and os.path.isdir(os.path.join(AQUI, n))]
+    for pasta in pastas:
+        antigo = json.load(open(os.path.join(pasta, '_schema.json')))
+        novas = [t for t in schema if t not in antigo]
+        json.dump(schema, open(os.path.join(pasta, '_schema.json'), 'w'), ensure_ascii=False)
+        for t in novas:
+            f = os.path.join(pasta, t + '.json')
+            if not os.path.exists(f):
+                json.dump([], open(f, 'w'))
+        print(f'{os.path.basename(pasta)}: tabelas novas {novas or "nenhuma"}')
+    print('Reinicie o servidor de teste para ele enxergar.')
+
+
 if __name__ == '__main__':
-    main()
+    so_esquema() if '--so-esquema' in sys.argv else main()
