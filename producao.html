@@ -470,7 +470,7 @@ function telaHoje() {
       const v = x.porUni[u.unidade];
       const pct = v.meta > 0 ? Math.min(100, v.feito / v.meta * 100) : 100;
       return `<div class="uni-linha">${chip(u)}<div class="barra"><div style="width:${pct}%;background:${corBarra(u, v.falta <= 0)}"></div></div>
-        <span class="num-feito"><strong>${num(v.feito)}</strong> de ${num(v.meta)}</span></div>`;
+        <span class="num-feito"><strong>${num(v.feito)}</strong> de ${num(v.meta)} ${esc(unP(x.pid))}</span></div>`;
     }).join('');
     return `<div class="card${fim ? ' ok' : ''}">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><span class="nome">${esc(nomeP(x.pid))}</span><span class="status ${st[0]}">${st[1]}</span></div>
@@ -492,7 +492,8 @@ function telaSemana() {
   const rows = lista.map(x => `<tr>
       <td><b>${esc(nomeP(x.pid))}</b></td>
       <td>${x.dia ? `${diaSem(x.dia)} ${ddmm(x.dia)}` : '—'}</td>
-      ${U.map(u => { const v = x.porUni[u.unidade]; return `<td>${v ? `<b>${num(v.feito)}</b> de ${num(v.meta)}${v.falta <= 0 ? ' ✓' : ''}` : '—'}</td>`; }).join('')}
+      ${U.map(u => { const v = x.porUni[u.unidade]; return `<td>${v ? `<b>${num(v.feito)}</b> de ${num(v.meta)} <span class="sub">${esc(unP(x.pid))}</span>${v.falta <= 0 ? ' ✓' : ''}${
+        v.item.dia && v.item.dia !== x.dia ? `<div class="sub">${diaSem(v.item.dia)} ${ddmm(v.item.dia)}</div>` : ''}` : '—'}</td>`; }).join('')}
       <td><button class="btn-sec" style="min-height:46px" onclick="abrirProduzi('${x.pid}')">Produzi</button></td></tr>`).join('');
   return `<div class="linha-tit"><h2>Meta da semana</h2><span class="sub">feito de meta, por unidade</span></div>
     <div style="overflow-x:auto"><table class="sem"><thead><tr><th>SA</th><th>Dia</th>${U.map(u => `<th>${esc(u.rotulo)}</th>`).join('')}<th></th></tr></thead>
