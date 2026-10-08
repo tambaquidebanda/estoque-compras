@@ -565,7 +565,7 @@ function telaSemana() {
       const pctTot = Math.round(linhas.reduce((t, l) => t + l.pct, 0) / linhas.length);
       const [cls, sit] = fim ? ['ok', 'Executado ✓'] : atras ? ['atras', comecou ? `Atrasado · ${pctTot}%` : 'Atrasado']
         : comecou ? ['andando', `Em produção · ${pctTot}%`] : ['pend', 'Pendente'];
-      return `<button class="cal-sa ${cls}" onclick="abrirProduzi('${pid}')" aria-label="Produzi ${esc(nomeP(pid))}">
+      return `<button class="cal-sa ${cls}" onclick="abrirProduzi('${pid}','${dia}')" aria-label="Produzi ${esc(nomeP(pid))}">
         <span class="n">${esc(nomeP(pid).replace(/^SA /, ''))}</span>
         ${linhas.map(l => `<span class="q">${chip(l.u)}<span><b>${num(l.fe)}</b> de ${num(l.it.meta_final)} ${esc(unP(pid))}${l.fim ? ' ✓' : ''}</span></span>
           <span class="barra"><div style="width:${l.pct}%;background:${corBarra(l.u, l.fim)}"></div></span>`).join('')}
@@ -587,12 +587,25 @@ function telaSemana() {
 }
 
 // ── PRODUZI ─────────────────────────────────────────────────────
-function abrirProduzi(pid) {
+// Só as lojas do dia: pela aba Hoje, o que está planejado até hoje; pelo calendário,
+// o dia tocado. A loja que faz essa SA outro dia fica num botão "Incluir" (Wagner,
+// 08/10: na sexta aparecia a Batata do P10, que é de segunda).
+function abrirProduzi(pid, dia) {
   if (P[pid]?.tipo === 'PPP') { abrirLimpar(pid); return; }
   if (!FIC[pid]) { toast(`${nomeP(pid)} está sem ficha técnica: não dá para saber o que sai.`, 'erro'); return; }
-  const unis = U.filter(u => ITENS.some(i => i.produto_id === pid && i.unidade === u.unidade));
-  const vals = {}; (unis.length ? unis : U).forEach(u => { vals[u.unidade] = ''; });
-  ir('produzi', { pid, vals, ativo: Object.keys(vals)[0] });
+  const its = ITENS.filter(i => i.produto_id === pid);
+  let doDia = its.filter(i => dia ? i.dia === dia : i.dia <= HOJE).map(i => i.unidade);
+  if (!doDia.length) doDia = its.length ? its.map(i => i.unidade) : U.map(u => u.unidade);
+  const vals = {};
+  U.filter(u => doDia.includes(u.unidade)).forEach(u => { vals[u.unidade] = ''; });
+  const adiantar = its.filter(i => !doDia.includes(i.unidade)).map(i => ({ un: i.unidade, dia: i.dia }));
+  ir('produzi', { pid, vals, ativo: Object.keys(vals)[0], adiantar });
+}
+function adiantarUni(un) {
+  tela.vals[un] = '';
+  tela.adiantar = (tela.adiantar || []).filter(a => a.un !== un);
+  tela.ativo = un;
+  pintar();
 }
 function teclado() {
   return `<div class="teclado">${['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '⌫'].map(k =>
@@ -638,7 +651,8 @@ function telaProduzi() {
     return q > 0 && (INGS[f.id] || []).some(([ing, qq]) => qq > 0 && saldo(u.local_producao, ing) - q * qq / f.rend < -0.0001);
   });
   return `<div class="duas">
-    <div class="esq"><span style="font-size:18px;font-weight:700">Quanto ficou para cada unidade?</span>${campos}${teclado()}</div>
+    <div class="esq"><span style="font-size:18px;font-weight:700">Quanto ficou para cada unidade?</span>${campos}${(t.adiantar || []).map(a =>
+      `<button class="btn-sec" onclick="adiantarUni('${esc(a.un)}')">+ Incluir ${esc(uniDe(a.un)?.rotulo || a.un)} (planejado para ${diaSem(a.dia)} ${ddmm(a.dia)})</button>`).join('')}${teclado()}</div>
     <div class="dir">
       <div class="painel"><span style="font-size:18px;font-weight:700">Pela ficha, sai da Produção de cada unidade:</span>${blocos}</div>
       ${neg ? '<div class="aviso">Algum item vai ficar negativo: a Produção não tem esse insumo registrado (falta receber a MP ou registrar o pré-preparo).</div>' : ''}
