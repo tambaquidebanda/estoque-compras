@@ -498,6 +498,9 @@ h1 {
 .meta-ajuste { width: 76px; margin: 0 auto; text-align: center; background: #fffaf0; }
 .meta-final { font-weight: 800; color: #0e6b68; font-size: 1.02rem; white-space: nowrap; }
 .meta-dia { width: auto; min-width: 118px; }
+.meta-param { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; }
+.meta-param input[type="date"] { width: auto; }
+.meta-margem-box { width: 96px; }
 .meta-falta-fds { color: #b42318; font-weight: 700; }
 .meta-falta-fds .badge { background: #fde7e4; color: #b42318; font-weight: 700; margin-left: 4px; }
 .meta-rodape td { background: #f7f9f8; color: #4f5c58; font-size: .85rem; }

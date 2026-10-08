@@ -15798,6 +15798,12 @@ let _metaUn = 'Centro';
 let _metaSemana = null;
 let _metaD = null;              // tudo que a tela precisa da semana carregada
 let _metaMostrarCobre = false;
+// Período de venda e margem que o usuário trocou nesta tela, por unidade:
+// { ini, fim, margem }. Sem troca vale o rascunho salvo, e sem rascunho o padrão.
+let _metaParam = {};
+let _metaManter = null;         // ajustes/dias ainda não salvos, para sobreviver ao recálculo
+const _META_MARGEM_PADRAO = 0.25;
+const _metaPeriodoPadrao = semana => ({ ini: _isoMais(semana, -29), fim: _isoMais(semana, -2) });   // 4 semanas, até a quarta
 
 function _isoMais(iso, n) {
   const d = new Date(iso + 'T12:00:00');
@@ -15854,17 +15860,29 @@ async function carregarMetaProducao() {
 
 async function _metaCarregar(semana) {
   await carregarProdutosFT();
-  const vIni = _isoMais(semana, -29), vFim = _isoMais(semana, -2);   // 4 semanas, até a quarta
-  const unidades = await _metaSelect('prod_unidades', '*', q => q.order('ordem'));
+  const [unidades, metas] = await Promise.all([
+    _metaSelect('prod_unidades', '*', q => q.order('ordem')),
+    _metaSelect('prod_metas', '*', q => q.eq('semana_ini', semana)),
+  ]);
   if (!unidades.length) throw new Error('prod_unidades está vazia');
+  // Período e margem de cada unidade: o que o usuário trocou na tela > rascunho salvo > padrão
+  const padrao = _metaPeriodoPadrao(semana);
+  const param = {};
+  unidades.forEach(u => {
+    const m = metas.find(x => x.unidade === u.unidade);
+    const salvo = m ? { ini: m.venda_ini, fim: m.venda_fim, margem: Number(m.margem) } : {};
+    param[u.unidade] = m?.status === 'aprovada' ? { ...padrao, margem: _META_MARGEM_PADRAO, ...salvo }
+      : { ...padrao, margem: _META_MARGEM_PADRAO, ...salvo, ..._metaParam[u.unidade] };
+  });
+  const vIni = Object.values(param).map(x => x.ini).sort()[0];
+  const vFim = Object.values(param).map(x => x.fim).sort().pop();
   const locais = [...new Set(unidades.flatMap(u => [...(u.locais_tem || []), u.local_mp, u.local_producao]))];
-  const [vendas, saldos, fichas, ings, cfg, metas] = await Promise.all([
+  const [vendas, saldos, fichas, ings, cfg] = await Promise.all([
     _metaSelect('prod_venda_sa_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
     _metaSelect('est_saldo_local', 'produto_id,local,saldo', q => q.in('local', locais)),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
     _metaSelect('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos'])),
-    _metaSelect('prod_metas', '*', q => q.eq('semana_ini', semana)),
   ]);
   const ids = metas.map(m => m.id);
   const salvos = ids.length ? await _metaSelect('prod_meta_itens', '*', q => q.in('meta_id', ids)) : [];
@@ -15886,6 +15904,8 @@ async function _metaCarregar(semana) {
   const venda = {}, diasCom = {};
   const dow = iso => new Date(iso + 'T12:00:00').getDay();
   vendas.forEach(v => {
+    const p = param[v.unidade];
+    if (!p || v.data < p.ini || v.data > p.fim) return;      // fora do período desta unidade
     const m = ((venda[v.unidade] ||= {})[v.produto_id] ||= [0, 0, 0, 0, 0, 0, 0]);
     m[dow(v.data)] += Number(v.quantidade) || 0;
     (diasCom[v.unidade] ||= new Set()).add(v.data);
@@ -15919,7 +15939,8 @@ async function _metaCarregar(semana) {
   const linhas = {};
   unidades.forEach(u => {
     const meta = metas.find(m => m.unidade === u.unidade) || null;
-    const margem = meta ? Number(meta.margem) : 0.25;
+    const { ini: lIni, fim: lFim, margem } = param[u.unidade];
+    const manter = _metaManter?.[u.unidade] || {};
     const doMeta = {};
     if (meta) salvos.filter(i => i.meta_id === meta.id).forEach(i => { doMeta[i.produto_id] = i; });
     const num = v => v === null || v === undefined ? null : Number(v);
@@ -15930,20 +15951,70 @@ async function _metaCarregar(semana) {
     } else {
       arr = [...universo].map(pid => {
         const md = mediaDia(u.unidade, pid);
-        const fds = md[4] + md[5] + md[6] + md[0];                  // qui sex sáb dom
-        const vendeu  = md.reduce((a, b) => a + b, 0);              // seg a dom
-        const precisa = vendeu * (1 + margem);
         const tem = (u.locais_tem || []).reduce((t, l) => t + Math.max(0, saldo[l]?.[pid] || 0), 0);
-        const s = doMeta[pid];
-        return { pid, vendeu, fds, precisa, tem, meta: _metaArred(pid, precisa - Math.max(0, tem - fds)),
-                 ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
+        const s = manter[pid] || doMeta[pid];
+        return { pid, md, tem, ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
       });
     }
-    linhas[u.unidade] = { u, meta, margem, arr };
+    linhas[u.unidade] = { u, meta, margem, vIni: lIni, vFim: lFim, arr };
+    if (meta?.status !== 'aprovada') _metaRecalc(linhas[u.unidade]);
   });
-  const D = { semana, vIni, vFim, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds };
+  _metaManter = null;
+  const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds };
   _metaSugerirDias(D);
   return D;
+}
+
+// Conta de cada SA a partir da média de cada dia da semana (l.md) e da margem.
+function _metaRecalc(L) {
+  L.arr.forEach(l => {
+    const md = l.md;
+    l.fds = md[4] + md[5] + md[6] + md[0];                  // qui sex sáb dom
+    l.vendeu = md.reduce((a, b) => a + b, 0);               // seg a dom
+    l.precisa = l.vendeu * (1 + L.margem);
+    l.meta = _metaArred(l.pid, l.precisa - Math.max(0, l.tem - l.fds));
+  });
+}
+
+// Período de venda e margem: editáveis na tela; o padrão é só sugestão.
+function _metaGuardarRascunhoTela() {
+  _metaManter = {};
+  Object.entries(_metaD?.linhas || {}).forEach(([un, L]) => {
+    if (L.meta?.status === 'aprovada') return;
+    const m = (_metaManter[un] = {});
+    L.arr.forEach(l => { if (l.ajuste !== null || l.dia) m[l.pid] = { ajuste: l.ajuste, dia: l.dia }; });
+  });
+}
+function metaPeriodo() {
+  const L = _metaD?.linhas[_metaUn];
+  if (!L || L.meta?.status === 'aprovada') return;
+  const ini = document.getElementById('meta-vini').value, fim = document.getElementById('meta-vfim').value;
+  const volta = () => { document.getElementById('meta-vini').value = L.vIni; document.getElementById('meta-vfim').value = L.vFim; };
+  if (!ini || !fim || ini > fim) { toast('Período inválido: a data inicial tem que vir antes da final.', 'erro'); volta(); return; }
+  const dias = Math.round((new Date(fim + 'T12:00:00') - new Date(ini + 'T12:00:00')) / 864e5) + 1;
+  if (dias < 7) { toast('Use pelo menos 7 dias: a conta precisa de cada dia da semana.', 'erro'); volta(); return; }
+  if (fim >= hojeLocal()) { toast('A venda de hoje ainda não fechou: termine o período ontem ou antes.', 'erro'); volta(); return; }
+  _metaParam[_metaUn] = { ...(_metaParam[_metaUn] || {}), ini, fim };
+  _metaGuardarRascunhoTela();
+  carregarMetaProducao();
+}
+function metaMargem(txt) {
+  const L = _metaD?.linhas[_metaUn];
+  if (!L || L.meta?.status === 'aprovada') return;
+  const v = Number(String(txt).replace(',', '.'));
+  if (!(v >= 0 && v <= 200)) { toast('Margem: use um número de 0 a 200.', 'erro'); _pintarMeta(); return; }
+  L.margem = v / 100;
+  _metaParam[_metaUn] = { ...(_metaParam[_metaUn] || {}), margem: L.margem };
+  _metaRecalc(L);
+  _metaSugerirDias(_metaD);
+  _pintarMeta();
+}
+function metaParamPadrao() {
+  const L = _metaD?.linhas[_metaUn];
+  if (!L || L.meta?.status === 'aprovada') return;
+  _metaParam[_metaUn] = { ..._metaPeriodoPadrao(_metaD.semana), margem: _META_MARGEM_PADRAO };
+  _metaGuardarRascunhoTela();
+  carregarMetaProducao();
 }
 
 // Dia sugerido: o último dia de produção ANTES de a sobra da segunda acabar, com
@@ -15977,7 +16048,7 @@ function _metaSugerirDias(D) {
   });
 }
 
-function metaMudarSemana(n) { _metaSemana = _isoMais(_metaSemana || _proximaSexta(hojeLocal()), n); carregarMetaProducao(); }
+function metaMudarSemana(n) { _metaSemana = _isoMais(_metaSemana || _proximaSexta(hojeLocal()), n); _metaParam = {}; carregarMetaProducao(); }
 function metaTrocarUnidade(un) { _metaUn = un; _metaMostrarCobre = false; _pintarMeta(); }
 function metaMostrarCobre() { _metaMostrarCobre = !_metaMostrarCobre; _pintarMeta(); }
 
@@ -16048,9 +16119,19 @@ function _pintarMeta() {
   document.getElementById('meta-eyebrow').style.color = u.ordem === 2 ? '#8a4513' : '';
   document.getElementById('meta-titulo').textContent = `Produzir de sexta ${_ddmm(D.semana)} a quinta ${_ddmm(_isoMais(D.semana, 6))}`;
   document.getElementById('meta-base').textContent =
-    `Venda média de cada dia do ${u.rotulo} (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). O estoque de quinta (${rotLocais}) segura ` +
-    `qui→dom; a produção entra na venda na segunda ${_ddmm(_isoMais(D.semana, 3))} e cobre seg→dom + ${pct}%.`;
+    `Venda média de cada dia da semana no período abaixo. O estoque de quinta (${rotLocais}) segura ` +
+    `qui→dom; a produção entra na venda na segunda ${_ddmm(_isoMais(D.semana, 3))} e cobre seg→dom + margem.`;
   document.getElementById('meta-margem-lbl').textContent = pct;
+  const pad = _metaPeriodoPadrao(D.semana);
+  const ehPadrao = L.vIni === pad.ini && L.vFim === pad.fim && Math.abs(L.margem - _META_MARGEM_PADRAO) < 1e-9;
+  const nDiasPer = Math.round((new Date(L.vFim + 'T12:00:00') - new Date(L.vIni + 'T12:00:00')) / 864e5) + 1;
+  ['meta-vini', 'meta-vfim', 'meta-margem'].forEach(id => { document.getElementById(id).disabled = aprovada; });
+  document.getElementById('meta-vini').value = L.vIni;
+  document.getElementById('meta-vfim').value = L.vFim;
+  document.getElementById('meta-vini').max = document.getElementById('meta-vfim').max = _isoMais(hojeLocal(), -1);
+  document.getElementById('meta-margem').value = Math.round(L.margem * 1000) / 10;
+  document.getElementById('meta-ndias').textContent = `(${nDiasPer} dias)`;
+  document.getElementById('meta-param-padrao').classList.toggle('d-none', aprovada || ehPadrao);
 
   const st = document.getElementById('meta-status');
   if (aprovada) {
@@ -16071,7 +16152,8 @@ function _pintarMeta() {
 
   const avisos = [];
   const nd = D.diasCom[u.unidade]?.size || 0;
-  if (!aprovada && nd < 28) avisos.push(`Só <strong>${nd} dos 28 dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). A média de cada dia usa só os dias gravados; se faltar o dia mais recente, rode o robô "Venda de SA por dia" no GitHub.`);
+  if (!aprovada && nd < nDiasPer) avisos.push(`Só <strong>${nd} dos ${nDiasPer} dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(L.vIni)} a ${_ddmm(L.vFim)}). A média de cada dia usa só os dias gravados; se faltar o dia mais recente, rode o robô "Venda de SA por dia" no GitHub.`);
+  if (!aprovada && nDiasPer < 14) avisos.push(`Período curto (${nDiasPer} dias): cada dia da semana entra só uma ou duas vezes na média, então um sábado fora do normal pesa muito. O padrão é 4 semanas.`);
   const faltaFds = aprovada ? [] : L.arr.filter(l => l.vendeu > 0 && l.tem - (l.fds || 0) < 0)
     .sort((a, b) => (a.tem - a.fds) - (b.tem - b.fds));
   if (faltaFds.length) avisos.push(`<strong>${faltaFds.length} SA ${faltaFds.length === 1 ? 'acaba' : 'acabam'} antes da segunda</strong> no ${esc(u.rotulo)}: o estoque de quinta não segura a venda até domingo. ` +
@@ -16146,7 +16228,7 @@ function _pintarMeta() {
 
   document.getElementById('meta-nota').innerHTML =
     `<strong>Tem</strong> = ${esc(rotLocais)} agora (negativo conta zero). ` +
-    `<strong>Vende qui→dom</strong> e <strong>seg→dom</strong> = consumo médio de cada dia da semana nas últimas 4 semanas, pela ficha dos pratos. ` +
+    `<strong>Vende qui→dom</strong> e <strong>seg→dom</strong> = consumo médio de cada dia da semana no período escolhido (padrão: 4 semanas até a quarta), pela ficha dos pratos. ` +
     `<strong>Sobra na segunda</strong> = Tem − venda de qui→dom; ela abate da meta. <strong>Meta</strong> = venda de seg→dom + ${pct}% − sobra na segunda. ` +
     `<strong>Ajuste</strong> soma ou tira da meta (+20, -10). O dia vem sugerido pelo sistema; quem aprova pode trocar. ` +
     (aprovada ? 'A meta aprovada fica congelada com os números do dia da aprovação.' : 'Ao aprovar, os números congelam.');
@@ -16203,7 +16285,7 @@ async function salvarMeta(aprovar) {
       return;
     }
     const { data: m, error: e1 } = await sb.from('prod_metas').upsert({
-      unidade: u.unidade, semana_ini: D.semana, venda_ini: D.vIni, venda_fim: D.vFim,
+      unidade: u.unidade, semana_ini: D.semana, venda_ini: L.vIni, venda_fim: L.vFim,
       margem: L.margem, status: 'rascunho', criado_por: _nomeUsuario(),
     }, { onConflict: 'unidade,semana_ini' }).select().single();
     if (e1) throw e1;
