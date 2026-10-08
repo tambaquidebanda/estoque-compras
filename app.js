@@ -16444,13 +16444,24 @@ async function reabrirMeta() {
 const _PROD_UNI_DO_LOCAL = { CENTRAL: 'Estoque Central', 'ESTOQUE DELIVERY': 'Delivery P10',
                              PRODUCAO: 'Produção', 'PRODUCAO P10': 'Produção P10', ESTOQUE_LOJA: 'Centro' };
 
+// Quanto pedir de cada MP. Regra do Wagner (05/10): MP vai em embalagem fechada, e o
+// que dá para pesar vai no peso pedido. Pesável = proteína, pescado, carne/ave e
+// hortifruti: sobe para 0,1. O resto sobe para a unidade inteira (1,1 kg de trigo
+// vira 2 kg). O cadastro ainda não tem o tamanho da embalagem.
+const _MP_PESAVEL = /PROTE|PESCADO|CARNE|AVES|HORTIFRUT/;
+function _metaQtdEnvio(pid, q) {
+  const p = prodFT(pid);
+  const pesavel = _MP_PESAVEL.test(norm(p?.categoria || '').toUpperCase()) && _metaFracao(pid);
+  return pesavel ? Math.ceil(q * 10 - 1e-9) / 10 : Math.ceil(q - 1e-9);
+}
+
 async function _criarPedidosMp(un, metaId) {
   const D = _metaD, L = D.linhas[un], u = L.u;
   if (D.semColunaPedido) { toast('Pedidos de MP não criados: rode o SQL_PRODUCAO_FASE2.sql e use "Criar pedidos de MP".', 'erro'); return 0; }
   const deOnde = _PROD_UNI_DO_LOCAL[u.local_mp], para = _PROD_UNI_DO_LOCAL[u.local_producao];
   if (!deOnde || !para) { toast(`Unidade ${u.rotulo} sem lugar de MP/Produção configurado.`, 'erro'); return 0; }
   const dias = [...new Set(L.arr.filter(l => _metaFinal(l) > 0).map(l => l.dia || l.sug).filter(Boolean))].sort();
-  const disp = {};   // o que já está na Produção, gasto do primeiro dia em diante
+  const disp = {};   // o que já está na Produção (e a sobra do arredondamento), gasto do primeiro dia em diante
   Object.entries(D.saldo[u.local_producao] || {}).forEach(([pid, v]) => { if (v > 0) disp[pid] = v; });
   let criados = 0;
   for (const dia of dias) {
@@ -16460,7 +16471,11 @@ async function _criarPedidosMp(un, metaId) {
       const usa = Math.min(disp[i.pid] || 0, i.q);
       disp[i.pid] = (disp[i.pid] || 0) - usa;
       const q = i.q - usa;
-      if (q > 0.0001) pedir.push({ pid: i.pid, q: _metaArred(i.pid, q) || Math.ceil(q * 100) / 100 });
+      if (q > 0.0001) {
+        const envio = _metaQtdEnvio(i.pid, q);
+        disp[i.pid] = (disp[i.pid] || 0) + envio - q;     // o que sobra do pacote serve os próximos dias
+        pedir.push({ pid: i.pid, q: envio });
+      }
     });
     if (!pedir.length) continue;
     const num_pedido = await _proximoNumPedido();
