@@ -15777,11 +15777,17 @@ function exportarVendaContagem() {
 //
 // Quinta-feira, no computador: uma meta POR UNIDADE. Centro e P10 compram e
 // guardam separado; a Produção pode fazer junto, mas a MP e o envio são de cada um.
-//   Vendeu  = consumo de SA da venda de 10 dias (segunda da semana anterior até a
+// O que a Produção faz de sexta a quinta SÓ ENTRA NA VENDA NA SEGUNDA (Wagner,
+// 08/10): o estoque contado na quinta segura o fim de semana, e a meta cobre a
+// semana de segunda a domingo. Conta (08/10/2026):
+//   Média de cada dia da semana = consumo de SA das últimas 4 semanas (até a
 //             quarta), gravado pelo robô scripts/venda_sa_dia.py em prod_venda_sa_dia
-//   Precisa = Vendeu × (1 + margem)                     (margem padrão 25%)
-//   Tem     = soma dos estoques em prod_unidades.locais_tem (negativo conta zero)
-//   Meta    = Precisa − Tem, arredondado para cima; nunca negativa
+//   Tem       = soma dos estoques em prod_unidades.locais_tem (negativo conta zero)
+//   Sobra seg = Tem − venda média de qui+sex+sáb+dom
+//   Precisa   = venda média de seg a dom × (1 + margem)        (margem padrão 25%)
+//   Meta      = Precisa − Sobra seg (se positiva), arredondado para cima; nunca negativa
+// Sobra seg negativa = vai faltar no fim de semana. A meta não resolve isso (só
+// entra na segunda): a tela avisa para mandar antes.
 // A produção vai de sexta a quinta. De onde vem a MP e para onde vai a SA está em
 // prod_unidades: trocar o destino do P10 é mudar uma linha lá, não o código.
 // Meta aprovada fica congelada com os números do dia da aprovação.
@@ -15831,7 +15837,7 @@ const _metaFinal = l => l.ajuste === null || l.ajuste === undefined ? l.meta : M
 async function carregarMetaProducao() {
   if (!_metaSemana) _metaSemana = _proximaSexta(hojeLocal());
   const tb = document.getElementById('meta-tbody');
-  tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando a meta...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando a meta...</td></tr>';
   document.getElementById('meta-semana-lbl').textContent = 'Semana de ' + _ddmm(_metaSemana);
   try {
     _metaD = await _metaCarregar(_metaSemana);
@@ -15839,7 +15845,7 @@ async function carregarMetaProducao() {
     console.error(e);
     _metaD = null;
     const dica = /prod_/.test(e.message) ? ' Se for a primeira vez, rode o SQL_PRODUCAO_META.sql.' : '';
-    tb.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-4">Não consegui montar a meta (${esc(e.message)}).${dica}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-4">Não consegui montar a meta (${esc(e.message)}).${dica}</td></tr>`;
     return;
   }
   if (!_metaD.linhas[_metaUn]) _metaUn = _metaD.unidades[0].unidade;
@@ -15848,7 +15854,7 @@ async function carregarMetaProducao() {
 
 async function _metaCarregar(semana) {
   await carregarProdutosFT();
-  const vIni = _isoMais(semana, -11), vFim = _isoMais(semana, -2);
+  const vIni = _isoMais(semana, -29), vFim = _isoMais(semana, -2);   // 4 semanas, até a quarta
   const unidades = await _metaSelect('prod_unidades', '*', q => q.order('ordem'));
   if (!unidades.length) throw new Error('prod_unidades está vazia');
   const locais = [...new Set(unidades.flatMap(u => [...(u.locais_tem || []), u.local_mp, u.local_producao]))];
@@ -15871,12 +15877,26 @@ async function _metaCarregar(semana) {
     } catch (e) { semColunaPedido = true; console.warn('pedidos de MP da meta:', e.message); }
   }
 
+  // Coluna fim_semana do SQL_PRODUCAO_META_V2.sql: sem ela a meta funciona, só não
+  // guarda o "vende qui→dom" da meta aprovada.
+  const { error: eFds } = await sb.from('prod_meta_itens').select('fim_semana').limit(1);
+  const semColFds = !!eFds;
+
+  // venda[unidade][pid][dia da semana 0=dom..6=sáb] = soma do período
   const venda = {}, diasCom = {};
+  const dow = iso => new Date(iso + 'T12:00:00').getDay();
   vendas.forEach(v => {
-    const m = (venda[v.unidade] ||= {});
-    m[v.produto_id] = (m[v.produto_id] || 0) + (Number(v.quantidade) || 0);
+    const m = ((venda[v.unidade] ||= {})[v.produto_id] ||= [0, 0, 0, 0, 0, 0, 0]);
+    m[dow(v.data)] += Number(v.quantidade) || 0;
     (diasCom[v.unidade] ||= new Set()).add(v.data);
   });
+  // Média de cada dia da semana, dividindo pelos dias daquele tipo que o robô gravou.
+  const mediaDia = (un, pid) => {
+    const n = [0, 0, 0, 0, 0, 0, 0];
+    (diasCom[un] || []).forEach(d => { n[dow(d)]++; });
+    const tot = venda[un]?.[pid] || [0, 0, 0, 0, 0, 0, 0];
+    return tot.map((t, i) => n[i] ? t / n[i] : 0);
+  };
   const saldo = {};
   saldos.forEach(s => { (saldo[s.local] ||= {})[s.produto_id] = Number(s.saldo) || 0; });
   const fichaDe = {}, ingsDe = {};
@@ -15906,37 +15926,42 @@ async function _metaCarregar(semana) {
     let arr;
     if (meta?.status === 'aprovada') {
       arr = Object.values(doMeta).map(i => ({ pid: i.produto_id, vendeu: +i.vendeu, precisa: +i.precisa, tem: +i.tem,
-        meta: +i.meta, ajuste: num(i.ajuste), dia: i.dia, sug: i.dia_sugerido }));
+        fds: num(i.fim_semana), meta: +i.meta, ajuste: num(i.ajuste), dia: i.dia, sug: i.dia_sugerido }));
     } else {
       arr = [...universo].map(pid => {
-        const vendeu  = venda[u.unidade]?.[pid] || 0;
+        const md = mediaDia(u.unidade, pid);
+        const fds = md[4] + md[5] + md[6] + md[0];                  // qui sex sáb dom
+        const vendeu  = md.reduce((a, b) => a + b, 0);              // seg a dom
         const precisa = vendeu * (1 + margem);
         const tem = (u.locais_tem || []).reduce((t, l) => t + Math.max(0, saldo[l]?.[pid] || 0), 0);
         const s = doMeta[pid];
-        return { pid, vendeu, precisa, tem, meta: _metaArred(pid, precisa - tem),
+        return { pid, vendeu, fds, precisa, tem, meta: _metaArred(pid, precisa - Math.max(0, tem - fds)),
                  ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
       });
     }
     linhas[u.unidade] = { u, meta, margem, arr };
   });
-  const D = { semana, vIni, vFim, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido };
+  const D = { semana, vIni, vFim, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds };
   _metaSugerirDias(D);
   return D;
 }
 
-// Dia sugerido: o último dia de produção ANTES de o estoque acabar, com um dia de
-// folga (produzir o mais tarde possível mantém a SA fresca e espalha a semana).
-// A SA que as duas unidades precisam vai no MESMO dia, o mais cedo dos dois: a
-// Produção faz numa leva só e separa no "Produzi".
+// Dia sugerido: o último dia de produção ANTES de a sobra da segunda acabar, com
+// um dia de folga (produzir o mais tarde possível mantém a SA fresca e espalha a
+// semana). Sem sobra na segunda, o dia é o sábado (entra na venda na segunda). A SA
+// que as duas unidades precisam vai no MESMO dia, o mais cedo dos dois: a Produção
+// faz numa leva só e separa no "Produzi".
 function _metaSugerirDias(D) {
   const idxDe = {};
   Object.values(D.linhas).forEach(L => {
     if (L.meta?.status === 'aprovada') return;
     L.arr.forEach(l => {
-      const diaria = l.vendeu / 10;
-      const cob = diaria > 0 ? l.tem / diaria : 99;      // dias que o estoque segura, contando da quinta
+      const diaria = l.vendeu / 7;
+      const sobra = Math.max(0, l.tem - (l.fds || 0));
+      // a segunda é o dia 3 contando da sexta; a sobra segura até 3 + cobertura
+      const fim = diaria > 0 ? 3 + sobra / diaria : 99;
       let idx = 0;
-      _META_OFFS.forEach((off, i) => { if (off <= cob - 2) idx = i; });
+      _META_OFFS.forEach((off, i) => { if (off <= fim - 1) idx = i; });
       l._idx = idx;
       if (_metaFinal(l) > 0) (idxDe[l.pid] ||= []).push(idx);
     });
@@ -16023,7 +16048,8 @@ function _pintarMeta() {
   document.getElementById('meta-eyebrow').style.color = u.ordem === 2 ? '#8a4513' : '';
   document.getElementById('meta-titulo').textContent = `Produzir de sexta ${_ddmm(D.semana)} a quinta ${_ddmm(_isoMais(D.semana, 6))}`;
   document.getElementById('meta-base').textContent =
-    `Venda do ${u.rotulo} de ${_ddmm(D.vIni)} a ${_ddmm(D.vFim)} + ${pct}% − (${rotLocais})`;
+    `Venda média de cada dia do ${u.rotulo} (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). O estoque de quinta (${rotLocais}) segura ` +
+    `qui→dom; a produção entra na venda na segunda ${_ddmm(_isoMais(D.semana, 3))} e cobre seg→dom + ${pct}%.`;
   document.getElementById('meta-margem-lbl').textContent = pct;
 
   const st = document.getElementById('meta-status');
@@ -16045,7 +16071,12 @@ function _pintarMeta() {
 
   const avisos = [];
   const nd = D.diasCom[u.unidade]?.size || 0;
-  if (!aprovada && nd < 10) avisos.push(`Só <strong>${nd} dos 10 dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). Até o robô "Venda de SA por dia" carregar o resto, a meta sai menor do que deveria.`);
+  if (!aprovada && nd < 28) avisos.push(`Só <strong>${nd} dos 28 dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(D.vIni)} a ${_ddmm(D.vFim)}). A média de cada dia usa só os dias gravados; se faltar o dia mais recente, rode o robô "Venda de SA por dia" no GitHub.`);
+  const faltaFds = aprovada ? [] : L.arr.filter(l => l.vendeu > 0 && l.tem - (l.fds || 0) < 0)
+    .sort((a, b) => (a.tem - a.fds) - (b.tem - b.fds));
+  if (faltaFds.length) avisos.push(`<strong>${faltaFds.length} SA ${faltaFds.length === 1 ? 'acaba' : 'acabam'} antes da segunda</strong> no ${esc(u.rotulo)}: o estoque de quinta não segura a venda até domingo. ` +
+    `A meta não cobre isso, porque só entra na venda na segunda. Para não faltar, mande antes (sexta ou sábado): ` +
+    faltaFds.map(l => `${esc(prodFT(l.pid)?.nome || l.pid)} (falta ${_metaNum(_metaArred(l.pid, l.fds - l.tem))})`).join(', ') + '.');
   if (!aprovada && L.arr.length && L.arr.every(l => !l.tem)) avisos.push(`${esc(rotLocais)} ainda não tem saldo de SA no sistema: a coluna <strong>Tem</strong> está zerada e a meta é a venda inteira + ${pct}%. Depois da primeira contagem, a conta passa a descontar o que o ${esc(u.rotulo)} tem.`);
   if (mp.semFicha.length) avisos.push(`Sem ficha técnica, a MP destas SA não entra na conta: ${mp.semFicha.map(p => esc(prodFT(p)?.nome || p)).join(', ')}.`);
   let infoPed = '';
@@ -16064,11 +16095,12 @@ function _pintarMeta() {
 
   const comMeta = L.arr.filter(l => _metaFinal(l) > 0 || l.ajuste !== null).sort((a, b) => _metaFinal(b) - _metaFinal(a));
   const cobre   = L.arr.filter(l => l.vendeu > 0 && !(_metaFinal(l) > 0) && l.ajuste === null).sort((a, b) => b.vendeu - a.vendeu);
-  const kpi = (lab, val, cls) => `<div class="col-6 col-md-4"><div class="card-kpi ${cls}"><div class="kpi-label">${lab}</div><div class="kpi-val">${val}</div></div></div>`;
+  const kpi = (lab, val, cls) => `<div class="col-6 col-md-3"><div class="card-kpi ${cls}"><div class="kpi-label">${lab}</div><div class="kpi-val">${val}</div></div></div>`;
   document.getElementById('meta-kpis').innerHTML =
     kpi('SA para produzir', comMeta.filter(l => _metaFinal(l) > 0).length, 'kpi-verde') +
     kpi('Estoque cobre (não produz)', cobre.length, 'kpi-cinza') +
-    kpi(`MP que falta (${esc(_rotuloSemIcone(u.local_mp))} + Produção)`, `${nFalta} ${nFalta === 1 ? 'item' : 'itens'}`, nFalta ? 'kpi-ruim' : 'kpi-ok');
+    kpi(`MP que falta (${esc(_rotuloSemIcone(u.local_mp))} + Produção)`, `${nFalta} ${nFalta === 1 ? 'item' : 'itens'}`, nFalta ? 'kpi-ruim' : 'kpi-ok') +
+    kpi('Acabam antes da segunda', aprovada ? '—' : faltaFds.length, faltaFds.length ? 'kpi-ruim' : 'kpi-ok');
 
   const outros = Object.fromEntries(D.unidades.filter(x => x.unidade !== _metaUn).map(x => [x.unidade, x.rotulo]));
   const nomeOutro = Object.values(outros)[0] || '';
@@ -16082,11 +16114,17 @@ function _pintarMeta() {
       return `<option value="${iso}"${iso === dia ? ' selected' : ''}>${_META_DIA_NOME[i]} ${_ddmm(iso)}</option>`;
     }).join('');
     const un = esc(prodFT(l.pid)?.unidade_uso || '');
+    const sobra = l.fds === null || l.fds === undefined ? null : l.tem - l.fds;
+    const sobraTd = sobra === null ? '<td class="text-end text-muted">—</td>'
+      : sobra < 0 ? `<td class="text-end meta-falta-fds">0<span class="badge">falta ${_metaNum(_metaArred(l.pid, -sobra))}</span></td>`
+      : `<td class="text-end">${_metaNum(sobra)}</td>`;
     return `<tr>
       <td class="fw-semibold">${esc(prodFT(l.pid)?.nome || l.pid)}</td>
+      <td class="text-end">${_metaNum(l.tem)}</td>
+      <td class="text-end text-muted">${l.fds === null || l.fds === undefined ? '—' : '−' + _metaNum(l.fds)}</td>
+      ${sobraTd}
       <td class="text-end text-muted">${_metaNum(l.vendeu)}</td>
       <td class="text-end">${_metaNum(l.precisa)}</td>
-      <td class="text-end">${_metaNum(l.tem)}</td>
       <td class="text-end">${_metaNum(l.meta)}</td>
       <td class="text-center"><input type="text" inputmode="decimal" class="form-control form-control-sm meta-ajuste" value="${ajTxt}" placeholder="—"
           ${aprovada ? 'disabled' : ''} onchange="metaAjuste('${l.pid}', this.value)" aria-label="Ajuste"></td>
@@ -16097,9 +16135,9 @@ function _pintarMeta() {
     </tr>`;
   };
   let html = comMeta.length ? comMeta.map(linha).join('')
-    : `<tr><td colspan="8" class="text-center text-muted py-4">${aprovada ? 'Meta aprovada sem nenhuma SA.' : 'Nenhuma SA precisa ser produzida para o ' + esc(u.rotulo) + ' nesta semana.'}</td></tr>`;
+    : `<tr><td colspan="10" class="text-center text-muted py-4">${aprovada ? 'Meta aprovada sem nenhuma SA.' : 'Nenhuma SA precisa ser produzida para o ' + esc(u.rotulo) + ' nesta semana.'}</td></tr>`;
   if (cobre.length) {
-    html += `<tr class="meta-rodape"><td colspan="8">${cobre.length} SA que o estoque do ${esc(u.rotulo)} já cobre ·
+    html += `<tr class="meta-rodape"><td colspan="10">${cobre.length} SA que o estoque do ${esc(u.rotulo)} já cobre ·
       <a href="#" onclick="event.preventDefault();metaMostrarCobre()">${_metaMostrarCobre ? 'esconder' : 'mostrar'}</a>
       ${aprovada ? '' : ' · para produzir alguma mesmo assim, ponha um ajuste nela'}</td></tr>`;
     if (_metaMostrarCobre) html += cobre.map(linha).join('');
@@ -16107,8 +16145,9 @@ function _pintarMeta() {
   document.getElementById('meta-tbody').innerHTML = html;
 
   document.getElementById('meta-nota').innerHTML =
-    `<strong>Vendeu</strong> = quanto da SA a venda dos 10 dias consumiu, pela ficha dos pratos. ` +
     `<strong>Tem</strong> = ${esc(rotLocais)} agora (negativo conta zero). ` +
+    `<strong>Vende qui→dom</strong> e <strong>seg→dom</strong> = consumo médio de cada dia da semana nas últimas 4 semanas, pela ficha dos pratos. ` +
+    `<strong>Sobra na segunda</strong> = Tem − venda de qui→dom; ela abate da meta. <strong>Meta</strong> = venda de seg→dom + ${pct}% − sobra na segunda. ` +
     `<strong>Ajuste</strong> soma ou tira da meta (+20, -10). O dia vem sugerido pelo sistema; quem aprova pode trocar. ` +
     (aprovada ? 'A meta aprovada fica congelada com os números do dia da aprovação.' : 'Ao aprovar, os números congelam.');
 }
@@ -16175,6 +16214,7 @@ async function salvarMeta(aprovar) {
       const { error: e3 } = await sb.from('prod_meta_itens').insert(itens.map(l => ({
         meta_id: m.id, produto_id: l.pid, vendeu: r4(l.vendeu), precisa: r4(l.precisa), tem: r4(l.tem),
         meta: l.meta, ajuste: l.ajuste, meta_final: _metaFinal(l), dia: l.dia || l.sug, dia_sugerido: l.sug,
+        ...(D.semColFds ? {} : { fim_semana: r4(l.fds) }),
       })));
       if (e3) throw e3;
     }
