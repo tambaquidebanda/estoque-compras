@@ -127,16 +127,30 @@
     .mais-menos { width: 54px; height: 54px; border-radius: 12px; border: 1px solid var(--borda2); background: #fff; font: 800 26px Archivo, sans-serif; color: var(--tinta); }
     /* semana em calendário: uma coluna por dia de produção */
     .cal { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
-    .cal-dia { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-    .cal-cab { background: var(--card); border: 2px solid var(--borda); border-radius: 12px; padding: 8px 12px; display: flex; flex-direction: column; }
-    .cal-cab .d { font: 800 19px Archivo, sans-serif; }
-    .cal-cab .s { font-size: 14px; color: var(--tinta3); }
-    .cal-dia.hoje .cal-cab { background: var(--teal); border-color: var(--teal); color: #fff; }
+    .cal-dia { display: flex; flex-direction: column; gap: 8px; min-width: 0; background: #e4eae8; border-radius: 16px; padding: 8px; }
+    .cal-cab { background: #24302c; color: #fff; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; }
+    .cal-cab .num-dia { font: 800 34px/1 Archivo, sans-serif; }
+    .cal-cab .txt { display: flex; flex-direction: column; min-width: 0; }
+    .cal-cab .d { font: 800 18px Archivo, sans-serif; text-transform: uppercase; letter-spacing: .04em; }
+    .cal-cab .s { font-size: 14px; color: #b9c8c3; }
+    .cal-cab .tag-hoje { margin-right: 4px; vertical-align: 1px; background: #fff; color: var(--teal); font: 800 11px Archivo, sans-serif; letter-spacing: .06em; padding: 2px 7px; border-radius: 999px; }
+    .cal-cab .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cal-dia.hoje { background: #d3e8e6; box-shadow: inset 0 0 0 3px var(--teal); }
+    .cal-dia.hoje .cal-cab { background: var(--teal); }
     .cal-dia.hoje .cal-cab .s { color: #cfe7e5; }
-    .cal-dia.passado .cal-cab { opacity: .7; }
+    .cal-dia.passado .cal-cab { background: #7d8a86; }
     .cal-sa { text-align: left; background: var(--card); border: 2px solid var(--borda); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font: inherit; color: inherit; }
-    .cal-sa.ok { border-color: var(--ok); background: var(--ok-bg); }
-    .cal-sa.atras { border-color: var(--av); }
+    /* situação do cartão: faixa à esquerda + fundo (Wagner, 08/10) */
+    .cal-sa { border-left-width: 8px; }
+    .cal-sa.pend   { border-left-color: #9aa7a3; }
+    .cal-sa.andando { border-color: #b8d0ec; border-left-color: #2f6fb5; background: #eef4fb; }
+    .cal-sa.ok     { border-color: #bfe0cb; border-left-color: var(--ok); background: var(--ok-bg); }
+    .cal-sa.atras  { border-color: #f1cf98; border-left-color: var(--av); background: var(--av-bg); }
+    .cal-sa .sit { font-size: 13px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+    .cal-sa.pend .sit { color: #6b7774; } .cal-sa.andando .sit { color: #2f6fb5; }
+    .cal-sa.ok .sit { color: var(--ok-txt); } .cal-sa.atras .sit { color: var(--av-txt); }
+    .cal-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--tinta2); }
+    .cal-leg i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; }
     .cal-sa .n { font-weight: 800; font-size: 16px; line-height: 1.2; }
     .cal-sa .q { display: flex; align-items: center; gap: 6px; font-size: 15px; font-variant-numeric: tabular-nums; }
     .cal-sa .q .chip { font-size: 12px; padding: 2px 7px; }
@@ -547,20 +561,28 @@ function telaSemana() {
         return { u, fe, it, pct, fim: fe >= it.meta_final - 1e-9 };
       });
       const fim = linhas.every(l => l.fim), atras = !fim && dia < HOJE;
-      return `<button class="cal-sa${fim ? ' ok' : atras ? ' atras' : ''}" onclick="abrirProduzi('${pid}')" aria-label="Produzi ${esc(nomeP(pid))}">
+      const comecou = linhas.some(l => l.fe > 0);
+      const pctTot = Math.round(linhas.reduce((t, l) => t + l.pct, 0) / linhas.length);
+      const [cls, sit] = fim ? ['ok', 'Executado ✓'] : atras ? ['atras', comecou ? `Atrasado · ${pctTot}%` : 'Atrasado']
+        : comecou ? ['andando', `Em produção · ${pctTot}%`] : ['pend', 'Pendente'];
+      return `<button class="cal-sa ${cls}" onclick="abrirProduzi('${pid}')" aria-label="Produzi ${esc(nomeP(pid))}">
         <span class="n">${esc(nomeP(pid).replace(/^SA /, ''))}</span>
         ${linhas.map(l => `<span class="q">${chip(l.u)}<span><b>${num(l.fe)}</b> de ${num(l.it.meta_final)} ${esc(unP(pid))}${l.fim ? ' ✓' : ''}</span></span>
           <span class="barra"><div style="width:${l.pct}%;background:${corBarra(l.u, l.fim)}"></div></span>`).join('')}
-        ${atras ? '<span class="sub" style="color:var(--av-txt);font-weight:700">atrasado</span>' : ''}</button>`;
+        <span class="sit">${sit}</span></button>`;
     }).join('');
     const nOk = Object.keys(porPid).filter(pid => porPid[pid].every(i => feito(pid, i.unidade) >= i.meta_final - 1e-9)).length;
     const n = Object.keys(porPid).length;
     return `<div class="cal-dia${dia === HOJE ? ' hoje' : dia < HOJE ? ' passado' : ''}">
-      <div class="cal-cab"><span class="d">${DIAS_LONGO[new Date(dia + 'T12:00:00').getDay()]} ${ddmm(dia)}</span>
-        <span class="s">${n ? `${nOk} de ${n} SA prontas` : 'nada planejado'}</span></div>
-      ${cartoes || '<div class="cal-vazio">—</div>'}</div>`;
+      <div class="cal-cab"><span class="num-dia">${dia.slice(8, 10)}</span>
+        <span class="txt"><span class="d">${DIAS_LONGO[new Date(dia + 'T12:00:00').getDay()]}</span>
+        <span class="s">${dia === HOJE ? '<b class="tag-hoje">HOJE</b> ' : ''}${n ? `${nOk} de ${n} prontas` : 'nada planejado'}</span></span></div>
+      ${cartoes || '<div class="cal-vazio">nada neste dia</div>'}</div>`;
   }).join('');
-  return `<div class="linha-tit"><h2>Meta da semana</h2><span class="sub">toque numa SA para registrar o que produziu</span></div>
+  return `<div class="linha-tit"><h2>Meta da semana</h2><span class="cal-leg">
+      <span><i style="background:#9aa7a3"></i>Pendente</span><span><i style="background:#2f6fb5"></i>Em produção</span>
+      <span><i style="background:var(--ok)"></i>Executado</span><span><i style="background:var(--av)"></i>Atrasado</span>
+      <span>· toque numa SA para registrar</span></span></div>
     <div class="cal">${cols}</div>`;
 }
 
