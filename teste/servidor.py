@@ -334,8 +334,10 @@ def _ordenar(t, rows, order):
 
 
 def _projetar(t, rows, select):
+    todas = list(SCHEMA[t]['cols'])
     if not select or select.strip() == '*':
-        return [dict(r) for r in rows]
+        # como o banco: toda coluna vem, mesmo a criada depois da copia (vazia)
+        return [{c: r.get(c) for c in todas} for r in rows]
     cols = []
     for c in _divide_or(select):
         c = c.strip()
@@ -353,7 +355,7 @@ def _projetar(t, rows, select):
         o = {}
         for a, n in cols:
             if n == '*':
-                o.update(r)
+                o.update({c: r.get(c) for c in todas})
             else:
                 o[a] = r.get(n)
         out.append(o)

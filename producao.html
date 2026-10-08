@@ -149,6 +149,10 @@
     .cal-sa .sit { font-size: 13px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
     .cal-sa.pend .sit { color: #6b7774; } .cal-sa.andando .sit { color: #2f6fb5; }
     .cal-sa.ok .sit { color: var(--ok-txt); } .cal-sa.atras .sit { color: var(--av-txt); }
+    .cal-sa.enc    { border-color: #d3d9d7; border-left-color: #4f5c58; background: #eef0ef; }
+    .cal-sa.enc .sit { color: var(--tinta2); }
+    .cal-fant { border: 2px dashed var(--borda2); border-radius: 12px; padding: 8px 12px; font-size: 14px; color: var(--tinta3); display: flex; flex-direction: column; gap: 2px; }
+    .cal-fant b { color: var(--tinta2); }
     .cal-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--tinta2); }
     .cal-leg i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; }
     .cal-sa .n { font-weight: 800; font-size: 16px; line-height: 1.2; }
@@ -434,7 +438,7 @@ function porSA(filtro) {
     const x = (m[i.produto_id] ||= { pid: i.produto_id, dia: i.dia, porUni: {} });
     if (i.dia && (!x.dia || i.dia < x.dia)) x.dia = i.dia;
     const f = feito(i.produto_id, i.unidade);
-    x.porUni[i.unidade] = { item: i, meta: i.meta_final, feito: f, falta: Math.max(0, i.meta_final - f) };
+    x.porUni[i.unidade] = { item: i, meta: i.meta_final, feito: f, falta: i.encerrado_em ? 0 : Math.max(0, i.meta_final - f) };
   });
   return Object.values(m);
 }
@@ -521,7 +525,10 @@ function telaHoje() {
     const fim = Object.values(x.porUni).every(v => v.falta <= 0);
     const algum = Object.values(x.porUni).some(v => v.feito > 0);
     const atras = x.dia < HOJE && !fim;
-    const st = fim ? ['st-ok', 'Meta concluída'] : atras ? ['st-av', `Atrasado · era ${diaSem(x.dia)}`] : algum ? ['st-and', 'Em produção'] : ['st-and', 'Para hoje'];
+    const enc = Object.values(x.porUni).some(v => v.item.encerrado_em && v.feito < v.meta - 1e-9);
+    const orig = Object.values(x.porUni).map(v => v.item.dia_original).find(Boolean);
+    const st = fim ? (enc ? ['st-av', 'Não vai fazer'] : ['st-ok', 'Meta concluída']) : atras ? ['st-av', `Atrasado · era ${diaSem(x.dia)}`]
+      : orig ? ['st-and', `Remarcado de ${diaSem(orig)} ${ddmm(orig)}`] : algum ? ['st-and', 'Em produção'] : ['st-and', 'Para hoje'];
     const linhas = U.filter(u => x.porUni[u.unidade]).map(u => {
       const v = x.porUni[u.unidade];
       const pct = v.meta > 0 ? Math.min(100, v.feito / v.meta * 100) : 100;
@@ -558,30 +565,41 @@ function telaSemana() {
       const linhas = U.filter(u => lista.some(i => i.unidade === u.unidade)).map(u => {
         const it = lista.find(i => i.unidade === u.unidade), fe = feito(pid, u.unidade);
         const pct = it.meta_final > 0 ? Math.min(100, fe / it.meta_final * 100) : 100;
-        return { u, fe, it, pct, fim: fe >= it.meta_final - 1e-9 };
+        const bateu = fe >= it.meta_final - 1e-9;
+        return { u, fe, it, pct, fim: bateu || !!it.encerrado_em, enc: !bateu && !!it.encerrado_em };
       });
       const fim = linhas.every(l => l.fim), atras = !fim && dia < HOJE;
       const comecou = linhas.some(l => l.fe > 0);
+      const orig = linhas.map(l => l.it.dia_original).find(Boolean);
       const pctTot = Math.round(linhas.reduce((t, l) => t + l.pct, 0) / linhas.length);
-      const [cls, sit] = fim ? ['ok', 'Executado ✓'] : atras ? ['atras', comecou ? `Atrasado · ${pctTot}%` : 'Atrasado']
+      const [cls, sit0] = fim ? (linhas.some(l => l.enc) ? ['enc', 'Não vai fazer'] : ['ok', 'Executado ✓'])
+        : atras ? ['atras', comecou ? `Atrasado · ${pctTot}%` : 'Atrasado']
         : comecou ? ['andando', `Em produção · ${pctTot}%`] : ['pend', 'Pendente'];
+      const sit = sit0 + (orig && !fim ? ` · remarcado de ${diaSem(orig)} ${ddmm(orig)}` : '');
       return `<button class="cal-sa ${cls}" onclick="abrirProduzi('${pid}','${dia}')" aria-label="Produzi ${esc(nomeP(pid))}">
         <span class="n">${esc(nomeP(pid).replace(/^SA /, ''))}</span>
         ${linhas.map(l => `<span class="q">${chip(l.u)}<span><b>${num(l.fe)}</b> de ${num(l.it.meta_final)} ${esc(unP(pid))}${l.fim ? ' ✓' : ''}</span></span>
           <span class="barra"><div style="width:${l.pct}%;background:${corBarra(l.u, l.fim)}"></div></span>`).join('')}
         <span class="sit">${sit}</span></button>`;
     }).join('');
-    const nOk = Object.keys(porPid).filter(pid => porPid[pid].every(i => feito(pid, i.unidade) >= i.meta_final - 1e-9)).length;
+    const nOk = Object.keys(porPid).filter(pid => porPid[pid].every(i => i.encerrado_em || feito(pid, i.unidade) >= i.meta_final - 1e-9)).length;
     const n = Object.keys(porPid).length;
+    // o que era deste dia e foi remarcado: fica uma sombra com o que já foi feito
+    const fant = ITENS.filter(i => i.dia_original === dia && i.dia !== dia)
+      .sort((a, b) => nomeP(a.produto_id).localeCompare(nomeP(b.produto_id))).map(i =>
+        `<div class="cal-fant"><b>${esc(nomeP(i.produto_id).replace(/^SA /, ''))}</b>
+          <span>${chip(uniDe(i.unidade))} feito ${num(feito(i.produto_id, i.unidade))} de ${num(i.meta_final)} ${esc(unP(i.produto_id))}</span>
+          <span>→ resto remarcado para ${diaSem(i.dia)} ${ddmm(i.dia)}</span></div>`).join('');
     return `<div class="cal-dia${dia === HOJE ? ' hoje' : dia < HOJE ? ' passado' : ''}">
       <div class="cal-cab"><span class="num-dia">${dia.slice(8, 10)}</span>
         <span class="txt"><span class="d">${DIAS_LONGO[new Date(dia + 'T12:00:00').getDay()]}</span>
         <span class="s">${dia === HOJE ? '<b class="tag-hoje">HOJE</b> ' : ''}${n ? `${nOk} de ${n} prontas` : 'nada planejado'}</span></span></div>
-      ${cartoes || '<div class="cal-vazio">nada neste dia</div>'}</div>`;
+      ${cartoes || (fant ? '' : '<div class="cal-vazio">nada neste dia</div>')}${fant}</div>`;
   }).join('');
   return `<div class="linha-tit"><h2>Meta da semana</h2><span class="cal-leg">
       <span><i style="background:#9aa7a3"></i>Pendente</span><span><i style="background:#2f6fb5"></i>Em produção</span>
       <span><i style="background:var(--ok)"></i>Executado</span><span><i style="background:var(--av)"></i>Atrasado</span>
+      <span><i style="background:#4f5c58"></i>Não vai fazer</span>
       <span>· toque numa SA para registrar</span></span></div>
     <div class="cal">${cols}</div>`;
 }
@@ -678,10 +696,16 @@ async function confirmarProduzi() {
     const r = await perguntarMotivo(`${uniDe(un).rotulo}: ${num(total)} de ${num(it.meta_final)} ${unP(pid)}`,
       `${nomeP(pid)} ficou abaixo da meta. Por quê?`, MOTIVOS_META, true);
     if (!r) return;
-    if (r.motivo !== 'depois') motivos[un] = r;
+    if (r.motivo === 'depois') continue;
+    if (temRemarcar()) {
+      const q = await perguntarQuando(it, it.meta_final - total, HOJE);
+      if (!q) return;
+      Object.assign(r, q);
+    }
+    motivos[un] = r;
   }
   const resumo = lotes.map(([un, q]) => `${num(q)} ${unP(pid)} para o ${uniDe(un).rotulo}` +
-    (motivos[un] ? ` (abaixo da meta: ${rotMotivo(motivos[un])})` : '')).join('\n');
+    (motivos[un] ? ` (abaixo da meta: ${rotMotivo(motivos[un])}${motivos[un].acao ? '; ' + txtQuando(motivos[un]) : ''})` : '')).join('\n');
   if (!confirm(`Registrar a produção de ${nomeP(pid)}?\n\n${resumo}\n\nOs insumos da ficha saem da Produção de cada unidade.`)) return;
   emVoo = true;
   try {
@@ -698,8 +722,10 @@ async function confirmarProduzi() {
         const fe = feito(pid, un) + q;
         const { error: eo } = await sb.from('prod_ocorrencias').insert({ data: HOJE, unidade: un, tipo: 'meta', produto_id: pid,
           meta_item_id: it.id, meta: it.meta_final, feito: fe, diferenca: it.meta_final - fe,
-          motivo: motivos[un].motivo, obs: motivos[un].obs || null, responsavel: quem() });
+          motivo: motivos[un].motivo, obs: motivos[un].obs || null, responsavel: quem(),
+          ...(motivos[un].acao ? { acao: motivos[un].acao, remarcado_para: motivos[un].dia || null } : {}) });
         if (eo) toast(`A produção gravou, mas o motivo não (${eo.message}). O Fechar o dia vai perguntar de novo.`, 'erro');
+        else if (motivos[un].acao) await aplicarQuando(it, motivos[un]);
       }
       const base = { origem: 'producao', responsavel: quem(), data: HOJE, motivo: `Produção ${ddmm(HOJE)} ${hora} (${u.rotulo}): ${num(q)} ${unP(pid)} de ${nomeP(pid)}` };
       for (const [ing, qq] of (INGS[f.id] || [])) {
@@ -847,7 +873,10 @@ const MOTIVOS_REND_MENOS = [['perda', 'Perda acima do normal'], ['produto_ruim',
 const MOTIVOS_REND_MAIS = [['ficha', 'Ficha desatualizada'], ['pesagem', 'Pesagem errada'], ['outro', 'Outro motivo']];
 const ROT_MOTIVO = Object.fromEntries([...MOTIVOS_META, ...MOTIVOS_MP_MENOS, ...MOTIVOS_MP_MAIS, ...MOTIVOS_REND_MENOS, ...MOTIVOS_REND_MAIS]);
 const rotMotivo = m => (m.motivo === 'outro' && m.obs) ? m.obs : (ROT_MOTIVO[m.motivo] || m.motivo);
-const temMotivo = it => OCOR.some(o => o.tipo === 'meta' && o.meta_item_id === it.id);
+// motivo já dado PARA O DIA ATUAL do item (remarcado para segunda, pergunta de novo se segunda não bater)
+const temMotivo = it => OCOR.some(o => o.tipo === 'meta' && o.meta_item_id === it.id && o.data >= it.dia);
+// colunas do SQL_PRODUCAO_REMARCAR.sql (dia_original / encerrado_em): sem elas não pergunta "quando"
+const temRemarcar = () => ITENS.length && 'dia_original' in ITENS[0];
 const fechado = (dia, un) => FECH.some(f => f.data === dia && f.unidade === un);
 // diferença de contagem que já pede motivo: meia unidade, ou 3% (mínimo 50 g / 50 ml)
 const tolQ = (pid, ref) => ehInteiro(pid) ? 0.5 : Math.max(0.05, Math.abs(ref || 0) * 0.03);
@@ -869,6 +898,32 @@ function _motivoEscolha(c) {
   if (c === 'outro') { obs = (prompt('Qual foi o motivo?') || '').trim(); if (!obs) return; }
   window._motivoFim({ motivo: c, obs });
 }
+
+// Quando termina o restante: um dos próximos dias de produção da semana, ou "não vai
+// fazer" (a meta da semana seguinte compensa, porque conta o estoque real).
+function diasParaRemarcar(base) {
+  return DIAS_PRODUCAO.map(off => isoMais(SEMANA, off)).filter(d => d > base && d >= HOJE);
+}
+function perguntarQuando(it, resto, base) {
+  return new Promise(res => {
+    const box = document.getElementById('motivo');
+    window._motivoFim = v => { box.style.display = 'none'; res(v); };
+    const dias = diasParaRemarcar(base);
+    document.getElementById('motivo-caixa').innerHTML = `<div class="t">Quando termina o restante?</div>
+      <div class="sub">Faltam ${num(resto)} ${esc(unP(it.produto_id))} de ${esc(nomeP(it.produto_id))} para o ${esc(uniDe(it.unidade)?.rotulo || it.unidade)}.</div>
+      <div class="motivos">${dias.map(d => `<button class="mot" onclick="_motivoFim({acao:'remarcado',dia:'${d}'})">${DIAS_LONGO[new Date(d + 'T12:00:00').getDay()]} ${ddmm(d)}</button>`).join('')}
+        <button class="mot" onclick="_motivoFim({acao:'encerrado'})">Não vai fazer</button></div>
+      ${dias.length ? '' : '<div class="sub">Não sobrou dia de produção nesta semana: a meta da semana que vem compensa.</div>'}
+      <div style="display:flex;justify-content:flex-end"><button class="btn-sec" style="border-color:var(--borda2);color:var(--tinta2)" onclick="_motivoFim(null)">Voltar</button></div>`;
+    box.style.display = 'flex';
+  });
+}
+async function aplicarQuando(it, q) {
+  const upd = q.acao === 'remarcado' ? { dia: q.dia, dia_original: it.dia_original || it.dia } : { encerrado_em: new Date().toISOString() };
+  const { error } = await sb.from('prod_meta_itens').update(upd).eq('id', it.id);
+  if (error) toast(`O motivo gravou, mas não consegui ${q.acao === 'remarcado' ? 'remarcar' : 'encerrar'} (${error.message}).`, 'erro');
+}
+const txtQuando = q => q?.acao === 'remarcado' ? `resto para ${diaSem(q.dia)} ${ddmm(q.dia)}` : q?.acao === 'encerrado' ? 'não vai fazer' : '';
 
 // Último dia de produção antes de hoje (seg a sex) e se ficou sem fechar
 function diaAnteriorProducao() {
@@ -897,7 +952,7 @@ function botaoFechar() {
 
 // SA do dia (ou atrasada) abaixo da meta e ainda sem motivo
 function pendentesMeta(dia) {
-  return ITENS.filter(i => i.dia <= dia && i.meta_final - feito(i.produto_id, i.unidade) > 1e-9 && !temMotivo(i))
+  return ITENS.filter(i => i.dia <= dia && !i.encerrado_em && i.meta_final - feito(i.produto_id, i.unidade) > 1e-9 && !temMotivo(i))
     .sort((a, b) => nomeP(a.produto_id).localeCompare(nomeP(b.produto_id)));
 }
 // MP e pré-preparo que o sistema acha que estão na Produção da unidade
@@ -920,7 +975,9 @@ function telaFechar() {
       const u = uniDe(i.unidade), fe = feito(i.produto_id, i.unidade);
       return `<div class="fech-linha"><div class="topo-l">${chip(u)}<div class="meio"><b>${esc(nomeP(i.produto_id))}</b>
         <span>feito ${num(fe)} de ${num(i.meta_final)} ${esc(unP(i.produto_id))}${i.dia < dia ? ` · era de ${diaSem(i.dia)} ${ddmm(i.dia)}` : ''}</span></div></div>
-        ${chips('meta|' + i.id, MOTIVOS_META)}</div>`;
+        ${chips('meta|' + i.id, MOTIVOS_META)}
+        ${temRemarcar() && t.mot['meta|' + i.id] ? `<div class="pede">Quando termina o restante (${num(i.meta_final - fe)} ${esc(unP(i.produto_id))})?</div>
+          ${chips('quando|' + i.id, [...diasParaRemarcar(dia).map(d => ['dia:' + d, `${DIAS_LONGO[new Date(d + 'T12:00:00').getDay()]} ${ddmm(d)}`]), ['encerrado', 'Não vai fazer']])}` : ''}</div>`;
     }).join('') : '';
   const blocosMp = U.map(u => {
     const lista = mpParaContar(u);
@@ -951,6 +1008,12 @@ function contou(inp) {
 }
 function marcarMotivo(chave, cod) {
   let obs = null;
+  if (chave.startsWith('quando|')) {
+    tela.mot[chave] = cod === 'encerrado' ? { motivo: cod, acao: 'encerrado' } : { motivo: cod, acao: 'remarcado', dia: cod.slice(4) };
+    document.querySelectorAll('[data-cont]').forEach(i => { tela.cont[i.dataset.cont] = i.value.trim(); });
+    pintar();
+    return;
+  }
   if (cod === 'outro') { obs = (prompt('Qual foi o motivo?', tela.mot[chave]?.obs || '') || '').trim(); if (!obs) return; }
   tela.mot[chave] = { motivo: cod, obs };
   document.querySelectorAll('[data-cont]').forEach(i => { tela.cont[i.dataset.cont] = i.value.trim(); });
@@ -964,6 +1027,8 @@ async function confirmarFechar() {
   const pend = pendentesMeta(dia);
   const semMot = pend.filter(i => !t.mot['meta|' + i.id]);
   if (semMot.length) { toast(`Falta o motivo de ${semMot.length} SA que não bateu a meta.`, 'erro'); return; }
+  const semQuando = temRemarcar() ? pend.filter(i => !t.mot['quando|' + i.id]) : [];
+  if (semQuando.length) { toast(`Diga quando termina o restante de ${semQuando.length} SA (ou "Não vai fazer").`, 'erro'); return; }
   const contagens = [];
   for (const u of U) for (const x of mpParaContar(u)) {
     const k = 'mp|' + u.unidade + '|' + x.pid, v = t.cont[k];
@@ -982,8 +1047,10 @@ async function confirmarFechar() {
     if (!await garantirSessao()) return;
     const linhas = pend.map(i => {
       const fe = feito(i.produto_id, i.unidade), m = t.mot['meta|' + i.id];
+      const q = t.mot['quando|' + i.id];
       return { data: dia, unidade: i.unidade, tipo: 'meta', produto_id: i.produto_id, meta_item_id: i.id, meta: i.meta_final,
-               feito: fe, diferenca: i.meta_final - fe, motivo: m.motivo, obs: m.obs || null, responsavel: quem() };
+               feito: fe, diferenca: i.meta_final - fe, motivo: m.motivo, obs: m.obs || null, responsavel: quem(),
+               ...(q ? { acao: q.acao, remarcado_para: q.dia || null } : {}) };
     });
     for (const c of contagens) {
       const d = c.contado - c.esperado;          // ajuste do saldo (o negativo também volta para o contado)
@@ -997,6 +1064,7 @@ async function confirmarFechar() {
     if (linhas.length) {
       const { error } = await sb.from('prod_ocorrencias').insert(linhas);
       if (error) { toast('O estoque foi corrigido, mas os motivos não gravaram: ' + error.message, 'erro'); return; }
+      for (const i of pend) { const q = t.mot['quando|' + i.id]; if (q) await aplicarQuando(i, q); }
     }
     const { error: ef } = await sb.from('prod_fechamentos').upsert(U.map(u => ({ data: dia, unidade: u.unidade, responsavel: quem() })),
       { onConflict: 'data,unidade' });

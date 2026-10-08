@@ -16560,7 +16560,8 @@ function pintarOcorrenciasProducao() {
   const un = document.getElementById('oc-uni').value, tipo = document.getElementById('oc-tipo').value;
   const rot = Object.fromEntries(_ocDados.unis.map(u => [u.unidade, u.rotulo]));
   const L = _ocDados.ocs.filter(o => (!un || o.unidade === un) && (!tipo || o.tipo === tipo));
-  const motivo = o => o.motivo === 'outro' && o.obs ? `Outro: ${o.obs}` : (_OC_MOTIVO[o.motivo] || o.motivo);
+  const motivo = o => (o.motivo === 'outro' && o.obs ? `Outro: ${o.obs}` : (_OC_MOTIVO[o.motivo] || o.motivo)) +
+    (o.acao === 'remarcado' && o.remarcado_para ? ` · resto → ${_ddmm(o.remarcado_para)}` : o.acao === 'encerrado' ? ' · não vai fazer' : '');
   const unid = pid => esc(prodFT(pid)?.unidade_uso || '');
 
   const porMot = {};
