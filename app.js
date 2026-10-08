@@ -15795,8 +15795,9 @@ function exportarVendaContagem() {
 // prod_unidades: trocar o destino do P10 é mudar uma linha lá, não o código.
 // Meta aprovada fica congelada com os números do dia da aprovação.
 // ════════════════════════════════════════════════════════════════
-const _META_OFFS = [0, 1, 3, 4, 5, 6];                    // sex sáb seg ter qua qui
-const _META_DIA_NOME = ['Sex', 'Sáb', 'Seg', 'Ter', 'Qua', 'Qui'];
+// Dias em que a Produção trabalha. Sábado não (Wagner, 08/10/2026).
+const _META_OFFS = [0, 3, 4, 5, 6];                       // sex seg ter qua qui
+const _META_DIA_NOME = ['Sex', 'Seg', 'Ter', 'Qua', 'Qui'];
 let _metaUn = 'Centro';
 let _metaSemana = null;
 let _metaD = null;              // tudo que a tela precisa da semana carregada
@@ -16078,7 +16079,7 @@ function metaParamPadrao() {
 
 // Dia sugerido: o último dia de produção ANTES de a sobra da segunda acabar, com
 // um dia de folga (produzir o mais tarde possível mantém a SA fresca e espalha a
-// semana). Sem sobra na segunda, o dia é o sábado (entra na venda na segunda). A SA
+// semana). Sem sobra na segunda, o dia é a sexta (sábado a Produção não trabalha). A SA
 // que as duas unidades precisam vai no MESMO dia, o mais cedo dos dois: a Produção
 // faz numa leva só e separa no "Produzi".
 function _metaSugerirDias(D) {
@@ -16093,6 +16094,9 @@ function _metaSugerirDias(D) {
       let idx = 0;
       _META_OFFS.forEach((off, i) => { if (off <= fim - 1) idx = i; });
       l._idx = idx;
+      l._fim = fim;
+      l.mpSexta = null;
+      l.mpMovida = false;
       if (_metaFinal(l) > 0) (idxDe[l.pid] ||= []).push(idx);
     });
   });
@@ -16104,6 +16108,23 @@ function _metaSugerirDias(D) {
       l.sug = _isoMais(D.semana, _META_OFFS[idx]);
       l.junto = (idxs?.length || 0) > 1;
     });
+  });
+  // Sexta só com a MP que já está no estoque (Estoque Central/Delivery + Produção da
+  // unidade): a compra da semana chega na segunda (Wagner, 08/10). A MP vai para a SA
+  // que acaba primeiro; a que não couber passa para a segunda.
+  Object.values(D.linhas).forEach(L => {
+    if (L.meta?.status === 'aprovada') return;
+    const u = L.u, disp = {};
+    [u.local_mp, u.local_producao].forEach(lg => Object.entries(D.saldo[lg] || {})
+      .forEach(([pid, v]) => { if (v > 0) disp[pid] = (disp[pid] || 0) + v; }));
+    L.arr.filter(l => _metaFinal(l) > 0 && (l.dia || l.sug) === D.semana && D.fichaDe[l.pid])
+      .sort((a, b) => !!b.dia - !!a.dia || a._fim - b._fim)       // dia escolhido à mão primeiro
+      .forEach(l => {
+        const { itens } = _metaMp(u.unidade, [l], D);
+        l.mpSexta = itens.every(i => (disp[i.pid] || 0) >= i.q - 1e-9);
+        if (l.mpSexta) itens.forEach(i => { disp[i.pid] -= i.q; });
+        else if (!l.dia) { l.sug = _isoMais(D.semana, 3); l.junto = false; l.mpMovida = true; }
+      });
   });
 }
 
@@ -16124,14 +16145,15 @@ function metaAjuste(pid, txt) {
 function metaDia(pid, iso) {
   const l = _metaD?.linhas[_metaUn]?.arr.find(x => x.pid === pid);
   if (l) l.dia = iso === l.sug ? null : iso;
+  _metaSugerirDias(_metaD);
   _pintarMeta();
 }
 
 // MP que a meta da unidade pede: explode a meta final pela ficha de cada SA até a
 // matéria-prima (o que não tem ficha). O pirarucu limpo vira pirarucu fresco aqui.
 // Desconta o que já está no estoque de MP da unidade e na Produção dela.
-function _metaMp(un, soLinhas) {
-  const D = _metaD, L = D.linhas[un], u = L.u;
+function _metaMp(un, soLinhas, D = _metaD) {
+  const L = D.linhas[un], u = L.u;
   const acc = {}, usos = {}, semFicha = [];
   const expl = (pid, q, raiz, pilha) => {
     const f = D.fichaDe[pid];
@@ -16251,7 +16273,10 @@ function _pintarMeta() {
   const linha = l => {
     const fin = _metaFinal(l);
     const dia = l.dia || l.sug;
-    const sub = l.dia && l.dia !== l.sug ? 'trocado' : (l.junto ? `junto c/ ${esc(nomeOutro)}` : 'sugerido');
+    const sub = dia === D.semana && l.mpSexta === false ? '<span class="text-danger fw-semibold">sem MP no estoque na sexta</span>'
+      : l.dia && l.dia !== l.sug ? 'trocado'
+      : l.mpMovida ? 'MP chega na segunda'
+      : (l.junto ? `junto c/ ${esc(nomeOutro)}` : 'sugerido');
     const ajTxt = l.ajuste === null ? '' : (l.ajuste > 0 ? '+' : '') + String(l.ajuste).replace('.', ',');
     const opts = _META_OFFS.map((off, i) => {
       const iso = _isoMais(D.semana, off);
