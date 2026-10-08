@@ -16524,7 +16524,7 @@ async function metaCriarPedidosMp() {
 const _OC_MOTIVO = {
   faltou_tempo: 'Faltou tempo', faltou_mp: 'Faltou MP', produto_ruim: 'MP com problema', perda: 'Perda acima do normal',
   ficha: 'Ficha desatualizada', processo: 'Falha no processo', registro: 'Produção registrada a mais',
-  sem_receber: 'MP chegou sem registrar no tablet', outro: 'Outro',
+  sem_receber: 'MP chegou sem registrar no tablet', pesagem: 'Pesagem errada', outro: 'Outro',
 };
 let _ocDados = null;
 
@@ -16570,7 +16570,7 @@ function pintarOcorrenciasProducao() {
   document.getElementById('oc-kpis').innerHTML =
     kpi('Ocorrências no período', L.length, L.length ? 'kpi-ruim' : 'kpi-ok') +
     kpi('Meta que não bateu', L.filter(o => o.tipo === 'meta').length, 'kpi-cinza') +
-    kpi('Diferença de MP', L.filter(o => o.tipo === 'mp').length, 'kpi-cinza') +
+    kpi('MP: sobra e limpeza', L.filter(o => o.tipo !== 'meta').length, 'kpi-cinza') +
     kpi('Motivo mais comum', top ? `${esc(_OC_MOTIVO[top[0]] || top[0])} (${top[1]})` : '—', 'kpi-cinza');
 
   // resumo por item + loja: o que se repete
@@ -16584,9 +16584,10 @@ function pintarOcorrenciasProducao() {
   document.getElementById('oc-resumo').innerHTML = gs.length ? gs.map(g => {
     const o = g.o;
     const difTxt = o.tipo === 'meta' ? `faltaram ${_metaNumU(o.produto_id, g.dif)} ${unid(o.produto_id)}`
+      : o.tipo === 'rendimento' ? `limpo ${g.dif < 0 ? 'a menos' : 'a mais'}: ${_metaNum(Math.abs(g.dif))} ${unid(o.produto_id)}`
       : `${g.dif < 0 ? 'usou' : 'sobrou'} ${_metaNum(Math.abs(g.dif))} ${unid(o.produto_id)} ${g.dif < 0 ? 'a mais' : 'a mais que o esperado'}`;
     return `<tr${g.n > 1 ? ' class="table-warning"' : ''}>
-      <td class="fw-semibold">${esc(prodFT(o.produto_id)?.nome || o.produto_id)}<div class="small text-muted">${o.tipo === 'meta' ? 'meta que não bateu' : 'diferença de MP'}</div></td>
+      <td class="fw-semibold">${esc(prodFT(o.produto_id)?.nome || o.produto_id)}<div class="small text-muted">${{ meta: 'meta que não bateu', mp: 'sobra de MP diferente', rendimento: 'limpeza fora da ficha' }[o.tipo] || o.tipo}</div></td>
       <td>${esc(rot[o.unidade] || o.unidade)}</td>
       <td class="text-end fw-bold">${g.n}</td>
       <td>${Object.entries(g.mot).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${esc(m)}${n > 1 ? ` <span class="badge bg-warning text-dark">${n}x</span>` : ''}`).join(' · ')}</td>
@@ -16596,11 +16597,13 @@ function pintarOcorrenciasProducao() {
   document.getElementById('oc-tbody').innerHTML = L.map(o => {
     const det = o.tipo === 'meta'
       ? `feito ${_metaNumU(o.produto_id, o.feito)} de ${_metaNumU(o.produto_id, o.meta)} ${unid(o.produto_id)}`
+      : o.tipo === 'rendimento'
+      ? `usou ${_metaNum(o.usado)} ${unid(o.produto_id)}, deu ${_metaNum(o.contado)} limpo (ficha: ${_metaNum(o.esperado)}) <span class="${o.diferenca < 0 ? 'text-danger' : 'text-primary'} fw-semibold">${o.usado ? _metaNum(o.contado / o.usado * 100) + '%' : ''}</span>`
       : `contou ${_metaNum(o.contado)}, sistema ${_metaNum(Math.max(0, o.esperado))} ${unid(o.produto_id)} <span class="${o.diferenca < 0 ? 'text-danger' : 'text-primary'} fw-semibold">(${o.diferenca > 0 ? '+' : ''}${_metaNum(o.diferenca)})</span>`;
     return `<tr>
       <td class="text-nowrap">${_ddmm(o.data)}</td>
       <td>${esc(rot[o.unidade] || o.unidade)}</td>
-      <td class="small">${o.tipo === 'meta' ? 'Meta' : 'MP'}</td>
+      <td class="small">${{ meta: 'Meta', mp: 'Sobra MP', rendimento: 'Limpeza' }[o.tipo] || o.tipo}</td>
       <td class="fw-semibold">${esc(prodFT(o.produto_id)?.nome || o.produto_id)}</td>
       <td class="text-end text-nowrap">${det}</td>
       <td>${esc(motivo(o))}</td>

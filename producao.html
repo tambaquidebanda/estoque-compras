@@ -655,9 +655,17 @@ function abrirLimpar(ppp) {
   if (!m) { toast(`${nomeP(ppp)} está sem ficha técnica.`, 'erro'); return; }
   const pre = prePreparos().find(x => x.ppp === ppp);
   const unis = pre ? pre.linhas.map(l => l.un) : U.map(u => u.unidade);
+  // O que usou já vem com a MP que está na Produção (o que foi recebido): a pessoa
+  // só pesa o limpo. Se limpou só uma parte, corrige o número (Wagner, 08/10).
   const vals = {};
-  U.filter(u => unis.includes(u.unidade)).forEach(u => { vals[u.unidade + '|usou'] = ''; vals[u.unidade + '|deu'] = ''; });
-  ir('limpar', { pid: ppp, vals, ativo: Object.keys(vals)[0] });
+  const fmt = v => String(Math.round(v * 1000) / 1000).replace('.', ',');
+  U.filter(u => unis.includes(u.unidade)).forEach(u => {
+    const tem = saldo(u.local_producao, m.mp);
+    vals[u.unidade + '|usou'] = tem > 0 ? fmt(tem) : '';
+    vals[u.unidade + '|deu'] = '';
+  });
+  const primeiro = Object.keys(vals).find(k => k.endsWith('|deu') && vals[k.replace('|deu', '|usou')]) || Object.keys(vals)[0];
+  ir('limpar', { pid: ppp, vals, ativo: primeiro });
 }
 function telaLimpar() {
   const t = tela, ppp = t.pid, m = mpPrincipal(ppp);
@@ -668,11 +676,11 @@ function telaLimpar() {
     const usou = lerNum(t.vals[un + '|usou']), deu = lerNum(t.vals[un + '|deu']);
     let res = '';
     if (usou > 0 && deu > 0) {
-      const r = deu / usou, ok = r >= m.rendFicha - 0.005;
+      const r = deu / usou, ok = Math.abs(r - m.rendFicha) <= TOL_REND;
       const falta = l ? l.precisa - l.tem - deu : 0;
       const msg = falta > 0.05 ? `Faltam ${num(falta)} ${esc(unP(ppp))} para a meta de hoje` : (l ? 'Dá para a meta de hoje' : '');
       res = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span class="rend" style="background:${ok ? 'var(--ok-bg)' : 'var(--av-bg)'};color:${ok ? 'var(--ok-txt)' : 'var(--av-txt)'}">Rendeu ${num(r * 100, 0)}% · ficha ${num(m.rendFicha * 100, 0)}%</span>
+        <span class="rend" style="background:${ok ? 'var(--ok-bg)' : 'var(--av-bg)'};color:${ok ? 'var(--ok-txt)' : 'var(--av-txt)'}">Rendeu ${num(r * 100, 0)}% · ficha ${num(m.rendFicha * 100, 0)}%${ok ? ' ✓' : ' · vai pedir o motivo'}</span>
         ${msg ? `<span style="color:${falta > 0.05 ? 'var(--av-txt)' : 'var(--ok-txt)'}">${msg}</span>` : ''}</div>`;
     }
     const par = (k, rot) => `<div class="par${t.ativo === un + '|' + k ? ' ativo' : ''}" onclick="ativar('${esc(un)}|${k}')"><div class="rot">${rot}</div>
@@ -681,7 +689,9 @@ function telaLimpar() {
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div>${chip(u)} ${l ? `<span style="font-size:18px">Precisa hoje <b class="disp" style="font-size:22px">${numP(l.precisa - l.tem)} ${esc(unP(ppp))}</b></span>` : ''}</div>
         <span class="sub">${l ? l.para.map(nomeP).map(esc).join(' · ') : ''}</span></div>
-      <div class="pares">${par('usou', `${esc(nomeP(m.mp))} que usou`)}${par('deu', 'Deu pronto na balança')}</div>${res}</div>`;
+      <div class="pares">${par('usou', `${esc(nomeP(m.mp))} que usou`)}${par('deu', 'Deu pronto na balança')}</div>
+      <div class="sub">${saldo(u.local_producao, m.mp) > 0 ? `Recebido na Produção: ${numP(saldo(u.local_producao, m.mp))} ${esc(unP(m.mp))} (já preenchido; corrija se limpou só uma parte). ` : ''}${usou > 0
+        ? `Pela ficha, ${numP(usou)} ${esc(unP(m.mp))} devem dar <b>${numP(usou * m.rendFicha)} ${esc(unP(ppp))}</b> limpo.` : ''}</div>${res}</div>`;
   }).join('');
   const prontos = unis.filter(un => lerNum(t.vals[un + '|usou']) > 0 && lerNum(t.vals[un + '|deu']) > 0);
   const temFresco = unis.map(un => `${chip(uniDe(un))} ${num(saldo(uniDe(un).local_producao, m.mp))} ${esc(unP(m.mp))}`).join(' · ');
@@ -701,6 +711,17 @@ async function confirmarLimpar() {
     .map(un => [un, lerNum(t.vals[un + '|usou']), lerNum(t.vals[un + '|deu'])]).filter(([, a, b]) => a > 0 && b > 0);
   if (!unis.length) return;
   const estranho = unis.find(([, a, b]) => b > a * 1.05 || b < a * 0.3);
+  // Rendimento fora da ficha vira ocorrência na hora, com o motivo
+  const motivos = {};
+  if (!SEM_OCOR) for (const [un, a, b] of unis) {
+    const r = b / a;
+    if (Math.abs(r - m.rendFicha) <= TOL_REND) continue;
+    const res = await perguntarMotivo(`${uniDe(un).rotulo}: rendeu ${num(r * 100, 0)}% · ficha ${num(m.rendFicha * 100, 0)}%`,
+      `${num(a)} ${unP(m.mp)} deram ${num(b)} ${unP(ppp)}; pela ficha seriam ${num(a * m.rendFicha)}. Por quê?`,
+      r < m.rendFicha ? MOTIVOS_REND_MENOS : MOTIVOS_REND_MAIS, false);
+    if (!res) return;
+    motivos[un] = res;
+  }
   const resumo = unis.map(([un, a, b]) => `${uniDe(un).rotulo}: usou ${num(a)} ${unP(m.mp)}, deu ${num(b)} ${unP(ppp)} (${num(b / a * 100, 0)}%)`).join('\n');
   if (!confirm(`${estranho ? '⚠️ Rendimento fora do normal — confira os pesos.\n\n' : ''}Confirmar a limpeza?\n\n${resumo}`)) return;
   emVoo = true;
@@ -711,6 +732,12 @@ async function confirmarLimpar() {
       const { error } = await sb.from('prod_registros').insert({ data: HOJE, unidade: un, tipo: 'limpeza', produto_id: ppp,
         quantidade: deu, mp_produto_id: m.mp, mp_quantidade: usou, rendimento_ficha: Math.round(m.rendFicha * 10000) / 10000, responsavel: quem() });
       if (error) { toast(`Não gravou (${error.message}). Nada foi alterado no ${u.rotulo}.`, 'erro'); continue; }
+      if (motivos[un]) {
+        const esp = usou * m.rendFicha;
+        const { error: eo } = await sb.from('prod_ocorrencias').insert({ data: HOJE, unidade: un, tipo: 'rendimento', produto_id: m.mp,
+          usado: usou, esperado: esp, contado: deu, diferenca: deu - esp, motivo: motivos[un].motivo, obs: motivos[un].obs || null, responsavel: quem() });
+        if (eo) toast(`A limpeza gravou, mas o motivo não (${eo.message}).`, 'erro');
+      }
       const base = { origem: 'producao', responsavel: quem(), data: HOJE,
         motivo: `Limpeza ${ddmm(HOJE)} (${u.rotulo}): ${num(usou)} ${unP(m.mp)} → ${num(deu)} ${unP(ppp)} (${num(deu / usou * 100, 0)}%)` };
       for (const [ing, qq] of (INGS[f.id] || [])) {
@@ -738,7 +765,12 @@ const MOTIVOS_MP_MENOS = [['perda', 'Perda acima do normal'], ['ficha', 'Ficha d
 // MP: contou MAIS = usou menos do que a ficha, ou o sistema não viu uma entrada
 const MOTIVOS_MP_MAIS = [['ficha', 'Ficha desatualizada'], ['registro', 'Produção registrada a mais'],
   ['sem_receber', 'MP chegou sem registrar no tablet'], ['outro', 'Outro motivo']];
-const ROT_MOTIVO = Object.fromEntries([...MOTIVOS_META, ...MOTIVOS_MP_MENOS, ...MOTIVOS_MP_MAIS]);
+// Limpeza (rendimento da ficha): fora de 3 pontos para cima ou para baixo pede motivo
+const TOL_REND = 0.03;
+const MOTIVOS_REND_MENOS = [['perda', 'Perda acima do normal'], ['produto_ruim', 'MP com problema'], ['processo', 'Falha no processo'],
+  ['ficha', 'Ficha desatualizada'], ['outro', 'Outro motivo']];
+const MOTIVOS_REND_MAIS = [['ficha', 'Ficha desatualizada'], ['pesagem', 'Pesagem errada'], ['outro', 'Outro motivo']];
+const ROT_MOTIVO = Object.fromEntries([...MOTIVOS_META, ...MOTIVOS_MP_MENOS, ...MOTIVOS_MP_MAIS, ...MOTIVOS_REND_MENOS, ...MOTIVOS_REND_MAIS]);
 const rotMotivo = m => (m.motivo === 'outro' && m.obs) ? m.obs : (ROT_MOTIVO[m.motivo] || m.motivo);
 const temMotivo = it => OCOR.some(o => o.tipo === 'meta' && o.meta_item_id === it.id);
 const fechado = (dia, un) => FECH.some(f => f.data === dia && f.unidade === un);

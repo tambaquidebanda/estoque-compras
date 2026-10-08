@@ -9,6 +9,8 @@
 --   prod_ocorrencias  - uma linha por divergencia
 --       tipo 'meta' : SA que ficou abaixo da meta (meta, feito)
 --       tipo 'mp'   : MP contada no fim do dia diferente do sistema (esperado, contado)
+--       tipo 'rendimento' : limpeza fora do rendimento da ficha (usado = MP que
+--                     usou, esperado = limpo pela ficha, contado = limpo na balanca)
 --   prod_fechamentos  - um "Fechar o dia" por dia e unidade
 --
 -- So cria tabelas novas. Nada existente e alterado ou apagado.
@@ -28,10 +30,11 @@ CREATE TABLE IF NOT EXISTS prod_ocorrencias (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   data          date NOT NULL,
   unidade       text NOT NULL REFERENCES prod_unidades(unidade),
-  tipo          text NOT NULL CHECK (tipo IN ('meta', 'mp')),
+  tipo          text NOT NULL,
   produto_id    uuid NOT NULL,
   meta_item_id  uuid,
   meta          numeric,
+  usado         numeric,
   feito         numeric,
   esperado      numeric,
   contado       numeric,
@@ -41,6 +44,10 @@ CREATE TABLE IF NOT EXISTS prod_ocorrencias (
   responsavel   text,
   criado_em     timestamptz NOT NULL DEFAULT now()
 );
+-- (se a tabela ja existia de uma versao anterior deste arquivo)
+ALTER TABLE prod_ocorrencias ADD COLUMN IF NOT EXISTS usado numeric;
+ALTER TABLE prod_ocorrencias DROP CONSTRAINT IF EXISTS prod_ocorrencias_tipo_check;
+ALTER TABLE prod_ocorrencias ADD CONSTRAINT prod_ocorrencias_tipo_check CHECK (tipo IN ('meta', 'mp', 'rendimento'));
 CREATE INDEX IF NOT EXISTS prod_ocorrencias_data ON prod_ocorrencias (data);
 CREATE INDEX IF NOT EXISTS prod_ocorrencias_item ON prod_ocorrencias (meta_item_id) WHERE meta_item_id IS NOT NULL;
 
