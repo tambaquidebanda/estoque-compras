@@ -15782,7 +15782,9 @@ function exportarVendaContagem() {
 // semana de segunda a domingo. Conta (08/10/2026):
 //   Média de cada dia da semana = consumo de SA das últimas 4 semanas (até a
 //             quarta), gravado pelo robô scripts/venda_sa_dia.py em prod_venda_sa_dia
-//   Tem       = soma dos estoques em prod_unidades.locais_tem (negativo conta zero)
+//   Tem       = TUDO o que a unidade tem (Wagner, 08/10): prod_unidades.locais_tem
+//               + os setores dela (Cozinha, Bar... / P10_*) + transferência liberada e
+//               ainda não recebida com destino nela ("a caminho"). Negativo conta zero.
 //   Sobra seg = Tem − venda média de qui+sex+sáb+dom
 //   Precisa   = venda média de seg a dom × (1 + margem)        (margem padrão 25%)
 //   Meta      = Precisa − Sobra seg (se positiva), arredondado para cima; nunca negativa
@@ -15880,10 +15882,9 @@ async function _metaCarregar(semana) {
   });
   const vIni = Object.values(param).map(x => x.ini).sort()[0];
   const vFim = Object.values(param).map(x => x.fim).sort().pop();
-  const locais = [...new Set(unidades.flatMap(u => [...(u.locais_tem || []), u.local_mp, u.local_producao]))];
   const [vendas, saldos, fichas, ings, cfg] = await Promise.all([
     _metaSelect('prod_venda_sa_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
-    _metaSelect('est_saldo_local', 'produto_id,local,saldo', q => q.in('local', locais)),
+    _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
     _metaSelect('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos'])),
@@ -15923,6 +15924,38 @@ async function _metaCarregar(semana) {
   };
   const saldo = {};
   saldos.forEach(s => { (saldo[s.local] ||= {})[s.produto_id] = Number(s.saldo) || 0; });
+  // Lugares de cada unidade: os da configuração + os setores. Setor do P10 começa com
+  // "P10_" (_localRazao); qualquer outro lugar que nenhuma unidade configurou é do Centro.
+  const configurados = new Set(unidades.flatMap(u => [...(u.locais_tem || []), u.local_mp, u.local_producao, u.local_destino]));
+  const prefixo = u => u.unidade === 'Delivery P10' ? 'P10_' : '';
+  const lugaresDe = {};
+  unidades.forEach(u => {
+    const setores = Object.keys(saldo).filter(l => !configurados.has(l) &&
+      (prefixo(u) ? l.startsWith(prefixo(u)) : !l.startsWith('P10_')));
+    lugaresDe[u.unidade] = [...new Set([...(u.locais_tem || []), ...setores])];
+  });
+  // A caminho: transferência liberada (já saiu da origem) e ainda não recebida.
+  const LOCAL_DA_UNI = Object.fromEntries(Object.entries(_PROD_UNI_DO_LOCAL).map(([l, n]) => [n, l]));
+  const transf = await _metaSelect('pedidos_internos', 'id,num_pedido,data,local,unidade_origem',
+    q => q.eq('tipo', 'transferencia').eq('status', 'liberado'));
+  const transfItens = [];          // .in() em lotes de 100: lista grande estoura a URL
+  for (let i = 0; i < transf.length; i += 100) {
+    const ids = transf.slice(i, i + 100).map(t => t.id);
+    transfItens.push(...await _metaSelect('pedidos_internos_itens', 'pedido_id,produto_id,qtd_pedida,qtd_liberada', q => q.in('pedido_id', ids)));
+  }
+  const caminho = {}, caminhoPed = {};       // caminho[unidade][pid] = qtd; caminhoPed[unidade] = pedidos com SA
+  transf.forEach(t => {
+    const dest = LOCAL_DA_UNI[t.local];
+    const u = unidades.find(x => lugaresDe[x.unidade].includes(dest));
+    if (!u) return;
+    transfItens.filter(i => i.pedido_id === t.id && prodFT(i.produto_id)?.tipo === 'SA').forEach(i => {
+      const q = Number(i.qtd_liberada ?? i.qtd_pedida) || 0;
+      if (!(q > 0)) return;
+      const m = (caminho[u.unidade] ||= {});
+      m[i.produto_id] = (m[i.produto_id] || 0) + q;
+      (caminhoPed[u.unidade] ||= new Map()).set(t.id, t);
+    });
+  });
   const fichaDe = {}, ingsDe = {};
   fichas.forEach(f => { fichaDe[f.produto_id] = { id: f.id, rend: Number(f.rendimento) || 1 }; });
   ings.forEach(i => (ingsDe[i.ficha_id] ||= []).push([i.ingrediente_id, Number(i.quantidade) || 0]));
@@ -15955,12 +15988,15 @@ async function _metaCarregar(semana) {
     } else {
       arr = [...universo].map(pid => {
         const md = mediaDia(u.unidade, pid);
-        const tem = (u.locais_tem || []).reduce((t, l) => t + Math.max(0, saldo[l]?.[pid] || 0), 0);
+        const onde = lugaresDe[u.unidade].map(l => [l, Math.max(0, saldo[l]?.[pid] || 0)]).filter(x => x[1] > 0);
+        const aCaminho = caminho[u.unidade]?.[pid] || 0;
+        const tem = onde.reduce((t, x) => t + x[1], 0) + aCaminho;
         const s = manter[pid] || doMeta[pid];
-        return { pid, md, tem, ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
+        return { pid, md, tem, onde, aCaminho, ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
       });
     }
-    linhas[u.unidade] = { u, meta, margem, vIni: lIni, vFim: lFim, arr };
+    linhas[u.unidade] = { u, meta, margem, vIni: lIni, vFim: lFim, arr,
+                          caminhoPed: [...(caminhoPed[u.unidade]?.values() || [])] };
     if (meta?.status !== 'aprovada') _metaRecalc(linhas[u.unidade]);
   });
   _metaManter = null;
@@ -16109,7 +16145,7 @@ function _pintarMeta() {
   const L = D.linhas[_metaUn], u = L.u;
   const aprovada = L.meta?.status === 'aprovada';
   const pct = Math.round(L.margem * 100);
-  const rotLocais = (u.locais_tem || []).map(_rotuloSemIcone).join(' + ');
+  const rotLocais = (u.locais_tem || []).map(_rotuloSemIcone).join(' + ') + ' + setores + a caminho';
 
   document.getElementById('meta-unis').innerHTML = D.unidades.map(x => {
     const m = D.linhas[x.unidade];
@@ -16164,6 +16200,8 @@ function _pintarMeta() {
     `A meta não cobre isso, porque só entra na venda na segunda. Para não faltar, mande antes (sexta ou sábado): ` +
     faltaFds.map(l => `${esc(prodFT(l.pid)?.nome || l.pid)} (falta ${_metaNum(_metaArred(l.pid, l.fds - l.tem))})`).join(', ') + '.');
   if (!aprovada && L.arr.length && L.arr.every(l => !l.tem)) avisos.push(`${esc(rotLocais)} ainda não tem saldo de SA no sistema: a coluna <strong>Tem</strong> está zerada e a meta é a venda inteira + ${pct}%. Depois da primeira contagem, a conta passa a descontar o que o ${esc(u.rotulo)} tem.`);
+  if (!aprovada && L.caminhoPed.length) avisos.push(`<strong>A caminho, já contado no Tem:</strong> ${L.caminhoPed.map(t =>
+    `${esc(t.num_pedido)} (${esc(t.unidade_origem || '')} → ${esc(t.local || '')}, ${_ddmm(t.data)})`).join(' · ')}. Saiu da origem e ainda não foi recebido; se não chegar, avise antes de aprovar.`);
   if (mp.semFicha.length) avisos.push(`Sem ficha técnica, a MP destas SA não entra na conta: ${mp.semFicha.map(p => esc(prodFT(p)?.nome || p)).join(', ')}.`);
   let infoPed = '';
   if (aprovada && D.semColunaPedido) {
@@ -16206,7 +16244,9 @@ function _pintarMeta() {
       : `<td class="text-end">${_metaNumU(l.pid, sobra)}</td>`;
     return `<tr>
       <td class="fw-semibold">${esc(prodFT(l.pid)?.nome || l.pid)}</td>
-      <td class="text-end">${_metaNumU(l.pid, l.tem)}</td>
+      <td class="text-end"${l.onde ? ` title="${esc([...l.onde.map(([lg, q]) => `${_rotuloSemIcone(lg)} ${_metaNumU(l.pid, q)}`),
+        ...(l.aCaminho ? [`a caminho ${_metaNumU(l.pid, l.aCaminho)}`] : [])].join(' · ') || 'nada')}"` : ''}>${_metaNumU(l.pid, l.tem)}${l.aCaminho
+        ? `<div class="meta-caminho">${_metaNumU(l.pid, l.aCaminho)} a caminho</div>` : ''}</td>
       <td class="text-end text-muted">${l.fds === null || l.fds === undefined ? '—' : '−' + _metaNumU(l.pid, l.fds)}</td>
       ${sobraTd}
       <td class="text-end text-muted">${_metaNumU(l.pid, l.vendeu)}</td>
@@ -16231,7 +16271,7 @@ function _pintarMeta() {
   document.getElementById('meta-tbody').innerHTML = html;
 
   document.getElementById('meta-nota').innerHTML =
-    `<strong>Tem</strong> = ${esc(rotLocais)} agora (negativo conta zero). ` +
+    `<strong>Tem</strong> = ${esc(rotLocais)} agora (negativo conta zero; passe o mouse no número para ver onde está). ` +
     `<strong>Vende qui→dom</strong> e <strong>seg→dom</strong> = consumo médio de cada dia da semana no período escolhido (padrão: 4 semanas até a quarta), pela ficha dos pratos. ` +
     `<strong>Sobra na segunda</strong> = Tem − venda de qui→dom; ela abate da meta. <strong>Meta</strong> = venda de seg→dom + ${pct}% − sobra na segunda. ` +
     `<strong>Ajuste</strong> soma ou tira da meta (+20, -10). O dia vem sugerido pelo sistema; quem aprova pode trocar. ` +
