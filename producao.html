@@ -125,6 +125,24 @@
     .item .meio span { font-size: 14px; color: var(--tinta3); }
     .qtd-in { width: 130px; min-height: 54px; border: 1px solid var(--borda2); border-radius: 10px; text-align: center; font: 800 22px Archivo, sans-serif; background: #f7f9f8; }
     .mais-menos { width: 54px; height: 54px; border-radius: 12px; border: 1px solid var(--borda2); background: #fff; font: 800 26px Archivo, sans-serif; color: var(--tinta); }
+    /* semana em calendário: uma coluna por dia de produção */
+    .cal { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+    .cal-dia { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .cal-cab { background: var(--card); border: 2px solid var(--borda); border-radius: 12px; padding: 8px 12px; display: flex; flex-direction: column; }
+    .cal-cab .d { font: 800 19px Archivo, sans-serif; }
+    .cal-cab .s { font-size: 14px; color: var(--tinta3); }
+    .cal-dia.hoje .cal-cab { background: var(--teal); border-color: var(--teal); color: #fff; }
+    .cal-dia.hoje .cal-cab .s { color: #cfe7e5; }
+    .cal-dia.passado .cal-cab { opacity: .7; }
+    .cal-sa { text-align: left; background: var(--card); border: 2px solid var(--borda); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font: inherit; color: inherit; }
+    .cal-sa.ok { border-color: var(--ok); background: var(--ok-bg); }
+    .cal-sa.atras { border-color: var(--av); }
+    .cal-sa .n { font-weight: 800; font-size: 16px; line-height: 1.2; }
+    .cal-sa .q { display: flex; align-items: center; gap: 6px; font-size: 15px; font-variant-numeric: tabular-nums; }
+    .cal-sa .q .chip { font-size: 12px; padding: 2px 7px; }
+    .cal-sa .barra { height: 6px; }
+    .cal-sa .barra > div { height: 6px; }
+    .cal-vazio { border: 2px dashed var(--borda); border-radius: 12px; padding: 14px; text-align: center; color: var(--tinta3); font-size: 15px; }
     table.sem { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; font-size: 16px; }
     table.sem th { text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #2c3a36; background: var(--teal-bg); padding: 10px 14px; }
     table.sem td { padding: 10px 14px; border-top: 1px solid #e6ebe9; font-variant-numeric: tabular-nums; }
@@ -511,18 +529,39 @@ function telaHoje() {
     ${botaoFechar()}`;
 }
 
+// Semana em calendário (sugestão do Wagner, 08/10): uma coluna por dia de produção e,
+// em cada dia, as SA daquele dia com a quantidade de cada loja. A SA que cada loja faz
+// num dia diferente (Batata: Centro na sexta, P10 na segunda) aparece nos dois dias.
+const DIAS_PRODUCAO = [0, 3, 4, 5, 6];              // a partir da sexta: sex seg ter qua qui
 function telaSemana() {
   if (!ITENS.length) return semMeta();
-  const lista = porSA().sort((a, b) => (a.dia || '').localeCompare(b.dia || '') || nomeP(a.pid).localeCompare(nomeP(b.pid)));
-  const rows = lista.map(x => `<tr>
-      <td><b>${esc(nomeP(x.pid))}</b></td>
-      <td>${x.dia ? `${diaSem(x.dia)} ${ddmm(x.dia)}` : '—'}</td>
-      ${U.map(u => { const v = x.porUni[u.unidade]; return `<td>${v ? `<b>${num(v.feito)}</b> de ${num(v.meta)} <span class="sub">${esc(unP(x.pid))}</span>${v.falta <= 0 ? ' ✓' : ''}${
-        v.item.dia && v.item.dia !== x.dia ? `<div class="sub">${diaSem(v.item.dia)} ${ddmm(v.item.dia)}</div>` : ''}` : '—'}</td>`; }).join('')}
-      <td><button class="btn-sec" style="min-height:46px" onclick="abrirProduzi('${x.pid}')">Produzi</button></td></tr>`).join('');
-  return `<div class="linha-tit"><h2>Meta da semana</h2><span class="sub">feito de meta, por unidade</span></div>
-    <div style="overflow-x:auto"><table class="sem"><thead><tr><th>SA</th><th>Dia</th>${U.map(u => `<th>${esc(u.rotulo)}</th>`).join('')}<th></th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
+  const cols = DIAS_PRODUCAO.map(off => {
+    const dia = isoMais(SEMANA, off);
+    const its = ITENS.filter(i => i.dia === dia);
+    const porPid = {};
+    its.forEach(i => { (porPid[i.produto_id] ||= []).push(i); });
+    const cartoes = Object.entries(porPid).sort((a, b) => nomeP(a[0]).localeCompare(nomeP(b[0]))).map(([pid, lista]) => {
+      const linhas = U.filter(u => lista.some(i => i.unidade === u.unidade)).map(u => {
+        const it = lista.find(i => i.unidade === u.unidade), fe = feito(pid, u.unidade);
+        const pct = it.meta_final > 0 ? Math.min(100, fe / it.meta_final * 100) : 100;
+        return { u, fe, it, pct, fim: fe >= it.meta_final - 1e-9 };
+      });
+      const fim = linhas.every(l => l.fim), atras = !fim && dia < HOJE;
+      return `<button class="cal-sa${fim ? ' ok' : atras ? ' atras' : ''}" onclick="abrirProduzi('${pid}')" aria-label="Produzi ${esc(nomeP(pid))}">
+        <span class="n">${esc(nomeP(pid).replace(/^SA /, ''))}</span>
+        ${linhas.map(l => `<span class="q">${chip(l.u)}<span><b>${num(l.fe)}</b> de ${num(l.it.meta_final)} ${esc(unP(pid))}${l.fim ? ' ✓' : ''}</span></span>
+          <span class="barra"><div style="width:${l.pct}%;background:${corBarra(l.u, l.fim)}"></div></span>`).join('')}
+        ${atras ? '<span class="sub" style="color:var(--av-txt);font-weight:700">atrasado</span>' : ''}</button>`;
+    }).join('');
+    const nOk = Object.keys(porPid).filter(pid => porPid[pid].every(i => feito(pid, i.unidade) >= i.meta_final - 1e-9)).length;
+    const n = Object.keys(porPid).length;
+    return `<div class="cal-dia${dia === HOJE ? ' hoje' : dia < HOJE ? ' passado' : ''}">
+      <div class="cal-cab"><span class="d">${DIAS_LONGO[new Date(dia + 'T12:00:00').getDay()]} ${ddmm(dia)}</span>
+        <span class="s">${n ? `${nOk} de ${n} SA prontas` : 'nada planejado'}</span></div>
+      ${cartoes || '<div class="cal-vazio">—</div>'}</div>`;
+  }).join('');
+  return `<div class="linha-tit"><h2>Meta da semana</h2><span class="sub">toque numa SA para registrar o que produziu</span></div>
+    <div class="cal">${cols}</div>`;
 }
 
 // ── PRODUZI ─────────────────────────────────────────────────────
