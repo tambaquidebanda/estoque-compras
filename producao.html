@@ -218,6 +218,8 @@ function sextaDaSemana(iso) { const k = (new Date(iso + 'T12:00:00').getDay() - 
 const ddmm = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '—';
 const diaSem = iso => DIAS[new Date(iso + 'T12:00:00').getDay()];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// quantidade pequena (0,04 kg de pasta de alho) com 2 casas, para nao aparecer "0"
+const numP = v => num(v, Math.abs(v) < 1 ? 2 : 1);
 const num = (v, dec = 1) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec });
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const nomeP = pid => P[pid]?.nome || pid;
@@ -451,7 +453,7 @@ function telaHoje() {
   if (!ITENS.length) return semMeta();
   const pre = prePreparos();
   const faixa = pre.map(x => {
-    const det = x.linhas.map(l => `${chip(l.u)} precisa <b>${num(l.precisa)} ${esc(unP(x.ppp))}</b>${l.tem > 0 ? ` (tem ${num(l.tem)})` : ''}`).join(' &nbsp;·&nbsp; ');
+    const det = x.linhas.map(l => `${chip(l.u)} precisa <b>${numP(l.precisa)} ${esc(unP(x.ppp))}</b>${l.tem > 0 ? ` (tem ${numP(l.tem)})` : ''}`).join(' &nbsp;·&nbsp; ');
     return `<div class="faixa"><div><div class="t">Antes: ${esc(nomeP(x.ppp))}</div><div class="sub">${det}</div></div>
       <button class="btn-faixa" onclick="abrirLimpar('${x.ppp}')">Limpar e pesar</button></div>`;
   }).join('');
@@ -630,7 +632,7 @@ function telaLimpar() {
       <div class="n">${esc(t.vals[un + '|' + k] || '') || '<span style="color:#b9c4c0">0</span>'} <span style="font-size:18px;font-weight:400">${k === 'usou' ? esc(unP(m.mp)) : esc(unP(ppp))}</span></div></div>`;
     return `<div class="card" style="border:${u.ordem === 2 ? '2px solid var(--p10-bg)' : '2px solid var(--teal-bg)'}">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
-        <div>${chip(u)} ${l ? `<span style="font-size:18px">Precisa hoje <b class="disp" style="font-size:22px">${num(l.precisa - l.tem)} ${esc(unP(ppp))}</b></span>` : ''}</div>
+        <div>${chip(u)} ${l ? `<span style="font-size:18px">Precisa hoje <b class="disp" style="font-size:22px">${numP(l.precisa - l.tem)} ${esc(unP(ppp))}</b></span>` : ''}</div>
         <span class="sub">${l ? l.para.map(nomeP).map(esc).join(' · ') : ''}</span></div>
       <div class="pares">${par('usou', `${esc(nomeP(m.mp))} que usou`)}${par('deu', 'Deu pronto na balança')}</div>${res}</div>`;
   }).join('');
