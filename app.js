@@ -15902,6 +15902,17 @@ const _META_PDV_URL = 'https://cloud.icomanda.com/tdb/apidashboard';
 const _META_PDV_KEY = 'apidash_249_aB3xY7zQ9Wm2KpV5';   // chave só-leitura, a mesma do robô
 const _META_PDV_DIAS = 3;                                 // até quantos dias para trás a tela busca
 const _metaPdvCache = {};                                 // data -> resultado (só dia fechado)
+// Acompanhamento que o cliente escolhe no PDV e a ficha do prato traz fixo: a linha é
+// ignorada só na conta da meta (ficha, custo e baixa não mudam). Mesma lista e o porquê
+// em scripts/venda_sa_dia.py (ACOMP_ESCOLHIDO): mudar uma, mudar a outra. (09/10/2026)
+const _META_SA_BATATA = '97d60b41-adce-419a-b834-129c3c4e237a';   // SA BATATA 100g
+const _META_ACOMP_ESCOLHIDO = {
+  '5917edfc-0e35-4199-87e1-674c4f9a9d5c': [_META_SA_BATATA],   // ESTROGONOFF DE FRANGO
+  'a13761b4-9c9d-4155-a3b5-24fecb0c5ee9': [_META_SA_BATATA],   // ESTROGONOFF DE FRANGO - TDB
+  'b2cd6c47-6fba-4720-ae04-92eed5d93875': [_META_SA_BATATA],   // MARMITA DE FRANGO ASSADO NA BRASA
+  '1447281d-b246-466b-9168-d11bb484ce84': [_META_SA_BATATA],   // MARMITA DE FRANGO ASSADO NA BRASA - TDB
+  'c8b220ed-a151-4a4a-9583-33d5399676a1': [_META_SA_BATATA],   // EMPANADO DE PIRARUCU
+};
 
 async function _metaPdvGet(path, params) {
   const ctl = new AbortController();
@@ -16020,6 +16031,10 @@ async function _metaBuscarPdv(unidades, metas, param, vendas, fichas, ings) {
   mapRows.forEach(m => { if (m.produto_id) ctx.mapa[m.icomanda_produto_id] = { pid: m.produto_id, fator: Number(m.fator) || 1 }; });
   fichas.forEach(f => { ctx.fichaDe[f.produto_id] = { id: f.id, rend: Number(f.rendimento) || 1 }; });
   ings.forEach(i => (ctx.ingsDe[i.ficha_id] ||= []).push([i.ingrediente_id, Number(i.quantidade) || 0]));
+  Object.entries(_META_ACOMP_ESCOLHIDO).forEach(([prato, tirar]) => {   // entra pelo item escolhido
+    const f = ctx.fichaDe[prato];
+    if (f) ctx.ingsDe[f.id] = (ctx.ingsDe[f.id] || []).filter(([ing]) => !tirar.includes(ing));
+  });
   const out = [];
   for (const d of [...faltam].sort()) {
     const tb = document.getElementById('meta-tbody');

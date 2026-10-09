@@ -43,6 +43,25 @@ bx.buscar_dia = lru_cache(maxsize=1)(bx.buscar_dia)
 DIAS   = int(bx.env('VENDA_SA_DIAS', '3'))
 INICIO = datetime.strptime(bx.env('VENDA_SA_INICIO', '2026-08-15'), '%Y-%m-%d').date()
 
+# Acompanhamento que o cliente ESCOLHE no PDV mas que a ficha do prato traz fixo (09/10/2026).
+# Nos pratos do delivery a comanda traz, a R$ 0, a escolha do cliente: PORC BATATA FRITA (P10)
+# / BATATA FRITA DELIVERY (Centro), PURE DE BATATA, MAIONESE DE BATATA ou FEIJAO, cada um
+# mapeado e com ficha própria. A ficha do prato também tem SA BATATA 100g = 1 (fica por
+# causa do preço e do cadastro no iFood), então a batata contava 2x quando o cliente
+# escolhia batata e 1x quando escolhia purê/maionese/feijão. Aqui a linha é ignorada SÓ
+# para a meta; a ficha, o custo e a baixa não mudam. Varredura de 14 dias (25/09 a 08/10,
+# as duas lojas) achou só estes 5 pratos. O combo "STROGONOFF + REFRI LATA" está mapeado
+# para o ESTROGONOFF DE FRANGO e entra junto. A mesma lista está em app.js
+# (_META_ACOMP_ESCOLHIDO): mudar uma, mudar a outra.
+SA_BATATA = '97d60b41-adce-419a-b834-129c3c4e237a'           # SA BATATA 100g
+ACOMP_ESCOLHIDO = {
+    '5917edfc-0e35-4199-87e1-674c4f9a9d5c': {SA_BATATA},   # ESTROGONOFF DE FRANGO
+    'a13761b4-9c9d-4155-a3b5-24fecb0c5ee9': {SA_BATATA},   # ESTROGONOFF DE FRANGO - TDB
+    'b2cd6c47-6fba-4720-ae04-92eed5d93875': {SA_BATATA},   # MARMITA DE FRANGO ASSADO NA BRASA
+    '1447281d-b246-466b-9168-d11bb484ce84': {SA_BATATA},   # MARMITA DE FRANGO ASSADO NA BRASA - TDB
+    'c8b220ed-a151-4a4a-9583-33d5399676a1': {SA_BATATA},   # EMPANADO DE PIRARUCU
+}
+
 
 def carregar():
     # mapa: icomanda_id -> (produto_id, fator) so dos MAPEADOS; 'ignorar' fica fora
@@ -60,6 +79,10 @@ def carregar():
     ings = {}
     for i in bx.sb_get_all('est_ficha_ingredientes?select=ficha_id,ingrediente_id,quantidade'):
         ings.setdefault(i['ficha_id'], []).append((i['ingrediente_id'], i.get('quantidade') or 0))
+    for prato, tirar in ACOMP_ESCOLHIDO.items():        # o acompanhamento entra pelo item escolhido
+        f = fic.get(prato)
+        if f:
+            ings[f['ficha_id']] = [(ing, q) for ing, q in ings.get(f['ficha_id'], []) if ing not in tirar]
     sas, nomes = set(), {}
     for p in bx.sb_get_all('est_produtos?select=id,nome,tipo'):
         nomes[p['id']] = p.get('nome')
