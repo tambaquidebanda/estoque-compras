@@ -505,3 +505,20 @@ h1 {
 .meta-falta-fds { color: #b42318; font-weight: 700; }
 .meta-falta-fds .badge { background: #fde7e4; color: #b42318; font-weight: 700; margin-left: 4px; }
 .meta-rodape td { background: #f7f9f8; color: #4f5c58; font-size: .85rem; }
+.meta-sa { cursor: help; border-bottom: 1px dotted #9aa8a4; }
+.meta-sa:hover, .meta-sa:focus { border-bottom-color: #0e6b68; color: #0e6b68; outline: none; }
+#meta-pratos { position: absolute; z-index: 1080; display: none; width: min(460px, calc(100vw - 16px));
+  background: #fff; color: #1f2a27; border: 1px solid #d5ddda; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(16, 40, 34, .18); padding: 12px 14px; font-size: .85rem;
+  max-height: min(70vh, 560px); overflow-y: auto; }
+#meta-pratos .mp-tit { font-weight: 700; font-size: .95rem; }
+#meta-pratos .mp-sub { color: #5f6d69; font-size: .78rem; margin-bottom: 8px; }
+#meta-pratos .mp-tab { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+#meta-pratos .mp-tab th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #5f6d69;
+  font-weight: 600; border-bottom: 1px solid #e3e9e7; padding: 0 6px 4px; }
+#meta-pratos .mp-tab td { padding: 4px 6px; border-bottom: 1px solid #f0f3f2; }
+#meta-pratos .mp-tab th:first-child, #meta-pratos .mp-tab td:first-child { padding-left: 0; }
+#meta-pratos .mp-tab tfoot td { font-weight: 700; border-bottom: 0; border-top: 1px solid #d5ddda; }
+#meta-pratos .mp-nota { color: #5f6d69; font-size: .75rem; margin-top: 8px; }
+#meta-pratos .mp-aviso { background: #fff4d6; color: #7a5300; border-radius: 6px; padding: 6px 8px; font-size: .78rem; margin-bottom: 8px; }
+#meta-pratos .mp-vazio { color: #5f6d69; font-style: italic; }

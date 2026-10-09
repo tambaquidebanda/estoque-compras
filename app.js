@@ -15909,6 +15909,10 @@ async function _metaCarregar(semana) {
   });
   const vIni = Object.values(param).map(x => x.ini).sort()[0];
   const vFim = Object.values(param).map(x => x.fim).sort().pop();
+  // De quais pratos veio o consumo (SQL_PRODUCAO_VENDA_ORIGEM.sql, Wagner 08/10). Sem a
+  // tabela a meta funciona igual; só a janelinha do nome da SA avisa o que falta.
+  const pOrigem = _metaSelect('prod_venda_sa_origem', 'data,unidade,sa_id,prato_id,prato_nome,qtd_vendida,qtd_sa',
+    q => q.gte('data', vIni).lte('data', vFim)).catch(e => { console.warn('pratos da venda de SA:', e.message); return null; });
   const [vendas, saldos, fichas, ings, cfg] = await Promise.all([
     _metaSelect('prod_venda_sa_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
     _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
@@ -15945,6 +15949,17 @@ async function _metaCarregar(semana) {
     const m = ((venda[v.unidade] ||= {})[v.produto_id] ||= [0, 0, 0, 0, 0, 0, 0]);
     m[dow(v.data)] += Number(v.quantidade) || 0;
     (diasCom[v.unidade] ||= new Set()).add(v.data);
+  });
+  // origem[unidade][sa][prato] = { nome, vend, sa } somado no período de cada unidade
+  const origemRows = await pOrigem;
+  const origem = {}, diasOrigem = {};
+  (origemRows || []).forEach(o => {
+    const p = param[o.unidade];
+    if (!p || o.data < p.ini || o.data > p.fim) return;
+    const m = (((origem[o.unidade] ||= {})[o.sa_id] ||= {})[o.prato_id] ||= { nome: o.prato_nome, vend: 0, sa: 0 });
+    m.vend += Number(o.qtd_vendida) || 0;
+    m.sa += Number(o.qtd_sa) || 0;
+    (diasOrigem[o.unidade] ||= new Set()).add(o.data);
   });
   // Média de cada dia da semana, dividindo pelos dias daquele tipo que o robô gravou.
   const mediaDia = (un, pid) => {
@@ -16031,7 +16046,8 @@ async function _metaCarregar(semana) {
     if (meta?.status !== 'aprovada') _metaRecalc(linhas[u.unidade]);
   });
   _metaManter = null;
-  const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds, semColCobre };
+  const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds, semColCobre,
+              origem, diasOrigem, semOrigem: origemRows === null };
   _metaSugerirDias(D);
   return D;
 }
@@ -16201,6 +16217,84 @@ function _metaMp(un, soLinhas, D = _metaD) {
   return { itens, semFicha };
 }
 
+// Janelinha do nome da SA: de quais pratos veio a venda no período (Wagner, 08/10).
+// Mouse em cima mostra; clique (ou toque no tablet) fixa até clicar fora ou Esc.
+let _metaPratosFixo = null, _metaPratosTimer = null;
+function _metaPratosHtml(pid) {
+  const D = _metaD, L = D.linhas[_metaUn], u = L.u;
+  const nDias = Math.round((new Date(L.vFim + 'T12:00:00') - new Date(L.vIni + 'T12:00:00')) / 864e5) + 1;
+  const cab = `<div class="mp-tit">${esc(prodFT(pid)?.nome || pid)}</div>
+    <div class="mp-sub">${esc(u.rotulo)} · venda de ${_ddmm(L.vIni)} a ${_ddmm(L.vFim)} (${nDias} dias)</div>`;
+  if (D.semOrigem) return cab + `<div class="mp-vazio">Ainda não dá para ver os pratos: falta rodar o SQL_PRODUCAO_VENDA_ORIGEM.sql e o robô "Venda de SA por dia" com dias = 40.</div>`;
+  const pratos = Object.entries(D.origem[u.unidade]?.[pid] || {}).map(([id, o]) => ({ id, ...o })).sort((a, b) => b.sa - a.sa);
+  const nOrig = D.diasOrigem[u.unidade]?.size || 0, nVenda = D.diasCom[u.unidade]?.size || 0;
+  const aviso = nOrig < nVenda ? `<div class="mp-aviso">Pratos guardados em ${nOrig} dos ${nVenda} dias com venda: rode o robô "Venda de SA por dia" com dias = 40 para completar.</div>` : '';
+  if (!pratos.length) return cab + aviso + `<div class="mp-vazio">Nenhum prato vendido neste período usou esta SA.</div>`;
+  const tot = pratos.reduce((t, p) => t + p.sa, 0);
+  const un = esc(prodFT(pid)?.unidade_uso || '');
+  const nUsados = D.diasOrigem[u.unidade]?.size || 0;
+  return cab + aviso + `<table class="mp-tab"><thead><tr><th>Prato vendido</th><th class="text-end">Vendidos</th><th class="text-end">SA usada</th><th class="text-end">%</th></tr></thead>
+    <tbody>${pratos.map(p => `<tr><td>${esc(prodFT(p.id)?.nome || p.nome || p.id)}</td>
+      <td class="text-end">${_metaNum(p.vend)}</td><td class="text-end">${_metaNumU(pid, p.sa)}</td>
+      <td class="text-end text-muted">${Math.round(p.sa / tot * 100)}%</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total</td><td></td><td class="text-end">${_metaNumU(pid, tot)} ${un}</td><td class="text-end">100%</td></tr></tfoot></table>
+    <div class="mp-nota">≈ ${_metaNum(nUsados ? tot / nUsados : 0)} ${un} por dia. "SA usada" é quanto da SA esses pratos consumiram pela ficha técnica; a média de cada dia da semana sai deste total.</div>`;
+}
+function _metaPratosMostrar(el) {
+  let pop = document.getElementById('meta-pratos');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'meta-pratos';
+    pop.setAttribute('role', 'tooltip');
+    document.body.appendChild(pop);
+    // o mouse pode entrar na janelinha (para rolar a lista) sem ela fechar
+    pop.addEventListener('mouseenter', () => clearTimeout(_metaPratosTimer));
+    pop.addEventListener('mouseleave', () => _metaPratosEsconder());
+  }
+  clearTimeout(_metaPratosTimer);
+  pop.innerHTML = _metaPratosHtml(el.dataset.pid);
+  pop.style.display = 'block';
+  pop.style.maxHeight = '';
+  const r = el.getBoundingClientRect(), w = pop.offsetWidth;
+  // embaixo do nome se couber; senão em cima; senão no lado com mais espaço, rolando
+  const baixo = window.innerHeight - r.bottom - 14, cima = r.top - 14;
+  let h = pop.offsetHeight;
+  const emCima = h > baixo && (h <= cima || cima > baixo);
+  if (h > (emCima ? cima : baixo)) { pop.style.maxHeight = (emCima ? cima : baixo) + 'px'; h = pop.offsetHeight; }
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  const top = emCima ? r.top - 6 - h : r.bottom + 6;
+  pop.style.left = left + window.scrollX + 'px';
+  pop.style.top = top + window.scrollY + 'px';
+}
+function _metaPratosEsconder(forcar, espera) {
+  clearTimeout(_metaPratosTimer);
+  if (_metaPratosFixo && !forcar) return;
+  if (espera) { _metaPratosTimer = setTimeout(() => _metaPratosEsconder(forcar), espera); return; }
+  _metaPratosFixo = null;
+  const pop = document.getElementById('meta-pratos');
+  if (pop) pop.style.display = 'none';
+}
+function _metaPratosLigar() {
+  _metaPratosEsconder(true);
+  const tb = document.getElementById('meta-tbody');
+  if (tb.dataset.pratos) return;
+  tb.dataset.pratos = '1';
+  tb.addEventListener('mouseover', e => { const el = e.target.closest('.meta-sa'); if (el && !_metaPratosFixo) _metaPratosMostrar(el); });
+  tb.addEventListener('mouseout', e => { const el = e.target.closest('.meta-sa'); if (el && !el.contains(e.relatedTarget)) _metaPratosEsconder(false, 250); });
+  tb.addEventListener('focusin', e => { const el = e.target.closest('.meta-sa'); if (el && !_metaPratosFixo) _metaPratosMostrar(el); });
+  tb.addEventListener('focusout', e => { if (e.target.closest('.meta-sa')) _metaPratosEsconder(); });
+  tb.addEventListener('click', e => {
+    const el = e.target.closest('.meta-sa');
+    if (!el) return;
+    e.stopPropagation();
+    if (_metaPratosFixo === el) return _metaPratosEsconder(true);
+    _metaPratosFixo = el;
+    _metaPratosMostrar(el);
+  });
+  document.addEventListener('click', e => { if (_metaPratosFixo && !e.target.closest('#meta-pratos')) _metaPratosEsconder(true); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') _metaPratosEsconder(true); });
+}
+
 function _pintarMeta() {
   const D = _metaD;
   if (!D) return;
@@ -16312,7 +16406,7 @@ function _pintarMeta() {
       : sobra < 0 ? `<td class="text-end meta-falta-fds">0<span class="badge">falta ${_metaNum(_metaArred(l.pid, -sobra))}</span></td>`
       : `<td class="text-end">${_metaNumU(l.pid, sobra)}</td>`;
     return `<tr>
-      <td class="fw-semibold">${esc(prodFT(l.pid)?.nome || l.pid)}</td>
+      <td class="fw-semibold"><span class="meta-sa" data-pid="${l.pid}" tabindex="0">${esc(prodFT(l.pid)?.nome || l.pid)}</span></td>
       <td class="text-end"${l.onde ? ` title="${esc([...l.onde.map(([lg, q]) => `${_rotuloSemIcone(lg)} ${_metaNumU(l.pid, q)}`),
         ...(l.aCaminho ? [`a caminho ${_metaNumU(l.pid, l.aCaminho)}`] : [])].join(' · ') || 'nada')}"` : ''}>${_metaNumU(l.pid, l.tem)}${l.aCaminho
         ? `<div class="meta-caminho">${_metaNumU(l.pid, l.aCaminho)} a caminho</div>` : ''}</td>
@@ -16338,8 +16432,10 @@ function _pintarMeta() {
     if (_metaMostrarCobre) html += cobre.map(linha).join('');
   }
   document.getElementById('meta-tbody').innerHTML = html;
+  _metaPratosLigar();
 
   document.getElementById('meta-nota').innerHTML =
+    `Passe o mouse no <strong>nome da SA</strong> para ver de quais pratos veio a venda. ` +
     `<strong>Tem</strong> = ${esc(rotLocais)} agora (negativo conta zero; passe o mouse no número para ver onde está). ` +
     `<strong>Vende ${_metaRotFds(D.semana)}</strong> e <strong>seg→dom</strong> = consumo médio de cada dia da semana no período escolhido (padrão: 4 semanas até ontem), pela ficha dos pratos. ` +
     `<strong>Sobra na segunda</strong> = Tem − venda de ${_metaRotFds(D.semana)}; ela abate da meta. <strong>Meta</strong> = venda de ${_META_COBRE_ROT[L.cobre || 7]} + ${pct}% − sobra na segunda. ` +

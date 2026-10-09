@@ -6,7 +6,9 @@ Para cada dia e cada unidade cadastrada em `prod_unidades` (Centro e Delivery P1
 puxa a venda do iComanda, explode cada prato pela ficha técnica e PARA na SA:
 o que sobra é "quantas unidades de cada SA a venda daquela loja consumiu".
 Grava em `prod_venda_sa_dia` (apaga o dia+unidade e regrava, então rodar de novo
-substitui em vez de somar).
+substitui em vez de somar). E em `prod_venda_sa_origem` o mesmo consumo aberto por
+prato vendido — é o que a tela da meta mostra ao passar o mouse na SA (08/10/2026).
+Sem essa tabela (SQL_PRODUCAO_VENDA_ORIGEM.sql não rodado) o robô segue igual.
 
 NÃO é baixa. Não encosta em saldo, razão nem pedido. É medição, como o
 pdv_preparo_dia: se falhar, nada da operação para.
@@ -53,15 +55,19 @@ def carregar():
     ings = {}
     for i in bx.sb_get_all('est_ficha_ingredientes?select=ficha_id,ingrediente_id,quantidade'):
         ings.setdefault(i['ficha_id'], []).append((i['ingrediente_id'], i.get('quantidade') or 0))
-    sas = {p['id'] for p in bx.sb_get_all('est_produtos?select=id&tipo=eq.SA')}
+    sas, nomes = set(), {}
+    for p in bx.sb_get_all('est_produtos?select=id,nome,tipo'):
+        nomes[p['id']] = p.get('nome')
+        if p.get('tipo') == 'SA':
+            sas.add(p['id'])
     unidades = bx.sb_get_all('prod_unidades?select=unidade,unidade_pdv&order=ordem')
-    return mapa, fic, ings, sas, unidades
+    return mapa, fic, ings, sas, unidades, nomes
 
 
 def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
     bx.UNIDADE_PDV = unidade_pdv          # vendas_do_dia filtra por esta global
     vendas = bx.vendas_do_dia(data)
-    memo, out, sem_mapa = {}, {}, 0
+    memo, out, origem, sem_mapa = {}, {}, {}, 0
     for ip, qtd in vendas.items():
         m = mapa.get(ip)
         if not m:
@@ -74,11 +80,24 @@ def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
         for folha, fq in folhas.items():
             if folha in sas:
                 out[folha] = out.get(folha, 0) + fq * qtd * fator
-    return out, sem_mapa
+                o = origem.setdefault((folha, pid), [0, 0])     # [pratos vendidos, SA consumida]
+                o[0] += qtd * fator
+                o[1] += fq * qtd * fator
+    return out, origem, sem_mapa
+
+
+def tem_tabela_origem():
+    try:
+        bx.sb_get_all('prod_venda_sa_origem?select=data&data=eq.1900-01-01')
+        return True
+    except Exception as e:
+        print(f'  prod_venda_sa_origem indisponível ({e}): os pratos de cada SA não são guardados.')
+        return False
 
 
 def main():
-    mapa, fic, ings, sas, unidades = carregar()
+    mapa, fic, ings, sas, unidades, nomes = carregar()
+    com_origem = tem_tabela_origem()
     print(f'== Venda de SA por dia == {len(unidades)} unidades, {len(sas)} SA cadastradas, {len(mapa) - 1} itens mapeados')
     hoje = datetime.now(bx.MANAUS).date()
     for i in range(DIAS, 0, -1):
@@ -88,7 +107,7 @@ def main():
         data = dia.isoformat()
         for u in unidades:
             try:
-                sa, sem_mapa = sa_do_dia(data, u['unidade_pdv'], mapa, fic, ings, sas)
+                sa, origem, sem_mapa = sa_do_dia(data, u['unidade_pdv'], mapa, fic, ings, sas)
             except bx.DiaAindaAberto as e:
                 print(f'  {data} {u["unidade"]}: pulado — {e}')
                 continue
@@ -100,6 +119,13 @@ def main():
             bx.sb_delete(f'prod_venda_sa_dia?data=eq.{data}&unidade=eq.{urllib.parse.quote(u["unidade"])}')
             for j in range(0, len(linhas), 500):
                 bx.sb_insert('prod_venda_sa_dia', linhas[j:j + 500])
+            if com_origem:
+                orig = [{'data': data, 'unidade': u['unidade'], 'sa_id': sa_id, 'prato_id': pid,
+                         'prato_nome': nomes.get(pid), 'qtd_vendida': round(v, 4), 'qtd_sa': round(q, 4)}
+                        for (sa_id, pid), (v, q) in origem.items() if q > 0]
+                bx.sb_delete(f'prod_venda_sa_origem?data=eq.{data}&unidade=eq.{urllib.parse.quote(u["unidade"])}')
+                for j in range(0, len(orig), 500):
+                    bx.sb_insert('prod_venda_sa_origem', orig[j:j + 500])
             print(f'  {data} {u["unidade"]}: {len(linhas)} SA gravadas'
                   + (f' · {sem_mapa:g} itens vendidos sem mapa no PDV' if sem_mapa else ''))
     print('== Fim ==')
