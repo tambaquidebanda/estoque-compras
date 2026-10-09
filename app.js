@@ -15890,6 +15890,146 @@ async function carregarMetaProducao() {
   _pintarMeta();
 }
 
+// ── Venda que o robô ainda não gravou: a tela busca direto no PDV (Wagner, 09/10) ──
+// O GitHub dispara o robô "Venda de SA por dia" com horas de atraso (05:37 virou 12:30
+// em 08 e 09/10), e a meta é feita na sexta cedo. Então, se faltar algum dos últimos
+// dias do período, a tela baixa o dia do iComanda (a API aceita o navegador) e faz a
+// MESMA conta do scripts/venda_sa_dia.py: caixa → loja, item ativo de comanda não
+// cancelada, pdv_map 'mapeado' × fator, ficha até parar na SA. Não grava nada: só
+// entra na conta da tela; o robô continua gravando o histórico quando rodar.
+// Dia com caixa aberto NÃO entra (seria meio dia de venda), igual ao robô.
+const _META_PDV_URL = 'https://cloud.icomanda.com/tdb/apidashboard';
+const _META_PDV_KEY = 'apidash_249_aB3xY7zQ9Wm2KpV5';   // chave só-leitura, a mesma do robô
+const _META_PDV_DIAS = 3;                                 // até quantos dias para trás a tela busca
+const _metaPdvCache = {};                                 // data -> resultado (só dia fechado)
+
+async function _metaPdvGet(path, params) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 120000);
+  try {
+    const r = await fetch(`${_META_PDV_URL}/${path}?${new URLSearchParams({ api_key: _META_PDV_KEY, ...params })}`,
+      { signal: ctl.signal, headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('PDV respondeu ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+// Um dia do PDV → { data, ok, motivo, caixas:[{id, unidade, aberto, fat, turno}],
+//                   venda:{unidade:{sa:q}}, origem:{unidade:{sa:{prato:{nome, vend, sa}}}} }
+async function _metaPdvDia(data, unidades, ctx) {
+  if (_metaPdvCache[data]) return _metaPdvCache[data];
+  const j = await _metaPdvGet('', { data_ini: data, data_fim: data });
+  const caixas = j.caixas || [];
+  const ids = caixas.map(c => c.caixa_id).filter(x => x !== null && x !== undefined);
+  // de qual loja é cada caixa: pdv_vendas (o financeiro grava) e, se ainda não tiver, o próprio PDV
+  const dono = {}, votos = {};
+  if (ids.length) {
+    let pv = [];
+    try { pv = await _metaSelect('pdv_vendas', 'caixa_ext,unidade_nome', q => q.in('caixa_ext', ids)); }
+    catch (e) { console.warn('pdv_vendas:', e.message); }          // sem ela, pergunta ao PDV abaixo
+    pv.forEach(r => {
+      if (r.caixa_ext === null || !r.unidade_nome) return;
+      const v = (votos[r.caixa_ext] ||= {});
+      v[r.unidade_nome] = (v[r.unidade_nome] || 0) + 1;
+    });
+    Object.entries(votos).forEach(([cx, v]) => { dono[cx] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
+  }
+  const uniDoPdv = Object.fromEntries(unidades.map(u => [u.unidade_pdv, u.unidade]));
+  const res = { data, ok: true, motivo: '', caixas: [], venda: {}, origem: {} };
+  const vendasPdv = {};                                   // unidade -> { icomanda_id: qtd }
+  for (const cx of caixas) {
+    const aberto = (cx.status_caixa || '') !== 'fechado';
+    let un = dono[cx.caixa_id] || null;
+    if (!un && !aberto) {
+      try {
+        const d = await _metaPdvGet('detalhamento.php', { data_inicial: data, data_final: data,
+          caixa_ids: String(cx.caixa_id), blocos: 'servicos_descontos' });
+        un = d?.cabecalho?.unidades?.[0] || null;
+      } catch (e) { console.warn('loja do caixa', cx.caixa_id, e.message); }
+    }
+    const fat = Number(cx.totais?.faturado) || 0;
+    res.caixas.push({ id: cx.caixa_id, unidade: un ? (uniDoPdv[un] || un) : null, aberto, fat, turno: cx.tipo_turno || '' });
+    if (aberto || !un || !uniDoPdv[un]) continue;
+    const vp = (vendasPdv[uniDoPdv[un]] ||= {});
+    (cx.comandas || []).forEach(cm => {
+      if (cm.cancelada) return;
+      (cm.itens || []).forEach(it => {
+        if (it.status !== 'ativo') return;
+        vp[it.produto_id] = (vp[it.produto_id] || 0) + (Number(it.quantidade) || 0);
+      });
+    });
+  }
+  const abertos = res.caixas.filter(c => c.aberto);
+  const semLoja = res.caixas.filter(c => !c.aberto && !c.unidade && c.fat > 0);
+  if (abertos.length) { res.ok = false; res.motivo = abertos.length === 1 ? `o caixa ${abertos[0].id} ainda está aberto no PDV` : `os caixas ${abertos.map(c => c.id).join(', ')} ainda estão abertos no PDV`; return res; }
+  if (semLoja.length) { res.ok = false; res.motivo = `não sei de que loja é o caixa ${semLoja.map(c => c.id).join(', ')}`; return res; }
+  // prato → SA pela ficha; para em QUALQUER SA (igual ao robô)
+  const memo = {};
+  const bom = (pid, stack) => {
+    if (memo[pid]) return memo[pid];
+    if (ctx.sas.has(pid) || !ctx.fichaDe[pid] || stack.has(pid)) return (memo[pid] = { [pid]: 1 });
+    const f = ctx.fichaDe[pid];
+    stack.add(pid);
+    const folhas = {};
+    (ctx.ingsDe[f.id] || []).forEach(([ing, q]) => {
+      if (!ing) return;
+      const fator = (q || 0) / (f.rend || 1);
+      if (!(fator > 0)) return;
+      Object.entries(bom(ing, stack)).forEach(([fo, fq]) => { folhas[fo] = (folhas[fo] || 0) + fq * fator; });
+    });
+    stack.delete(pid);
+    return (memo[pid] = folhas);
+  };
+  Object.entries(vendasPdv).forEach(([unidade, vp]) => {
+    Object.entries(vp).forEach(([ip, qtd]) => {
+      const m = ctx.mapa[ip];
+      if (!m) return;
+      Object.entries(bom(m.pid, new Set())).forEach(([fo, fq]) => {
+        if (!ctx.sas.has(fo)) return;
+        const v = (res.venda[unidade] ||= {});
+        v[fo] = (v[fo] || 0) + fq * qtd * m.fator;
+        const o = (((res.origem[unidade] ||= {})[fo] ||= {})[m.pid] ||= { vend: 0, sa: 0 });
+        o.vend += qtd * m.fator;
+        o.sa += fq * qtd * m.fator;
+      });
+    });
+  });
+  _metaPdvCache[data] = res;
+  return res;
+}
+
+// Dias recentes do período que o robô ainda não gravou, buscados no PDV.
+async function _metaBuscarPdv(unidades, metas, param, vendas, fichas, ings) {
+  const ontem = _isoMais(hojeLocal(), -1), limite = _isoMais(hojeLocal(), -_META_PDV_DIAS);
+  const gravados = {};
+  vendas.forEach(v => (gravados[v.unidade] ||= new Set()).add(v.data));
+  const faltam = new Set();
+  unidades.forEach(u => {
+    if (metas.find(m => m.unidade === u.unidade)?.status === 'aprovada') return;   // congelada
+    const p = param[u.unidade];
+    for (let d = p.fim; d >= p.ini && d >= limite; d = _isoMais(d, -1)) {
+      if (d <= ontem && !gravados[u.unidade]?.has(d)) faltam.add(d);
+    }
+  });
+  if (!faltam.size) return [];
+  const [mapRows, saRows] = await Promise.all([
+    _metaSelect('pdv_map', 'icomanda_produto_id,produto_id,fator,status', q => q.eq('status', 'mapeado')),
+    _metaSelect('est_produtos', 'id', q => q.eq('tipo', 'SA')),
+  ]);
+  const ctx = { mapa: {}, sas: new Set(saRows.map(r => r.id)), fichaDe: {}, ingsDe: {} };
+  mapRows.forEach(m => { if (m.produto_id) ctx.mapa[m.icomanda_produto_id] = { pid: m.produto_id, fator: Number(m.fator) || 1 }; });
+  fichas.forEach(f => { ctx.fichaDe[f.produto_id] = { id: f.id, rend: Number(f.rendimento) || 1 }; });
+  ings.forEach(i => (ctx.ingsDe[i.ficha_id] ||= []).push([i.ingrediente_id, Number(i.quantidade) || 0]));
+  const out = [];
+  for (const d of [...faltam].sort()) {
+    const tb = document.getElementById('meta-tbody');
+    if (tb) tb.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> O robô ainda não gravou a venda de ${_ddmm(d)}: buscando direto no PDV (pode levar uns 20 segundos)...</td></tr>`;
+    try { out.push(await _metaPdvDia(d, unidades, ctx)); }
+    catch (e) { console.warn('venda do PDV', d, e); out.push({ data: d, ok: false, motivo: 'não consegui falar com o PDV (' + e.message + ')', caixas: [] }); }
+  }
+  return out;
+}
+
 async function _metaCarregar(semana) {
   await carregarProdutosFT();
   const [unidades, metas] = await Promise.all([
@@ -15920,6 +16060,10 @@ async function _metaCarregar(semana) {
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
     _metaSelect('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos'])),
   ]);
+  // Venda dos últimos dias que o robô ainda não gravou: busca no PDV e entra só na conta
+  const pdv = await _metaBuscarPdv(unidades, metas, param, vendas, fichas, ings);
+  pdv.filter(r => r.ok).forEach(r => Object.entries(r.venda).forEach(([unidade, m]) =>
+    Object.entries(m).forEach(([pid, q]) => vendas.push({ data: r.data, unidade, produto_id: pid, quantidade: q }))));
   const ids = metas.map(m => m.id);
   const salvos = ids.length ? await _metaSelect('prod_meta_itens', '*', q => q.in('meta_id', ids)) : [];
   // Pedidos de MP que a aprovacao criou (coluna do SQL_PRODUCAO_FASE2.sql). Sem a
@@ -15952,6 +16096,9 @@ async function _metaCarregar(semana) {
   });
   // origem[unidade][sa][prato] = { nome, vend, sa } somado no período de cada unidade
   const origemRows = await pOrigem;
+  if (origemRows) pdv.filter(r => r.ok).forEach(r => Object.entries(r.origem).forEach(([unidade, m]) =>
+    Object.entries(m).forEach(([sa, pr]) => Object.entries(pr).forEach(([prato, o]) => origemRows.push({
+      data: r.data, unidade, sa_id: sa, prato_id: prato, prato_nome: null, qtd_vendida: o.vend, qtd_sa: o.sa })))));
   const origem = {}, diasOrigem = {};
   (origemRows || []).forEach(o => {
     const p = param[o.unidade];
@@ -16047,7 +16194,7 @@ async function _metaCarregar(semana) {
   });
   _metaManter = null;
   const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds, semColCobre,
-              origem, diasOrigem, semOrigem: origemRows === null };
+              origem, diasOrigem, semOrigem: origemRows === null, pdv };
   _metaSugerirDias(D);
   return D;
 }
@@ -16360,6 +16507,23 @@ function _pintarMeta() {
   document.getElementById('meta-btn-mp').textContent = `MP para comprar · ${u.rotulo} (${nFalta})`;
 
   const avisos = [];
+  // Dias buscados direto no PDV (o robô ainda não tinha gravado): quantos caixas, de quem,
+  // todos fechados? Pedido do Wagner (09/10): saber que a venda do dia entrou inteira.
+  let infoPdv = '';
+  if (!aprovada && D.pdv?.length) {
+    const brl = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    infoPdv = D.pdv.map(r => {
+      const dia = `${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(r.data + 'T12:00:00').getDay()]} ${_ddmm(r.data)}`;
+      if (!r.ok) return `<div class="alert alert-danger py-2 small mb-2"><strong>A venda de ${esc(dia)} NÃO entrou na meta:</strong> ${esc(r.motivo)}. ` +
+        `O robô ainda não gravou este dia e a busca direta no PDV não fechou a conta. A meta usa só os outros dias. Feche o caixa no PDV (ou rode o robô "Venda de SA por dia") e atualize a tela antes de aprovar.</div>`;
+      const meus = r.caixas.filter(c => c.unidade === u.unidade);
+      const outros = r.caixas.length - meus.length;
+      return `<div class="alert alert-info py-2 small mb-2"><strong>Venda de ${esc(dia)} buscada agora no PDV</strong> (o robô ainda não tinha gravado): ` +
+        `${r.caixas.length} ${r.caixas.length === 1 ? 'caixa' : 'caixas'} no dia, <strong>todos fechados e baixados</strong>. ` +
+        `${esc(u.rotulo)}: ${meus.length ? meus.map(c => `caixa ${esc(c.id)}${c.turno ? ' (' + esc(c.turno) + ')' : ''} ${brl(c.fat)}`).join(' · ') : 'nenhum caixa'}` +
+        `${outros ? ` · ${outros} de outra loja, fora desta conta` : ''}.</div>`;
+    }).join('');
+  }
   const nd = D.diasCom[u.unidade]?.size || 0;
   if (!aprovada && nd < nDiasPer) avisos.push(`Só <strong>${nd} dos ${nDiasPer} dias</strong> de venda do ${esc(u.rotulo)} estão gravados (${_ddmm(L.vIni)} a ${_ddmm(L.vFim)}). A média de cada dia usa só os dias gravados; se faltar o dia mais recente, rode o robô "Venda de SA por dia" no GitHub.`);
   if (!aprovada && nDiasPer < 14) avisos.push(`Período curto (${nDiasPer} dias): cada dia da semana entra só uma ou duas vezes na média, então um sábado fora do normal pesa muito. O padrão é 4 semanas.`);
@@ -16384,7 +16548,7 @@ function _pintarMeta() {
       : `<div class="alert alert-warning py-2 small mb-2">Esta meta ainda não tem pedido de MP.
           <button class="btn btn-sm btn-warning ms-2" onclick="metaCriarPedidosMp()">Criar pedidos de MP</button></div>`;
   }
-  document.getElementById('meta-avisos').innerHTML = infoPed + avisos.map(a => `<div class="alert alert-warning py-2 small mb-2">${a}</div>`).join('');
+  document.getElementById('meta-avisos').innerHTML = infoPed + infoPdv + avisos.map(a => `<div class="alert alert-warning py-2 small mb-2">${a}</div>`).join('');
 
   const comMeta = L.arr.filter(l => _metaFinal(l) > 0 || l.ajuste !== null).sort((a, b) => _metaFinal(b) - _metaFinal(a));
   const cobre   = L.arr.filter(l => l.vendeu > 0 && !(_metaFinal(l) > 0) && l.ajuste === null).sort((a, b) => b.vendeu - a.vendeu);
