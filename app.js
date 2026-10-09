@@ -2907,6 +2907,36 @@ function _espelhoEstoqueDelivery(estUni, excluidos, adicoes, mapeamentos, prefDe
   return { grupos, origem };
 }
 
+// ── Estoque da Loja: cada produto em UM grupo só (Wagner, 09/10/2026) ──
+// O Estoque da Loja junta os setores por nome de grupo. Produto que está em dois setores
+// com grupos de nomes diferentes (SA COSTELA: Cozinha/CONGELADOS e Churrasqueira/PEIXES;
+// Coca lata: Bar/NÃO ALCOOLICAS e Delivery/BEBIDAS) aparecia nos dois grupos. Cada
+// contagem grava o saldo do grupo inteiro, então contar o segundo grupo com o campo vazio
+// ZERAVA o que o primeiro tinha contado (Coca em 07/10, 210 costelas em 28/09). 13
+// produtos estavam assim em 09/10. Agora o produto fica só no primeiro grupo na ordem do
+// Estoque da Loja — conferido: é o grupo em que a equipe mais conta cada um dos 13. O que
+// foi adicionado com "+" direto num grupo do Estoque da Loja fica nesse grupo.
+// A mesma regra está em contagem.html (_donoEstoqueLojaMob).
+function _donoEstoqueLoja(setores, unidade) {
+  const el    = _estoqueLojaDe(setores);
+  const ordem = _invOrdemGrupos?.[unidade]?.['ESTOQUE DA LOJA'] || [];
+  const grupos = [...ordem.filter(g => el[g]), ...Object.keys(el).filter(g => !ordem.includes(g))];
+  const chave = n => norm((_invMapeamentos[n] || n).trim());
+  const dono = {};
+  const marca = (n, g) => { const k = chave(n); if (!(k in dono)) dono[k] = g; };
+  grupos.forEach(g => (_invAdicoes[`ESTOQUE DA LOJA|${g}`] || []).forEach(n => marca(n, g)));
+  grupos.forEach(g => {
+    el[g].filter(n => !_invExcluidos.has(n)).forEach(n => marca(n, g));
+    Object.keys(setores).forEach(st => {
+      if (st !== 'ESTOQUE DA LOJA' && setores[st]?.[g]) (_invAdicoes[_chaveAdic(unidade, st, g)] || []).forEach(n => marca(n, g));
+    });
+  });
+  return dono;
+}
+function _soDoGrupoEL(nomes, grupo, dono) {
+  return nomes.filter(n => (dono[norm((_invMapeamentos[n] || n).trim())] ?? grupo) === grupo);
+}
+
 // Troca, só na tela, o ESTOQUE DELIVERY da unidade aberta pela versão com espelho.
 function _aplicarEspelhoDelivery(local) {
   if ((local || _invLocal || 'Centro') !== 'Delivery P10') return;
@@ -3195,6 +3225,9 @@ async function selecionarGrupoInv(grupo) {
     });
     // Adições feitas direto no Estoque da Loja (produtos que só existem aqui)
     _addDe(`ESTOQUE DA LOJA|${grupo}`);
+    // Produto que também está num grupo anterior do Estoque da Loja fica só lá
+    const fica = new Set(_soDoGrupoEL(_invProds.map(p => p.nome), grupo, _donoEstoqueLoja(INVENTARIO_ESTRUTURA, _invLocal || 'Centro')));
+    _invProds = _invProds.filter(p => fica.has(p.nome));
   } else {
     _addDe(_chaveAdic(_invLocal, _invSetor, grupo));
   }
@@ -14372,7 +14405,7 @@ function _nomesGrupoSaldoDe(unidade, grupo, grupos) {
     if (centro[s]?.[grupo]) addChave(`${s}|${grupo}`);
   });
   addChave(`ESTOQUE DA LOJA|${grupo}`);
-  return nomes;
+  return _soDoGrupoEL(nomes, grupo, _donoEstoqueLoja(centro, 'Centro'));   // um grupo só por produto
 }
 
 async function selecionarGrupoSaldo(grupo) {

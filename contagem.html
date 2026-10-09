@@ -769,6 +769,27 @@ function _espelhoEstoqueDelivery(estUni, excluidos, adicoes, mapeamentos, prefDe
   });
   return { grupos, origem };
 }
+// Estoque da Loja: cada produto em UM grupo só — o primeiro na ordem do Estoque da Loja
+// (contar o 2º grupo com o campo vazio zerava o 1º). Mesma regra e o porquê em app.js
+// (_donoEstoqueLoja): mudar uma, mudar a outra.
+function _donoEstoqueLojaMob() {
+  const el    = INVENTARIO_ESTRUTURA['ESTOQUE DA LOJA'] || {};
+  const ordem = _ordemGruposMob[_local]?.['ESTOQUE DA LOJA'] || [];
+  const grupos = [...ordem.filter(g => el[g]), ...Object.keys(el).filter(g => !ordem.includes(g))];
+  const chave = n => norm((_mapeamentos[n] || n).trim());
+  const dono = {};
+  const marca = (n, g) => { const k = chave(n); if (!(k in dono)) dono[k] = g; };
+  grupos.forEach(g => (_invAdicoes[`ESTOQUE DA LOJA|${g}`] || []).forEach(n => marca(n, g)));
+  grupos.forEach(g => {
+    el[g].filter(n => !_excluidos.has(n)).forEach(n => marca(n, g));
+    Object.keys(INVENTARIO_ESTRUTURA).forEach(st => {
+      if (st !== 'ESTOQUE DA LOJA' && INVENTARIO_ESTRUTURA[st]?.[g])
+        (_invAdicoes[_prefUnidMob(_local, st) + `${st}|${g}`] || []).forEach(n => marca(n, g));
+    });
+  });
+  return dono;
+}
+
 function _aplicarEspelhoDeliveryMob() {
   if (_local !== 'Delivery P10') return;
   const est = _todasEstruturasMob['Delivery P10'];
@@ -1608,6 +1629,8 @@ async function selecionarGrupo(grupo) {
     });
     // Adições feitas direto no Estoque da Loja (produtos que só existem aqui)
     _addDe(`ESTOQUE DA LOJA|${grupo}`);
+    const dono = _donoEstoqueLojaMob();   // produto que está num grupo anterior fica só lá
+    _grupoProds = _grupoProds.filter(p => (dono[norm((_mapeamentos[p.nome] || p.nome).trim())] ?? grupo) === grupo);
   } else {
     _addDe(_chaveAdic(_setor, grupo));
   }
