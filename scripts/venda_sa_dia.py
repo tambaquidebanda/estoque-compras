@@ -34,6 +34,11 @@ from datetime import datetime, timedelta
 os.environ['BAIXA_MODE'] = 'dry'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baixa_estoque_pdv as bx  # noqa: E402
+from functools import lru_cache  # noqa: E402
+
+# O iComanda devolve o dia inteiro (as duas lojas) numa chamada só, e ela pode levar
+# 15 s ou mais (09/10/2026). Sem isto cada dia era baixado uma vez por unidade.
+bx.buscar_dia = lru_cache(maxsize=1)(bx.buscar_dia)
 
 DIAS   = int(bx.env('VENDA_SA_DIAS', '3'))
 INICIO = datetime.strptime(bx.env('VENDA_SA_INICIO', '2026-08-15'), '%Y-%m-%d').date()

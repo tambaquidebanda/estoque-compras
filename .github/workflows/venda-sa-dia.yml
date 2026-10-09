@@ -27,7 +27,7 @@ concurrency:
 jobs:
   venda-sa:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45     # dias = 40 com o iComanda lento passa de 20 min (09/10/2026)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
