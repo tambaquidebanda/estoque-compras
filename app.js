@@ -16232,13 +16232,22 @@ function _metaPratosHtml(pid) {
   if (!pratos.length) return cab + aviso + `<div class="mp-vazio">Nenhum prato vendido neste período usou esta SA.</div>`;
   const tot = pratos.reduce((t, p) => t + p.sa, 0);
   const un = esc(prodFT(pid)?.unidade_uso || '');
-  const nUsados = D.diasOrigem[u.unidade]?.size || 0;
-  return cab + aviso + `<table class="mp-tab"><thead><tr><th>Prato vendido</th><th class="text-end">Vendidos</th><th class="text-end">SA usada</th><th class="text-end">%</th></tr></thead>
+  // A coluna "Vende seg→qua" da meta NÃO é o total do período: é a média de cada dia
+  // da semana × os dias que a produção cobre. Aqui cada prato leva a sua parte dela,
+  // para o total da janelinha bater com o número da linha (Wagner, 09/10).
+  const l = L.arr.find(x => x.pid === pid);
+  const naMeta = l && l.vendeu > 0 ? l.vendeu : null;
+  const rotMeta = _META_COBRE_ROT[L.cobre || 7];
+  return cab + aviso + `<table class="mp-tab"><thead><tr><th>Prato vendido</th><th class="text-end">Vendidos<br>${nDias} dias</th>
+      <th class="text-end">SA usada<br>${nDias} dias</th><th class="text-end">%</th>${naMeta === null ? '' : `<th class="text-end mp-meta">Na meta<br>${esc(rotMeta)}</th>`}</tr></thead>
     <tbody>${pratos.map(p => `<tr><td>${esc(prodFT(p.id)?.nome || p.nome || p.id)}</td>
       <td class="text-end">${_metaNum(p.vend)}</td><td class="text-end">${_metaNumU(pid, p.sa)}</td>
-      <td class="text-end text-muted">${Math.round(p.sa / tot * 100)}%</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td>Total</td><td></td><td class="text-end">${_metaNumU(pid, tot)} ${un}</td><td class="text-end">100%</td></tr></tfoot></table>
-    <div class="mp-nota">≈ ${_metaNum(nUsados ? tot / nUsados : 0)} ${un} por dia. "SA usada" é quanto da SA esses pratos consumiram pela ficha técnica; a média de cada dia da semana sai deste total.</div>`;
+      <td class="text-end text-muted">${Math.round(p.sa / tot * 100)}%</td>${naMeta === null ? ''
+        : `<td class="text-end mp-meta">${_metaNumU(pid, naMeta * p.sa / tot)}</td>`}</tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total</td><td></td><td class="text-end">${_metaNumU(pid, tot)}</td><td class="text-end">100%</td>${naMeta === null ? ''
+      : `<td class="text-end mp-meta">${_metaNumU(pid, naMeta)} ${un}</td>`}</tr></tfoot></table>
+    <div class="mp-nota">"SA usada" é quanto da SA esses pratos consumiram pela ficha técnica nos ${nDias} dias.${naMeta === null ? '' :
+      ` "Na meta" é a parte de cada prato na coluna <strong>Vende ${esc(rotMeta)}</strong> (${_metaNumU(pid, naMeta)} ${un}): a média de cada dia da semana nesses ${nDias} dias, somada para os ${L.cobre || 7} dias que a produção cobre.`}</div>`;
 }
 function _metaPratosMostrar(el) {
   let pop = document.getElementById('meta-pratos');

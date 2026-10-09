@@ -507,7 +507,7 @@ h1 {
 .meta-rodape td { background: #f7f9f8; color: #4f5c58; font-size: .85rem; }
 .meta-sa { cursor: help; border-bottom: 1px dotted #9aa8a4; }
 .meta-sa:hover, .meta-sa:focus { border-bottom-color: #0e6b68; color: #0e6b68; outline: none; }
-#meta-pratos { position: absolute; z-index: 1080; display: none; width: min(460px, calc(100vw - 16px));
+#meta-pratos { position: absolute; z-index: 1080; display: none; width: min(560px, calc(100vw - 16px));
   background: #fff; color: #1f2a27; border: 1px solid #d5ddda; border-radius: 8px;
   box-shadow: 0 10px 28px rgba(16, 40, 34, .18); padding: 12px 14px; font-size: .85rem;
   max-height: min(70vh, 560px); overflow-y: auto; }
@@ -522,3 +522,5 @@ h1 {
 #meta-pratos .mp-nota { color: #5f6d69; font-size: .75rem; margin-top: 8px; }
 #meta-pratos .mp-aviso { background: #fff4d6; color: #7a5300; border-radius: 6px; padding: 6px 8px; font-size: .78rem; margin-bottom: 8px; }
 #meta-pratos .mp-vazio { color: #5f6d69; font-style: italic; }
+#meta-pratos .mp-meta { background: #eef6f4; font-weight: 600; }
+#meta-pratos .mp-tab th { vertical-align: bottom; line-height: 1.2; }
