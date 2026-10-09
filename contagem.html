@@ -727,6 +727,56 @@ function _gerarEstoqueLojaEstruturaMob() {
 }
 _gerarEstoqueLojaEstruturaMob(); // initial call
 
+// Estoque Delivery = lista própria + espelho dos setores do P10 (Wagner, 09/10/2026).
+// Mesma função e o porquê em app.js (_espelhoEstoqueDelivery): mudar uma, mudar a outra.
+// Só para ver/contar: a parte espelhada nunca é gravada na estrutura.
+const _ESPELHO_SETOR_P10 = 'ESTOQUE DELIVERY';
+const _ESPELHO_GRUPO_ALIAS = {
+  'congelados': 'SA CONGELADOS', 'material de limpeza': 'LIMPEZA', 'embalagens': 'EMBALAGENS/DESCARTÁVEIS',
+  'descartavel': 'EMBALAGENS/DESCARTÁVEIS', 'peixes': 'PESCADOS',
+};
+function _espelhoEstoqueDelivery(estUni, excluidos, adicoes, mapeamentos, prefDe) {
+  const _n = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const chave = n => _n(mapeamentos[n] || n);
+  const ED = _ESPELHO_SETOR_P10, own = estUni?.[ED] || {};
+  const grupos = {}, origem = {}, vistos = new Set(), grupoNorm = {};
+  Object.entries(own).forEach(([g, ns]) => {
+    grupos[g] = [...(ns || [])];
+    grupoNorm[_n(g)] = g;
+    ns.forEach(n => { if (!excluidos.has(n)) vistos.add(chave(n)); });
+  });
+  Object.entries(adicoes || {}).forEach(([k, ns]) => {
+    if (k.startsWith(prefDe(ED) + ED + '|')) (ns || []).forEach(n => vistos.add(chave(n)));
+  });
+  const destino = g => {
+    const alias = _ESPELHO_GRUPO_ALIAS[_n(g)];
+    if (alias && grupoNorm[_n(alias)]) return grupoNorm[_n(alias)];
+    return grupoNorm[_n(g)] || (grupoNorm[_n(g)] = g);
+  };
+  Object.entries(estUni || {}).forEach(([setor, gr]) => {
+    if (setor === ED || setor === 'ESTOQUE DA LOJA') return;
+    Object.entries(gr || {}).forEach(([g, ns]) => {
+      const nomes = [...(ns || []).filter(n => !excluidos.has(n)), ...(adicoes?.[prefDe(setor) + `${setor}|${g}`] || [])];
+      nomes.forEach(n => {
+        const k = chave(n);
+        if (!n || vistos.has(k)) return;
+        vistos.add(k);
+        const tg = destino(g);
+        (grupos[tg] ||= []).push(n);
+        origem[`${tg}|${_n(n)}`] = `${setor} / ${g}`;
+      });
+    });
+  });
+  return { grupos, origem };
+}
+function _aplicarEspelhoDeliveryMob() {
+  if (_local !== 'Delivery P10') return;
+  const est = _todasEstruturasMob['Delivery P10'];
+  if (!est?.[_ESPELHO_SETOR_P10]) return;
+  INVENTARIO_ESTRUTURA[_ESPELHO_SETOR_P10] =
+    _espelhoEstoqueDelivery(est, _excluidos, _invAdicoes, _mapeamentos, s => _prefUnidMob('Delivery P10', s)).grupos;
+}
+
 let _todasEstruturasMob = {};
 
 // ─── ESTADO ──────────────────────────────────────────────────────
@@ -1181,6 +1231,7 @@ function _aplicarEstruturaLocalMob(local) {
   Object.keys(INVENTARIO_ESTRUTURA).forEach(k => { if (k !== 'ESTOQUE DA LOJA') delete INVENTARIO_ESTRUTURA[k]; });
   Object.assign(INVENTARIO_ESTRUTURA, base);
   _gerarEstoqueLojaEstruturaMob();
+  _aplicarEspelhoDeliveryMob();
 }
 
 // ─── DIA ─────────────────────────────────────────────────────────
@@ -1435,6 +1486,7 @@ function _rodapeDaUnidade() {
 }
 function selecionarEstoqueLoja() {
   const est = _estoqueMob();
+  if (est.setor === _ESPELHO_SETOR_P10) _aplicarEspelhoDeliveryMob();
   _setor = est.setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display         = 'none';
   document.getElementById('grupos-produtos').style.display    = 'block';

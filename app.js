@@ -2856,6 +2856,67 @@ function _estoqueLojaDe(estrutura) {
 }
 _gerarEstoqueLojaEstrutura(); // initial call (replaces IIFE)
 
+// ── Estoque Delivery = lista própria + espelho dos setores do P10 (Wagner, 09/10/2026) ──
+// No Centro o Estoque da Loja é montado na hora com tudo o que os setores têm. O
+// ESTOQUE DELIVERY nasceu em 28/09 como lista gravada (grupos próprios: SA CONGELADOS,
+// LIMPEZA...) e o que entrava depois num setor do P10 ficava de fora: em 09/10 eram 56
+// itens, entre eles a SA ISCA DE FRANGO, que a meta via com estoque zero.
+// Agora a lista própria continua mandando (grupos e ordem) e todo item de setor do P10
+// que ainda não está nela aparece junto, no grupo equivalente. É só para ver/contar:
+// a parte espelhada NUNCA é gravada na estrutura (_todasEstruturas fica intacta).
+// A mesma função está em contagem.html: mudar uma, mudar a outra.
+const _ESPELHO_SETOR_P10 = 'ESTOQUE DELIVERY';
+const _ESPELHO_GRUPO_ALIAS = {   // grupo do setor -> grupo do Estoque Delivery (se existir lá)
+  'congelados': 'SA CONGELADOS', 'material de limpeza': 'LIMPEZA', 'embalagens': 'EMBALAGENS/DESCARTÁVEIS',
+  'descartavel': 'EMBALAGENS/DESCARTÁVEIS', 'peixes': 'PESCADOS',
+};
+let _espelhoOrigem = {};         // 'grupo|nome normalizado' -> 'SETOR / GRUPO' de onde veio
+
+function _espelhoEstoqueDelivery(estUni, excluidos, adicoes, mapeamentos, prefDe) {
+  const _n = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const chave = n => _n(mapeamentos[n] || n);
+  const ED = _ESPELHO_SETOR_P10, own = estUni?.[ED] || {};
+  const grupos = {}, origem = {}, vistos = new Set(), grupoNorm = {};
+  Object.entries(own).forEach(([g, ns]) => {
+    grupos[g] = [...(ns || [])];
+    grupoNorm[_n(g)] = g;
+    ns.forEach(n => { if (!excluidos.has(n)) vistos.add(chave(n)); });
+  });
+  Object.entries(adicoes || {}).forEach(([k, ns]) => {
+    if (k.startsWith(prefDe(ED) + ED + '|')) (ns || []).forEach(n => vistos.add(chave(n)));
+  });
+  const destino = g => {
+    const alias = _ESPELHO_GRUPO_ALIAS[_n(g)];
+    if (alias && grupoNorm[_n(alias)]) return grupoNorm[_n(alias)];
+    return grupoNorm[_n(g)] || (grupoNorm[_n(g)] = g);
+  };
+  Object.entries(estUni || {}).forEach(([setor, gr]) => {
+    if (setor === ED || setor === 'ESTOQUE DA LOJA') return;
+    Object.entries(gr || {}).forEach(([g, ns]) => {
+      const nomes = [...(ns || []).filter(n => !excluidos.has(n)), ...(adicoes?.[prefDe(setor) + `${setor}|${g}`] || [])];
+      nomes.forEach(n => {
+        const k = chave(n);
+        if (!n || vistos.has(k)) return;
+        vistos.add(k);
+        const tg = destino(g);
+        (grupos[tg] ||= []).push(n);
+        origem[`${tg}|${_n(n)}`] = `${setor} / ${g}`;
+      });
+    });
+  });
+  return { grupos, origem };
+}
+
+// Troca, só na tela, o ESTOQUE DELIVERY da unidade aberta pela versão com espelho.
+function _aplicarEspelhoDelivery(local) {
+  if ((local || _invLocal || 'Centro') !== 'Delivery P10') return;
+  const est = _todasEstruturas['Delivery P10'];
+  if (!est?.[_ESPELHO_SETOR_P10]) return;
+  const e = _espelhoEstoqueDelivery(est, _invExcluidos, _invAdicoes, _invMapeamentos, s => _prefUnid('Delivery P10', s));
+  INVENTARIO_ESTRUTURA[_ESPELHO_SETOR_P10] = e.grupos;   // objeto novo: não encosta na lista gravada
+  _espelhoOrigem = e.origem;
+}
+
 const _UNIDADES_LOCAIS = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
 let _todasEstruturas = {};
 // Como a estrutura estava no banco quando esta tela a leu. Gravar a estrutura INTEIRA
@@ -2868,6 +2929,7 @@ function _aplicarEstruturaLocal(local) {
   Object.keys(INVENTARIO_ESTRUTURA).forEach(k => { if (k !== 'ESTOQUE DA LOJA') delete INVENTARIO_ESTRUTURA[k]; });
   Object.assign(INVENTARIO_ESTRUTURA, base);
   _gerarEstoqueLojaEstrutura();
+  _aplicarEspelhoDelivery(local);
 }
 
 let _invLocal        = 'Centro';
@@ -3020,11 +3082,10 @@ async function carregarMapeamentosInv() {
     });
   });
   if (_estruturaMudou) { await sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas }); await _releSnapEstrutura(); }
+  _invMapeamentos = mapeamentos;     // antes de aplicar: o espelho do Estoque Delivery usa os dois
+  _invExcluidos   = excluidos;
   _aplicarEstruturaLocal(_invLocal || 'Centro');
   _renderizarSetoresBtns();
-
-  _invMapeamentos = mapeamentos;
-  _invExcluidos   = excluidos;
 }
 
 async function carregarInventario() {
@@ -3035,6 +3096,7 @@ async function carregarInventario() {
 }
 
 async function selecionarSetorInv(setor) {
+  if (setor === _ESPELHO_SETOR_P10) _aplicarEspelhoDelivery();
   _invSetor = setor;
   _invGrupo = null;
   _invSoLista = null;
@@ -3286,6 +3348,8 @@ async function removerProdInv(nome) {
 // la continua o jeito antigo.
 async function excluirProdInv(nome) {
   const unidade = _invLocal || 'Centro';
+  const veioDe = unidade === 'Delivery P10' && _invSetor === _ESPELHO_SETOR_P10 && _espelhoOrigem[`${_invGrupo}|${norm(nome).trim()}`];
+  if (veioDe) { toast(`"${nome}" aparece aqui porque está em ${veioDe} do P10. Para tirar do Estoque Delivery, exclua lá.`, 'erro'); return; }
   if (_invSetor && _invSetor !== 'ESTOQUE DA LOJA') return _excluirProdDaUnidade(nome, unidade, _invSetor, _invGrupo);
   return _excluirProdGlobal(nome);
 }
@@ -10823,7 +10887,9 @@ function _saldoValorUnidade(u) {
 function _saldoGruposDe(u, semFora) {
   const cfg = _saldoUnidadeCfg(u);
   if (!cfg.setor) return _estoqueLojaDe(_saldoEstruturaCentro());
-  const est   = _todasEstruturas[u]?.[cfg.setor] || {};
+  const est   = cfg.setor === _ESPELHO_SETOR_P10 && _todasEstruturas[u]?.[cfg.setor]
+    ? _espelhoEstoqueDelivery(_todasEstruturas[u], _invExcluidos, _invAdicoes, _invMapeamentos, s => _prefUnid(u, s)).grupos
+    : _todasEstruturas[u]?.[cfg.setor] || {};
   const ordem = _invOrdemGrupos?.[u]?.[cfg.setor] || [];
   const out = {};
   ordem.forEach(g => { if (est[g]) out[g] = est[g]; });
