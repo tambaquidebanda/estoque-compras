@@ -8324,6 +8324,15 @@ async function carregarCompras() {
   // Se ainda não há conta (ex: pedido recebido mas sem conta gerada), usa a soma real dos recebimentos —
   // nunca o total estimado, que inclui itens dispensados.
   Object.values(grupos).forEach(g => {
+    // Pedido FECHADO depois de recebimento PARCIAL: o parcial deixa a linha com a quantidade
+    // que faltava (pendente) e o "Fechar Pedido" a passa para dispensado — nenhuma linha fica
+    // 'recebido', embora tenha havido recebimento e conta a pagar. Sem isto o pedido nao
+    // aparecia como recebido e, se o financeiro rejeitasse o rascunho (vencimento errado), nao
+    // havia "Gerar Conta" para reenviar: so "Enviar Financeiro" (adiantamento) e "Fechar
+    // Pedido", que reenviava com o mesmo vencimento. Rastro: #01786, 14/10/2026.
+    // So com conta no estoque (contaSet): pedido antigo sem conta (#00539) foi pago por fora.
+    if (!g.recebido && !g._temPendente && g._temDispensado && somaRecebMap[g.pedido_num] > 0 && contaSet.has(g.pedido_num))
+      g.recebido = true;
     if (g.recebido && valorRecebMap[g.pedido_num]) {
       g.total = valorRecebMap[g.pedido_num];
     } else if (g.recebido && somaRecebMap[g.pedido_num]) {
