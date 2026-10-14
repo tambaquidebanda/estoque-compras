@@ -505,6 +505,12 @@
             <option>ASG</option>
             <option>DELIVERY</option>
             <option>ESTOQUE DA LOJA</option>
+            <optgroup label="Só no Delivery P10">
+              <option value="BEBIDAS">BEBIDAS</option>
+              <option value="SOBREMESAS">SOBREMESAS</option>
+              <option value="DESCARTAVEL">DESCARTAVEL</option>
+              <option value="MATERIAL DE LIMPEZA">MATERIAL DE LIMPEZA</option>
+            </optgroup>
           </select>
           <button class="btn-refresh" onclick="carregarPedidosEstoque()">↺</button>
         </div>
@@ -513,6 +519,10 @@
 
       <div class="subtab-content" id="subtab-content-meus" style="display:none">
         <div class="filtros-row">
+          <select id="fil-meus-local" onchange="_trocarUnidadeMeusMob()">
+            <option value="Centro">Centro</option>
+            <option value="Delivery P10">Delivery P10</option>
+          </select>
           <select id="fil-meus-setor" onchange="carregarMeusPedidos()">
             <option value="">Selecionar setor...</option>
             <option>CHURRASQUEIRA</option>
@@ -1336,6 +1346,12 @@ function showSubTab(tab) {
   document.getElementById('subtab-content-meus').style.display    = 'block';
   document.getElementById('subtab-estoque').className = 'subtab';
   document.getElementById('subtab-meus').className    = 'subtab ativo';
+  const selUni = document.getElementById('fil-meus-local');
+  if (selUni && ['Centro', 'Delivery P10'].includes(_local) && selUni.value !== _local) {
+    selUni.value = _local;
+    _trocarUnidadeMeusMob();
+    return;
+  }
   carregarMeusPedidos();
 }
 function _abrirSubTabEstoque() {
@@ -1360,8 +1376,35 @@ function _pinDoSetorMob(setor) {
   if ((_local === 'Delivery P10' || soP10) && _pins['ESTOQUE DELIVERY']) return _pins['ESTOQUE DELIVERY'];
   return _pins[setor];
 }
-function _pinDoSetorMeus(setor) { return setor === 'ESTOQUE DA LOJA' ? _pins['ESTOQUE'] : _pinDoSetorMob(setor); }
-function _meusSetorLiberado(setor) { return !setor || !_pinDoSetorMeus(setor) || _meusLiberados.has(setor); }
+// Meus Pedidos tem a unidade propria (14/10/2026): o P10 faz pedido de setor desde 13/10 e a
+// COZINHA dele tem o mesmo nome da do Centro. A unidade escolhida ali decide a lista de
+// setores, os pedidos e o PIN (P10 = PIN do Estoque Delivery). O setor liberado fica guardado
+// por unidade: o PIN da Cozinha do Centro nao abre a Cozinha do P10, e vice-versa.
+const _SETORES_P10_PED_MOB = ['BEBIDAS', 'COZINHA', 'SOBREMESAS', 'DESCARTAVEL', 'CHURRASQUEIRA', 'MATERIAL DE LIMPEZA'];
+let _setoresCentroMeusHtml = null;
+function _unidadeMeus() { return document.getElementById('fil-meus-local')?.value || 'Centro'; }
+function _chaveMeus(unidade, setor) { return `${unidade}|${setor}`; }
+function _trocarUnidadeMeusMob() {
+  const sel = document.getElementById('fil-meus-setor');
+  if (!sel) return;
+  if (_setoresCentroMeusHtml === null) _setoresCentroMeusHtml = sel.innerHTML;
+  const atual = sel.value;
+  if (_unidadeMeus() === 'Delivery P10') {
+    const est = Object.keys(_todasEstruturasMob?.['Delivery P10'] || {}).filter(x => x !== 'ESTOQUE DELIVERY');
+    sel.innerHTML = '<option value="">Selecionar setor...</option>' +
+      (est.length ? est : _SETORES_P10_PED_MOB).map(x => `<option>${esc(x)}</option>`).join('');
+  } else {
+    sel.innerHTML = _setoresCentroMeusHtml;
+  }
+  sel.value = [...sel.options].some(o => o.value === atual) ? atual : '';
+  carregarMeusPedidos();
+}
+function _pinDoSetorMeus(setor) {
+  if (setor === 'ESTOQUE DA LOJA') return _pins['ESTOQUE'];
+  if (_unidadeMeus() === 'Delivery P10' && _pins['ESTOQUE DELIVERY']) return _pins['ESTOQUE DELIVERY'];
+  return _pins[setor];
+}
+function _meusSetorLiberado(setor) { return !setor || !_pinDoSetorMeus(setor) || _meusLiberados.has(_chaveMeus(_unidadeMeus(), setor)); }
 function pedirPinMeus(setor) {
   _pinTarget = { tipo: 'meus', setor };
   _pinBuffer = '';
@@ -1431,13 +1474,13 @@ function pinConfirm() {
     if (_pinTarget.tipo === 'estoque') _estoqueEscopo = _pinBuffer === esperado ? null : pinBar ? 'BAR_ALCOOLICAS' : 'P10_TRANSF';
     fecharModal('modal-pin');
     if (_pinTarget.tipo === 'meus') {
-      _meusLiberados.add(_pinTarget.setor);
+      _meusLiberados.add(_chaveMeus(_unidadeMeus(), _pinTarget.setor));
       carregarMeusPedidos();
     } else if (_pinTarget.tipo === 'setor') {
-      _meusLiberados.add(_pinTarget.setor);
+      _meusLiberados.add(_chaveMeus(_local, _pinTarget.setor));
       _pedirNomeParaSetor(_pinTarget.setor);
     } else if (_pinTarget.tipo === 'estoque_loja') {
-      if ((_pinTarget.pinKey || 'ESTOQUE') === 'ESTOQUE') _meusLiberados.add('ESTOQUE DA LOJA');
+      if ((_pinTarget.pinKey || 'ESTOQUE') === 'ESTOQUE') _meusLiberados.add(_chaveMeus('Centro', 'ESTOQUE DA LOJA'));
       selecionarEstoqueLoja();
     } else {
       _estoqueDesbloqueado = true;
@@ -2114,7 +2157,7 @@ async function carregarMeusPedidos() {
     pedirPinMeus(setor);
     return;
   }
-  let q = sb.from('pedidos_internos').select('*').eq('setor',setor).order('criado_em',{ascending:false}).limit(50);
+  let q = sb.from('pedidos_internos').select('*').eq('setor',setor).eq('local',_unidadeMeus()).order('criado_em',{ascending:false}).limit(50);
   if (status) q = q.eq('status', status);
   const { data: peds } = await q;
   if (!peds?.length) { el.innerHTML='<div class="vazio">Nenhum pedido.</div>'; return; }
