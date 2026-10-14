@@ -1189,15 +1189,36 @@ async function entrar() {
 // aparece, nao volta ao Centro e a tela nao grita. Login sem unidade (Loja Teatro, pessoais):
 // tudo como antes, com as tres travas. Era a direcao combinada em 11/09: unidade vinda de
 // quem trabalha onde, nao de escolha livre na tela. Decisao do Wagner em 14/10.
+//
+// 14/10/2026, mesmo dia: o Delivery P10 SAIU dos logins sem unidade. A Flavia contou a Cozinha
+// do Centro como P10 (INV-2477..2479, PED-3380 — SQL_FIX_3380_UNIDADE), o mesmo erro do Kevin
+// (25/07) e do Dermival (29/08). So conta/pede para o P10 quem tem o login marcado com
+// unidade = Delivery P10 (o login do P10 e o da Gisele). Est. Central e Producao seguem
+// abertos nos outros logins.
 let _unidadeFixa = null;
+const _LOCAL_SO_COM_LOGIN = 'Delivery P10';
 function _lerUnidadeFixa(u) {
   const x = String(u?.user_metadata?.unidade || '').trim();
   return _LOCAIS_MOB.includes(x) ? x : null;
 }
+function _localPermitido(l) {
+  if (_unidadeFixa) return l === _unidadeFixa;
+  return l !== _LOCAL_SO_COM_LOGIN;
+}
 function _mostrarPilulasDaUnidade() {
   document.querySelectorAll('.local-pills .pill').forEach(el => {
-    el.style.display = !_unidadeFixa || el.dataset.local === _unidadeFixa ? '' : 'none';
+    el.style.display = _localPermitido(el.dataset.local) ? '' : 'none';
   });
+  // Meus Pedidos: a unidade segue o login (P10 travado no P10; os outros sem o P10)
+  const selMeus = document.getElementById('fil-meus-local');
+  if (selMeus) {
+    [...selMeus.options].forEach(o => { o.hidden = o.disabled = !_localPermitido(o.value); });
+    selMeus.disabled = !!_unidadeFixa;
+    if (!_localPermitido(selMeus.value)) {
+      selMeus.value = [...selMeus.options].find(o => !o.disabled)?.value || 'Centro';
+      _trocarUnidadeMeusMob();             // a lista de setores tem de ser a da unidade
+    }
+  }
 }
 
 async function carregarMapeamentos() {
@@ -1278,6 +1299,7 @@ function escolherLocal(l) {
 function selecionarLocal(l) {
   if (!_LOCAIS_MOB.includes(l)) l = 'Centro';
   if (_unidadeFixa) l = _unidadeFixa;      // login com unidade: nao sai dela
+  else if (!_localPermitido(l)) l = 'Centro';   // P10 so com o login do P10
   const trocou = l !== _local;
   _local = l;
   if (trocou && _setor) voltarSetores();   // o setor aberto era da outra unidade
