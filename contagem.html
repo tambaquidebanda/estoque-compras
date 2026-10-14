@@ -990,6 +990,11 @@ async function _conferirContagemFora(itens, setor, local) {
 //      Centro antes, entao nunca e barrado.
 async function _conferirUnidadeDaNoite(resp, local, data) {
   if (!local || local === 'Centro') return true;        // Centro nunca e barrado
+  // Login com a unidade marcada (celular do P10, Gisele): quem decide a unidade e o login,
+  // nao a tela. A trava existia para pegar quem tocou na pilula errada, e ali nao ha pilula.
+  // Rastro: 14/10/2026 a Flavia (do P10) foi barrada porque um SQL meu tinha etiquetado as
+  // contagens dela da tarde como Centro.
+  if (_unidadeFixa && local === _unidadeFixa) return true;
   try {
     const { data: hoje } = await sb.from('est_inventarios')
       .select('local,setor,criado_em').eq('data', data).eq('responsavel', resp)
