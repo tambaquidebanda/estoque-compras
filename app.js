@@ -9847,13 +9847,15 @@ function _preencherSelectParcelas(id, valor) {
   sel.value = String(Math.max(1, Math.min(PARC_MAX, parseInt(valor, 10) || 1)));
 }
 
-// Divide um total em n parcelas iguais; a ÚLTIMA absorve a sobra dos centavos.
+// Divide um total em n parcelas iguais; a PRIMEIRA absorve a sobra dos centavos — é assim
+// que o boleto vem do fornecedor (14/10/2026, #01716: 1.316,74 + 1.316,73 + 1.316,73; antes a
+// sobra ia na última e as parcelas não batiam com os boletos). Mesma regra em
+// app.js e recebimento.html.
 function _dividirParcelas(total, n) {
   const cent = Math.round((Number(total) || 0) * 100);
   const base = Math.floor(cent / n);
-  const out  = [];
-  for (let i = 0; i < n - 1; i++) out.push(base / 100);
-  out.push((cent - base * (n - 1)) / 100);
+  const out  = [(cent - base * (n - 1)) / 100];
+  for (let i = 1; i < n; i++) out.push(base / 100);
   return out;
 }
 
