@@ -1476,7 +1476,7 @@
               <select class="form-select form-select-sm" id="fil-ped-local" style="width:130px">
                 <option value="">Todos os locais</option>
                 <option value="Centro">Centro</option>
-                <option value="P10">P10</option>
+                <option value="Delivery P10">Delivery P10</option>
               </select>
               <select class="form-select form-select-sm" id="fil-ped-setor" style="width:165px">
                 <option value="">Todos os setores</option>
@@ -1487,6 +1487,12 @@
                 <option value="ASG">🧹 ASG</option>
                 <option value="DELIVERY">🛵 Delivery</option>
                 <option value="ESTOQUE DA LOJA">🏪 Estoque da Loja</option>
+                <optgroup label="Só no Delivery P10">
+                  <option value="BEBIDAS">🥤 Bebidas</option>
+                  <option value="SOBREMESAS">🍰 Sobremesas</option>
+                  <option value="DESCARTAVEL">📦 Descartável</option>
+                  <option value="MATERIAL DE LIMPEZA">🧽 Material de Limpeza</option>
+                </optgroup>
               </select>
               <select class="form-select form-select-sm" id="fil-ped-status" style="width:145px"
                 onchange="carregarPedidosInternos()">
@@ -1517,6 +1523,11 @@
           <!-- Sub-aba: Meus Pedidos (visão do setor) -->
           <div class="tab-pane fade" id="tab-ped-meus">
             <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+              <select class="form-select form-select-sm" id="fil-meus-local" style="width:140px"
+                onchange="_trocarUnidadeMeusPedidos()">
+                <option value="Centro">Centro</option>
+                <option value="Delivery P10">Delivery P10</option>
+              </select>
               <select class="form-select form-select-sm" id="fil-meus-setor" style="width:170px"
                 onchange="carregarMeusPedidos()">
                 <option value="">Selecionar setor...</option>

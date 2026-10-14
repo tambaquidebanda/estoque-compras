@@ -816,7 +816,10 @@ let _excluidos     = new Set();
 let _invAdicoes    = {};   // { "SETOR|GRUPO": ["nome1","nome2"] }
 let _padroes       = {};   // { "SETOR|GRUPO|PRODUTO": { "seg": 5, "ter": 3, ... } }
 let _ordemGruposMob = {}; // { unidade: { setor: ['grupo1','grupo2',...] } }
-let _pedLiberarId  = null, _pedReceberId = null, _pedReceberSetor = null;
+let _pedLiberarId  = null, _pedReceberId = null, _pedReceberSetor = null, _pedReceberLocal = null;
+// De onde sai a mercadoria do pedido de setor (14/10/2026): no P10 e o ESTOQUE DELIVERY, o
+// estoque proprio dele. Antes saia do Estoque da Loja do Centro. Mesma regra em app.js.
+function _origemPedidoInterno(local) { return local === 'Delivery P10' ? 'ESTOQUE DELIVERY' : 'ESTOQUE_LOJA'; }
 let _pins              = {};
 let _pinBuffer         = '';
 let _pinTarget         = null;   // { tipo: 'setor'|'estoque', setor?: string }
@@ -2357,6 +2360,7 @@ async function abrirReceberPedido(id) {
   const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
   if (!_meusSetorLiberado(ped?.setor)) { _pedReceberId = null; pedirPinMeus(ped.setor); return; }
   _pedReceberSetor = ped?.setor || null;
+  _pedReceberLocal = ped?.local || null;
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td>
@@ -2398,7 +2402,7 @@ async function confirmarRecebimento() {
 const _PED_ATRASO_H = 24;
 
 async function _confirmacaoAtrasada(pedidoId) {
-  const { data: ped } = await sb.from('pedidos_internos').select('liberado_em').eq('id', pedidoId).single();
+  const { data: ped } = await sb.from('pedidos_internos').select('liberado_em,local').eq('id', pedidoId).single();
   if (!ped?.liberado_em) return null;
   const lib = new Date(ped.liberado_em);
   const quando = lib.toLocaleString('pt-BR', { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -2408,7 +2412,7 @@ async function _confirmacaoAtrasada(pedidoId) {
   const pids = [...new Set((its || []).map(i => i.produto_id).filter(Boolean))];
   if (!pids.length) return null;
   const { data: cont } = await sb.from('est_movimentacoes').select('id')
-    .eq('local', 'ESTOQUE_LOJA').in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
+    .eq('local', _origemPedidoInterno(ped.local)).in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
     .gt('criado_em', ped.liberado_em).limit(1);
   return cont?.length ? `foi liberado em ${quando} e o estoque já foi contado depois disso` : null;
 }
@@ -2429,7 +2433,7 @@ async function _encerrarPedidoAtrasado(pedidoId, motivo) {
 async function _confirmarRecebimento() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
-  const pedidoId = _pedReceberId, setor = _pedReceberSetor;
+  const pedidoId = _pedReceberId, setor = _pedReceberSetor, origem = _origemPedidoInterno(_pedReceberLocal);
   if (!_meusSetorLiberado(setor)) { toast('Digite o PIN do setor antes de confirmar.', 'err'); return; }
   const quem = _lerQuem('rec-quem');
   if (!quem) return;
@@ -2464,9 +2468,9 @@ async function _confirmarRecebimento() {
     return { ...it, qtd };
   }));
 
-  // Movimentar saldo (livro-razão): saída do ESTOQUE_LOJA, entrada no setor
+  // Movimentar saldo (livro-razão): saída do estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), entrada no setor
   await Promise.all(itens.filter(it => it.produto_id && it.qtd).map(async it => {
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -it.qtd, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
+    await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -it.qtd, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
     if (setor) await movimentar({ produto_id: it.produto_id, local: setor, tipo: 'pedido_interno_entrada', quantidade: +it.qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 

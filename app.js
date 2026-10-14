@@ -4481,7 +4481,32 @@ async function carregarPedidosInternos() {
   _renderPedEstoque(peds, itens || []);
 }
 
+// Meus Pedidos tem a unidade ao lado do setor (14/10/2026): o P10 começou a fazer pedido
+// de setor em 13/10 e a COZINHA do P10 tem o mesmo nome da do Centro. Sem a unidade os
+// pedidos das duas lojas se misturavam, e BEBIDAS/DESCARTÁVEL do P10 nem apareciam na lista.
+// Os setores do P10 vêm da estrutura da contagem (menos o ESTOQUE DELIVERY, que é quem libera).
+const _SETORES_P10_PED = ['BEBIDAS', 'COZINHA', 'SOBREMESAS', 'DESCARTAVEL', 'CHURRASQUEIRA', 'MATERIAL DE LIMPEZA'];
+let _setoresCentroMeusHtml = null;
+function _trocarUnidadeMeusPedidos() {
+  const sel = document.getElementById('fil-meus-setor');
+  if (!sel) return;
+  if (_setoresCentroMeusHtml === null) _setoresCentroMeusHtml = sel.innerHTML;
+  const unidade = document.getElementById('fil-meus-local')?.value || 'Centro';
+  const atual = sel.value;
+  if (unidade === 'Delivery P10') {
+    const est = Object.keys(_todasEstruturas?.['Delivery P10'] || {}).filter(s => s !== LOCAL_ESTOQUE_P10);
+    const setores = est.length ? est : _SETORES_P10_PED;
+    sel.innerHTML = '<option value="">Selecionar setor...</option>' +
+      setores.map(s => `<option value="${esc(s)}">${esc(_SETOR_LABEL[s] || s)}</option>`).join('');
+  } else {
+    sel.innerHTML = _setoresCentroMeusHtml;
+  }
+  sel.value = [...sel.options].some(o => o.value === atual) ? atual : '';
+  carregarMeusPedidos();
+}
+
 async function carregarMeusPedidos() {
+  const unidade = document.getElementById('fil-meus-local')?.value     || '';
   const setor   = document.getElementById('fil-meus-setor')?.value     || '';
   const status  = document.getElementById('fil-meus-status')?.value    || '';
   const tipo    = document.getElementById('fil-meus-tipo')?.value      || '';
@@ -4492,6 +4517,7 @@ async function carregarMeusPedidos() {
   if (!setor) { el.innerHTML = '<p class="text-muted text-center py-4">Selecione um setor.</p>'; return; }
 
   let q = sb.from('pedidos_internos').select('*').eq('setor', setor).order('criado_em', { ascending: false }).limit(200);
+  if (unidade) q = q.eq('local', unidade);
   if (status)  q = q.eq('status', status);
   if (tipo)    q = q.eq('tipo', tipo);
   if (dataIni) q = q.gte('data', dataIni);
@@ -4845,6 +4871,14 @@ async function confirmarEdicaoPedido() {
 let _pedReceberId    = null;
 let _pedReceberItens = [];
 let _pedReceberSetor = null;
+let _pedReceberLocal = null;
+
+// De onde sai a mercadoria do pedido de setor (14/10/2026). O P10 tem estoque próprio, o
+// ESTOQUE DELIVERY (desde 28/09); sem isto o pedido da COZINHA do P10 tirava do Estoque da
+// Loja do Centro, que nunca viu essa mercadoria. Mesma regra em contagem.html.
+function _origemPedidoInterno(local) {
+  return local === 'Delivery P10' ? LOCAL_ESTOQUE_P10 : 'ESTOQUE_LOJA';
+}
 
 // ════════════════════════════════════════════════════════════════
 // O LUGAR NO RAZAO
@@ -5183,6 +5217,7 @@ async function abrirReceberPedido(pedidoId) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id', pedidoId);
   _pedReceberItens = itens || [];
   _pedReceberSetor = ped?.setor || null;
+  _pedReceberLocal = ped?.local || null;
 
   const rows = (itens || []).map(it => `<tr>
     <td>${esc(it.nome)}</td>
@@ -5240,7 +5275,7 @@ async function confirmarRecebimentoInv() {
 const _PED_ATRASO_H = 24;
 
 async function _confirmacaoAtrasada(pedidoId) {
-  const { data: ped } = await sb.from('pedidos_internos').select('liberado_em').eq('id', pedidoId).single();
+  const { data: ped } = await sb.from('pedidos_internos').select('liberado_em,local').eq('id', pedidoId).single();
   if (!ped?.liberado_em) return null;
   const lib = new Date(ped.liberado_em);
   const quando = lib.toLocaleString('pt-BR', { timeZone: 'America/Manaus', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -5250,7 +5285,7 @@ async function _confirmacaoAtrasada(pedidoId) {
   const pids = [...new Set((its || []).map(i => i.produto_id).filter(Boolean))];
   if (!pids.length) return null;
   const { data: cont } = await sb.from('est_movimentacoes').select('id')
-    .eq('local', 'ESTOQUE_LOJA').in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
+    .eq('local', _origemPedidoInterno(ped.local)).in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
     .gt('criado_em', ped.liberado_em).limit(1);
   return cont?.length ? `foi liberado em ${quando} e o estoque já foi contado depois disso` : null;
 }
@@ -5271,7 +5306,7 @@ async function _encerrarPedidoAtrasado(pedidoId, motivo) {
 async function _confirmarRecebimentoInv() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
-  const pedidoId = _pedReceberId, setor = _pedReceberSetor;
+  const pedidoId = _pedReceberId, setor = _pedReceberSetor, origem = _origemPedidoInterno(_pedReceberLocal);
   const itenIds  = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
   const qtdTela  = id => parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
   const qtds     = Object.fromEntries(itenIds.map(id => [id, qtdTela(id)]));
@@ -5298,14 +5333,14 @@ async function _confirmarRecebimentoInv() {
   await Promise.all(itenIds.map(id =>
     sb.from('pedidos_internos_itens').update({ qtd_recebida: qtds[id] }).eq('id', id)));
 
-  // Movimentar saldo: diminui ESTOQUE_LOJA, aumenta setor.
+  // Movimentar saldo: diminui o estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), aumenta setor.
   // O pedido e digitado na unidade CONTAVEL (garrafa, saco); o saldo e em unidade
   // de USO. Sem o fator, liberar 2 garrafas de azeite somava 2 litros no setor.
   await Promise.all(itensRec.filter(it => it.produto_id).map(async it => {
     const qtd = it._qtd;
     if (!qtd) return;
     const uso = qtd * _fatorDe(it.produto_id);
-    await movimentar({ produto_id: it.produto_id, local: 'ESTOQUE_LOJA', tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
+    await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
     if (setor) await movimentar({ produto_id: it.produto_id, local: setor, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
@@ -10856,7 +10891,7 @@ const _SETOR_EMOJI = { CHURRASQUEIRA:'🔥', COZINHA:'🍳', BAR:'🍹', SALAO:'
                       'MATERIAL DE LIMPEZA':'🧹', BEBIDAS:'🥤', DESCARTAVEL:'🥡' };
 const _SETOR_COR   = { CHURRASQUEIRA:'#dc3545', COZINHA:'#fd7e14', BAR:'#6f42c1', SALAO:'#0d6efd', ASG:'#20c997', DELIVERY:'#e6ac00' };
 const _SETOR_LABEL = { CHURRASQUEIRA:'Churrasqueira', COZINHA:'Cozinha', BAR:'Bar', SALAO:'Salão', ASG:'ASG', DELIVERY:'Delivery',
-                      'MATERIAL DE LIMPEZA':'Material de Limpeza', BEBIDAS:'Bebidas', DESCARTAVEL:'Descartável' };
+                      'MATERIAL DE LIMPEZA':'Material de Limpeza', BEBIDAS:'Bebidas', DESCARTAVEL:'Descartável', SOBREMESAS:'Sobremesas' };
 
 let _saldoList   = [];
 let _saldoGrupo  = null;
