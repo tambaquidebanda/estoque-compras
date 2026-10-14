@@ -1015,6 +1015,7 @@ async function _conferirUnidadeDaNoite(resp, local, data) {
 // Depois de gravar, a unidade volta sozinha para o Centro. E a trava 1: quem
 // escolheu errado perde um grupo, nao a noite.
 function _voltarAoCentro() {
+  if (_unidadeFixa) return;          // login com unidade (celular do P10): fica nela
   if (_estoqueMob().unico) return;   // Est. Central / Producao: nao ha setor da loja para errar
   if (_local !== 'Centro') selecionarLocal('Centro');
 }
@@ -1022,15 +1023,17 @@ function _voltarAoCentro() {
 // Trava 2: fora do Centro a tela para de parecer normal.
 function _pintarAvisoUnidade() {
   const fora = _local !== 'Centro';
+  const fixo = !!_unidadeFixa && _local === _unidadeFixa;   // celular da unidade: aviso calmo
   const faixa = document.getElementById('aviso-unidade');
   if (faixa) {
     faixa.style.display = fora ? 'block' : 'none';
-    faixa.textContent = fora ? `ATENÇÃO: contando para ${_local} — não é o Centro` : '';
+    faixa.style.background = fixo ? '#1d4ed8' : '#dc2626';
+    faixa.textContent = !fora ? '' : fixo ? `Celular do ${_local}: tudo vai para o ${_local}` : `ATENÇÃO: contando para ${_local} — não é o Centro`;
   }
   document.querySelectorAll('[data-btn-salvar]').forEach(b => {
     if (!b.dataset.rotuloBase) b.dataset.rotuloBase = b.textContent;
     b.textContent = fora ? `${b.dataset.rotuloBase} no ${_local}` : b.dataset.rotuloBase;
-    b.style.background = fora ? '#dc2626' : '';
+    b.style.background = fora && !fixo ? '#dc2626' : '';
   });
 }
 
@@ -1163,14 +1166,38 @@ async function fazerLogin() {
 }
 
 async function entrar() {
+  // Le o usuario no servidor: a sessao guardada no aparelho traz o user_metadata de quando
+  // a pessoa entrou, e a unidade marcada por SQL depois disso nao apareceria.
+  try { const { data } = await sb.auth.getUser(); if (data?.user) user = data.user; } catch (e) { console.warn('getUser falhou:', e); }
+  _unidadeFixa = _lerUnidadeFixa(user);
   document.getElementById('tela-login').style.display    = 'none';
   document.getElementById('tela-principal').style.display = 'flex';
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
   await Promise.all([carregarProdutos(), carregarMapeamentos()]);
-  // Sempre abre no Centro — NÃO restaura a última unidade (ver _LOCAIS_MOB)
+  // Abre no Centro — NÃO restaura a última unidade (ver _LOCAIS_MOB). O login com
+  // unidade marcada (celular do P10) abre direto nela e fica nela.
   localStorage.removeItem('mob_local');
-  selecionarLocal('Centro');
+  _mostrarPilulasDaUnidade();
+  selecionarLocal(_unidadeFixa || 'Centro');
+}
+
+// UNIDADE PELO LOGIN (14/10/2026). O celular do P10 voltava para o Centro depois de cada
+// gravacao (trava 1, a5de957) e a equipe de la tinha de tocar "Delivery P10" e confirmar a
+// cada grupo. A unidade agora vem do login: user_metadata.unidade (marcada por SQL no
+// auth.users — SQL_UNIDADE_LOGIN_P10.sql). Login com unidade: abre nela, so a pilula dela
+// aparece, nao volta ao Centro e a tela nao grita. Login sem unidade (Loja Teatro, pessoais):
+// tudo como antes, com as tres travas. Era a direcao combinada em 11/09: unidade vinda de
+// quem trabalha onde, nao de escolha livre na tela. Decisao do Wagner em 14/10.
+let _unidadeFixa = null;
+function _lerUnidadeFixa(u) {
+  const x = String(u?.user_metadata?.unidade || '').trim();
+  return _LOCAIS_MOB.includes(x) ? x : null;
+}
+function _mostrarPilulasDaUnidade() {
+  document.querySelectorAll('.local-pills .pill').forEach(el => {
+    el.style.display = !_unidadeFixa || el.dataset.local === _unidadeFixa ? '' : 'none';
+  });
 }
 
 async function carregarMapeamentos() {
@@ -1250,6 +1277,7 @@ function escolherLocal(l) {
 
 function selecionarLocal(l) {
   if (!_LOCAIS_MOB.includes(l)) l = 'Centro';
+  if (_unidadeFixa) l = _unidadeFixa;      // login com unidade: nao sai dela
   const trocou = l !== _local;
   _local = l;
   if (trocou && _setor) voltarSetores();   // o setor aberto era da outra unidade
