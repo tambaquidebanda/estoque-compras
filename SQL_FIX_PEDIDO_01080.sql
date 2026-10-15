@@ -102,7 +102,7 @@ where not exists (select 1 from cmp_recebimento_itens
 -- PASSO 6 - linhas do pedido com o que veio em 24/08
 -- Esperado: UPDATE 3
 update cmp_compras c
-set quantidade = v.qtd, total = v.qtd * 6.5
+set quantidade = v.qtd   -- o total e calculado sozinho pelo banco
 from (values
   ('183e2672-e113-4f4d-91b1-c2cacb8e4dc8', 24),
   ('9c44db01-8100-47bb-9d4e-d8e5c6c82799', 13),
