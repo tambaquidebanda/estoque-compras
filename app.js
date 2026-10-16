@@ -5623,6 +5623,20 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
   }).select().single();
   if (error || !pedido) { toast('Erro ao criar: ' + (error?.message || ''), 'erro'); return null; }
 
+  // A DATA do pedido vem do relogio do SERVIDOR (criado_em), nao do aparelho. Rastro: de
+  // 25/09 a 16/10/2026, 5 de 23 transferencias criadas de manha (07:05 a 08:54) nasceram
+  // com a data da VESPERA - PED-3435 e 3436, criados 16/10 08:47, ficaram 15/10 e o
+  // Wagner nao os achou no dia. hojeLocal() e o mesmo das outras telas; a suspeita e o
+  // relogio do computador que cria, que nao da para provar pelo banco.
+  const diaServidor = pedido.criado_em && new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Manaus', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(pedido.criado_em));
+  if (diaServidor && diaServidor !== pedido.data) {
+    console.warn('Transferencia: data do aparelho', pedido.data, '- servidor', diaServidor);
+    await sb.from('pedidos_internos').update({ data: diaServidor }).eq('id', pedido.id);
+    pedido.data = diaServidor;
+  }
+
   const { data: itensBd, error: eIt } = await sb.from('pedidos_internos_itens').insert(validos.map(it => ({
     pedido_id: pedido.id, produto_id: it.produto_id, nome: it.nome || prodFT(it.produto_id)?.nome || null,
     qtd_pedida: Number(it.qtd), qtd_liberada: entrega ? Number(it.qtd) : null,
@@ -5637,7 +5651,7 @@ async function criarSolicitacaoTransf(itens, origem = 'manual', modo = 'pedir') 
     for (const it of itensBd) await movimentar({
       produto_id: it.produto_id, local: _transfLugar(deOnde), tipo: 'transferencia_saida',
       quantidade: -Number(it.qtd_liberada), origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
-      responsavel: _transfResp() || null, data: hojeLocal(), motivo: `Transferência ${num_pedido} → ${destino}`,
+      responsavel: _transfResp() || null, data: pedido.data || hojeLocal(), motivo: `Transferência ${num_pedido} → ${destino}`,
     });
   }
   return pedido;
