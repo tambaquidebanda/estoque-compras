@@ -5446,6 +5446,14 @@ async function carregarTransferencias() {
   const porPedido = {};
   (itens || []).forEach(it => { (porPedido[it.pedido_id] = porPedido[it.pedido_id] || []).push(it); });
 
+  // Itens que a trava nao somou na chegada (so nas transferencias marcadas — consulta pequena)
+  const naoSomados = new Set();
+  for (const p of data.filter(p => p.status === 'recebido' && (p.obs || '').includes(_TRANSF_MARCA_NAO_SOMADO))) {
+    const r = await _transfNaoSomados(porPedido[p.id] || [], _transfLugar(p.local));
+    (r.faltam || []).forEach(it => naoSomados.add(it.id));
+  }
+  data.forEach(p => { p._naoSomados = naoSomados; });
+
   // O que espera ação DESTA unidade vem primeiro
   const acao = p => (p.unidade_origem === unidade && p.status === 'pendente') || (p.local === unidade && p.status === 'liberado');
   const ord  = [...data].sort((a, b) => (acao(b) - acao(a)));
@@ -5470,8 +5478,9 @@ function _renderTransfCard(p, unidade) {
     const prod = prodFT(it.produto_id);
     const dif  = p.status === 'recebido' && it.qtd_liberada != null && it.qtd_recebida != null
       ? Number(it.qtd_recebida) - Number(it.qtd_liberada) : 0;
-    const aviso = Math.abs(dif) > 0.0001
-      ? `<div class="small text-danger">${dif < 0 ? 'faltou' : 'sobrou'} ${_transfQ(Math.abs(dif))}</div>` : '';
+    const aviso = (Math.abs(dif) > 0.0001
+      ? `<div class="small text-danger">${dif < 0 ? 'faltou' : 'sobrou'} ${_transfQ(Math.abs(dif))}</div>` : '')
+      + (p._naoSomados?.has(it.id) ? '<div class="small fw-semibold" style="color:#c2410c">não somou: já estava na contagem</div>' : '');
     return `<tr>
       <td>${esc(it.nome || prod?.nome || it.produto_id)}</td>
       <td class="text-muted small">${esc(prod?.unidade_uso || '')}</td>
@@ -5484,6 +5493,8 @@ function _renderTransfCard(p, unidade) {
   const botoes = [];
   if (enviar)    botoes.push(`<button class="btn btn-sm btn-success" onclick="enviarTransferencia('${p.id}')">📤 Enviar</button>`);
   if (confirmar) botoes.push(`<button class="btn btn-sm btn-primary" onclick="confirmarRecebimentoTransf('${p.id}')">📦 Confirmar chegada</button>`);
+  if (souDestino && p.status === 'recebido' && (p._itens || []).some(it => p._naoSomados?.has(it.id)))
+    botoes.push(`<button class="btn btn-sm btn-outline-warning" onclick="somarNaoSomadosTransf('${p.id}')">🔑 Somar o que não somou</button>`);
   if (p.status === 'pendente' && (souOrigem || souDestino))
     botoes.unshift(`<button class="btn btn-sm btn-outline-danger" onclick="cancelarTransferencia('${p.id}')">Cancelar pedido</button>`);
   const dica = enviar ? '<div class="small text-muted mb-2">Confira e ajuste o que vai sair de fato — o saldo sai daqui ao enviar.</div>'
@@ -5553,6 +5564,157 @@ async function enviarTransferencia(pedidoId) {
   } finally { _transfEmVoo = false; }
 }
 
+// ─── SENHA DE LIBERACAO ─────────────────────────────────────────
+// Destrava o que a tela barra para nao lancar em dobro (19/10/2026):
+//  - somar item de transferencia que o destino ja contou depois que ela saiu;
+//  - o ajuste manual (✏️) no Estoque da Loja e no Estoque Delivery (so no computador).
+// Quem conta e quem recebe e a mesma pessoa, por isso NAO e o PIN do Estoque: a senha
+// fica com a gerencia. Mora em inv_configuracoes['senha_liberacao'] so como hash SHA-256,
+// nunca o texto. E trava de processo, nao de seguranca. Mesmo bloco em app.js e contagem.html.
+const _SENHA_LIB_CHAVE = 'senha_liberacao';
+async function _hashSenhaLib(s) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('tdb-liberacao:' + String(s ?? '').trim()));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+async function _senhaLibHash() {
+  const { data } = await sb.from('inv_configuracoes').select('valor').eq('chave', _SENHA_LIB_CHAVE).maybeSingle();
+  return data?.valor?.hash || null;
+}
+const _horaManaus = iso => new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Manaus',
+  day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+// Janela da trava: titulo + html + botoes [{ k, txt, cor, senha }]. O botao com senha:true
+// abre o campo da senha e so devolve a escolha com a senha certa. Devolve a k escolhida, ou
+// null (Esc). Sem bootstrap, para servir igual no computador e no celular.
+function _janelaTrava({ titulo, html, botoes }) {
+  return new Promise(resolve => {
+    document.getElementById('janela-trava')?.remove();
+    const el = document.createElement('div');
+    el.id = 'janela-trava';
+    el.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+    el.innerHTML = `<div role="dialog" aria-modal="true" aria-labelledby="janela-trava-tit" style="background:#fff;color:#1e293b;border-radius:12px;max-width:540px;width:100%;max-height:90vh;overflow:auto;padding:18px 18px 14px;box-shadow:0 10px 40px rgba(0,0,0,.35);font-size:15px;text-align:left">
+      <div id="janela-trava-tit" style="font-weight:700;font-size:17px;margin-bottom:8px">${titulo}</div>
+      <div style="line-height:1.45">${html}</div>
+      <div data-senha style="display:none;margin-top:12px">
+        <label for="janela-trava-senha" style="font-weight:600;font-size:14px">Senha de liberação</label>
+        <input id="janela-trava-senha" type="password" autocomplete="off" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #94a3b8;border-radius:8px;font-size:16px;color:#1e293b;background:#fff">
+        <div data-erro role="alert" style="color:#b91c1c;font-size:13px;margin-top:4px"></div>
+      </div>
+      <div data-botoes style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px"></div>
+    </div>`;
+    const cores = { azul: '#1d4ed8', laranja: '#c2410c', cinza: '#64748b' };
+    const caixa = el.querySelector('[data-botoes]');
+    const fim = k => { el.remove(); resolve(k); };
+    let pendente = null, conferindo = false;
+    const conferirSenha = async () => {
+      if (conferindo) return;
+      conferindo = true;
+      const inp = el.querySelector('#janela-trava-senha'), erro = el.querySelector('[data-erro]');
+      try {
+        const hash = await _senhaLibHash();
+        if (!hash) { erro.textContent = 'A senha de liberação ainda não foi cadastrada (no computador: Contagem → Configurar PINs).'; return; }
+        if (await _hashSenhaLib(inp.value) !== hash) { erro.textContent = 'Senha errada.'; inp.select(); return; }
+        fim(pendente.k);
+      } finally { conferindo = false; }
+    };
+    botoes.forEach(b => {
+      const bt = document.createElement('button');
+      bt.type = 'button'; bt.textContent = b.txt;
+      bt.style.cssText = `border:0;border-radius:8px;padding:9px 14px;font-weight:600;font-size:14px;color:#fff;background:${cores[b.cor] || cores.azul};cursor:pointer`;
+      bt.onclick = () => {
+        if (!b.senha) return fim(b.k);
+        if (pendente === b) return conferirSenha();
+        pendente = b;
+        el.querySelector('[data-senha]').style.display = 'block';
+        bt.textContent = 'Liberar com a senha';
+        el.querySelector('#janela-trava-senha').focus();
+      };
+      caixa.appendChild(bt);
+    });
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Escape') fim(null);
+      if (e.key === 'Enter' && pendente && e.target.id === 'janela-trava-senha') conferirSenha();
+    });
+    document.body.appendChild(el);
+    caixa.querySelector('button')?.focus();
+  });
+}
+
+// ─── TRAVA: TRANSFERENCIA JA CONTADA NO DESTINO ─────────────────
+// PED-3405 saiu do Central em 15/10 09:10; o Anderson recontou os Congelados do Estoque
+// da Loja as 12:19, com a mercadoria ja no freezer, e confirmou a chegada as 14:03: 11 SAs
+// entraram duas vezes (~R$ 1.555). O pedido interno ja tinha essa trava
+// (_confirmacaoAtrasada); a transferencia nao. Agora o item que o destino contou ou
+// ajustou DEPOIS da saida nao soma na chegada - a contagem ja o incluiu. Se a mercadoria
+// chegou depois da contagem, a senha de liberacao soma (na hora, ou depois pelo cartao
+// no computador). A hora da saida vem do razao (criado_em = relogio do SERVIDOR), nunca
+// do liberado_em, que e o relogio do aparelho. Limite: contagem que bateu exato nao
+// grava linha no razao e nao e vista aqui.
+const _TRANSF_MARCA_NAO_SOMADO = 'Não somado na chegada';
+
+async function _razaoEmLotes(montar, ids) {        // .in() grande estoura a URL: lotes de 100
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await montar(ids.slice(i, i + 100));
+    if (error) return { erro: error };
+    out.push(...(data || []));
+  }
+  return { linhas: out };
+}
+
+async function _transfJaContados(itens, lugar, criadoEm) {
+  const ids  = itens.map(i => i.id);
+  const pids = [...new Set(itens.map(i => i.produto_id).filter(Boolean))];
+  if (!ids.length || !pids.length) return { contados: {} };
+  const s = await _razaoEmLotes(l => sb.from('est_movimentacoes').select('criado_em')
+    .eq('ref_tabela', 'pedidos_internos_itens').eq('tipo', 'transferencia_saida').in('ref_id', l), ids);
+  if (s.erro) return { erro: s.erro };
+  const desde = s.linhas.map(m => m.criado_em).sort()[0] || criadoEm;
+  if (!desde) return { contados: {} };
+  const c = await _razaoEmLotes(l => sb.from('est_movimentacoes').select('produto_id,criado_em,responsavel,tipo')
+    .eq('local', lugar).in('tipo', ['contagem', 'ajuste']).in('produto_id', l).gt('criado_em', desde), pids);
+  if (c.erro) return { erro: c.erro };
+  const contados = {};
+  c.linhas.sort((a, b) => a.criado_em < b.criado_em ? -1 : 1)
+    .forEach(m => { if (!contados[m.produto_id]) contados[m.produto_id] = m; });
+  return { desde, contados };
+}
+
+// Pergunta, ANTES de reservar a transferencia, o que fazer com os itens ja contados.
+// Devolve { pular, somados } (Sets de id de item), { desistiu: true } ou { erro }.
+async function _transfDecidirContados(ped, itens, qtds, lugar, nomeLugar) {
+  const r = await _transfJaContados(itens, lugar, ped.criado_em);
+  if (r.erro) return { erro: r.erro };
+  const marcados = itens.filter(it => (qtds[it.id] ?? 0) > 0 && r.contados[it.produto_id]);
+  if (!marcados.length) return { pular: new Set(), somados: new Set() };
+  const q = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const lista = marcados.map(it => {
+    const m = r.contados[it.produto_id];
+    return `<li><b>${esc(it.nome || '')}</b> ${q(qtds[it.id])} · ${m.tipo === 'ajuste' ? 'ajustado' : 'contado'} ${esc(_horaManaus(m.criado_em))}${m.responsavel ? ' por ' + esc(m.responsavel) : ''}</li>`;
+  }).join('');
+  const resto = itens.filter(it => (qtds[it.id] ?? 0) > 0).length - marcados.length;
+  const k = await _janelaTrava({
+    titulo: `${esc(ped.num_pedido || '')}: ${marcados.length} ${marcados.length === 1 ? 'item já foi contado' : 'itens já foram contados'} depois da saída`,
+    html: `<div>Saiu do ${esc(ped.unidade_origem || '')} em <b>${esc(_horaManaus(r.desde))}</b>. Depois disso, o ${esc(nomeLugar)} contou:</div>
+      <ul style="margin:.5rem 0 .5rem 1.1rem;padding:0">${lista}</ul>
+      <div>A contagem já inclui essa mercadoria, então ${marcados.length === 1 ? 'ele <b>não vai somar</b>' : 'eles <b>não vão somar</b>'} de novo.${resto === 1 ? ' O outro item entra normalmente.' : resto > 1 ? ` Os outros ${resto} itens entram normalmente.` : ''}</div>
+      <div style="margin-top:.5rem;font-size:13px;color:#475569">Se a mercadoria chegou <b>depois</b> da contagem, peça a senha de liberação à gerência.</div>`,
+    botoes: [
+      { k: null,      txt: 'Cancelar', cor: 'cinza' },
+      { k: 'somar',   txt: 'Chegou depois da contagem', cor: 'laranja', senha: true },
+      { k: 'receber', txt: 'Receber assim', cor: 'azul' },
+    ],
+  });
+  if (!k) return { desistiu: true };
+  const ids = new Set(marcados.map(it => it.id));
+  return k === 'somar' ? { pular: new Set(), somados: ids } : { pular: ids, somados: new Set(), desde: r.desde };
+}
+
+function _transfObsNaoSomado(obs, n, desde) {
+  const marca = `${_TRANSF_MARCA_NAO_SOMADO}: ${n} ${n === 1 ? 'item já contado' : 'itens já contados'} no destino depois da saída (${_horaManaus(desde)})`;
+  return [obs, marca].filter(Boolean).join(' · ');
+}
+
 // ── CONFIRMAR CHEGADA (destino) ─────────────────────────────────
 async function confirmarRecebimentoTransf(pedidoId) {
   if (_transfEmVoo) return;
@@ -5561,6 +5723,17 @@ async function confirmarRecebimentoTransf(pedidoId) {
   _transfEmVoo = true;
   try {
     if (!await _garantirSessao()) return;
+    // A trava pergunta ANTES de reservar: desistir aqui nao deixa nada pela metade.
+    const { data: ped } = await sb.from('pedidos_internos')
+      .select('id,num_pedido,unidade_origem,local,status,obs,criado_em').eq('id', pedidoId).single();
+    if (ped?.status !== 'liberado') { toast('Esta transferência já foi confirmada em outra tela.', 'erro'); await carregarTransferencias(); return; }
+    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id,nome').eq('pedido_id', pedidoId);
+    const lugar = _transfLugar(ped.local);
+    const dec = await _transfDecidirContados(ped,
+      (itens || []).map(it => ({ ...it, nome: it.nome || prodFT(it.produto_id)?.nome })), q, lugar, _rotuloLocal(lugar));
+    if (dec.erro) { toast('Não consegui conferir a contagem do destino. Nada foi lançado — tente de novo. ' + _msgErroBanco(dec.erro), 'erro'); return; }
+    if (dec.desistiu) { toast('Nada foi lançado.', 'warn'); return; }
+
     const { data: ok, error } = await sb.from('pedidos_internos')
       .update({ status: 'recebido', recebido_em: new Date().toISOString(),
         ...await _campoQuem('recebido_por', _transfResp()) })
@@ -5569,18 +5742,72 @@ async function confirmarRecebimentoTransf(pedidoId) {
     if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
     if (!ok?.length) { toast('Esta transferência já foi confirmada em outra tela.', 'erro'); await carregarTransferencias(); return; }
     const p = ok[0];
-    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id').eq('pedido_id', pedidoId);
-    const resp = _transfResp();
+    const resp = _transfResp(), quemLib = _nomeUsuario();
     for (const it of itens || []) {
       const v = q[it.id] ?? 0;
       await sb.from('pedidos_internos_itens').update({ qtd_recebida: v }).eq('id', it.id);
-      if (v > 0) await movimentar({
-        produto_id: it.produto_id, local: _transfLugar(p.local), tipo: 'transferencia_entrada',
+      if (v > 0 && !dec.pular.has(it.id)) await movimentar({
+        produto_id: it.produto_id, local: lugar, tipo: 'transferencia_entrada',
         quantidade: v, origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
-        responsavel: resp || null, data: hojeLocal(), motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}`,
+        responsavel: resp || null, data: hojeLocal(),
+        motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem}` +
+          (dec.somados.has(it.id) ? ` · chegou depois da contagem, somado com a senha de liberação por ${quemLib}` : ''),
       });
     }
-    toast(`${p.num_pedido} recebido ✅`, 'ok');
+    if (dec.pular.size)
+      await sb.from('pedidos_internos').update({ obs: _transfObsNaoSomado(ped.obs, dec.pular.size, dec.desde) }).eq('id', pedidoId);
+    toast(dec.pular.size
+      ? `${p.num_pedido} recebido ✅ ${dec.pular.size} item(ns) já estavam na contagem e não somaram de novo.`
+      : `${p.num_pedido} recebido ✅`, 'ok');
+    await carregarTransferencias();
+  } finally { _transfEmVoo = false; }
+}
+
+// ── SOMAR DEPOIS o que a trava nao somou na chegada (senha de liberacao) ──
+// O item fica com qtd_recebida > 0 e sem linha de transferencia_entrada no razao.
+async function _transfNaoSomados(itens, lugar) {
+  const ids = (itens || []).filter(it => Number(it.qtd_recebida) > 0).map(it => it.id);
+  if (!ids.length) return { faltam: [] };
+  const r = await _razaoEmLotes(l => sb.from('est_movimentacoes').select('ref_id')
+    .eq('ref_tabela', 'pedidos_internos_itens').eq('tipo', 'transferencia_entrada').eq('local', lugar).in('ref_id', l), ids);
+  if (r.erro) return { erro: r.erro };
+  const entrou = new Set(r.linhas.map(m => m.ref_id));
+  return { faltam: itens.filter(it => Number(it.qtd_recebida) > 0 && !entrou.has(it.id)) };
+}
+
+async function somarNaoSomadosTransf(pedidoId) {
+  if (_transfEmVoo) return;
+  _transfEmVoo = true;
+  try {
+    if (!await _garantirSessao()) return;
+    const { data: p } = await sb.from('pedidos_internos')
+      .select('id,num_pedido,unidade_origem,local,status,obs').eq('id', pedidoId).single();
+    if (p?.status !== 'recebido') { toast('Esta transferência ainda não foi recebida.', 'erro'); return; }
+    const { data: itens } = await sb.from('pedidos_internos_itens').select('id,produto_id,nome,qtd_recebida').eq('pedido_id', pedidoId);
+    const lugar = _transfLugar(p.local);
+    const r = await _transfNaoSomados(itens, lugar);
+    if (r.erro) { toast(_msgErroBanco(r.erro), 'erro'); return; }
+    if (!r.faltam.length) { toast('Tudo desta transferência já está no saldo.', 'ok'); await carregarTransferencias(); return; }
+    const lista = r.faltam.map(it => `<li><b>${esc(it.nome || prodFT(it.produto_id)?.nome || '')}</b> ${_transfQ(it.qtd_recebida)}</li>`).join('');
+    const k = await _janelaTrava({
+      titulo: `${esc(p.num_pedido)}: somar o que não somou na chegada`,
+      html: `<div>Estes itens não entraram no ${esc(_rotuloLocal(lugar))} porque o estoque já tinha sido contado depois da saída:</div>
+        <ul style="margin:.5rem 0 .5rem 1.1rem;padding:0">${lista}</ul>
+        <div>Some <b>só se a mercadoria chegou depois daquela contagem</b>. Se ela já estava na prateleira quando contaram, somar agora deixa o saldo em dobro.</div>`,
+      botoes: [{ k: null, txt: 'Cancelar', cor: 'cinza' }, { k: 'somar', txt: 'Somar agora', cor: 'laranja', senha: true }],
+    });
+    if (k !== 'somar') { toast('Nada foi lançado.', 'warn'); return; }
+    const quemLib = _nomeUsuario();
+    for (const it of r.faltam) await movimentar({
+      produto_id: it.produto_id, local: lugar, tipo: 'transferencia_entrada',
+      quantidade: Number(it.qtd_recebida), origem: 'transferencia', ref_tabela: 'pedidos_internos_itens', ref_id: it.id,
+      responsavel: quemLib || null, data: hojeLocal(),
+      motivo: `Transferência ${p.num_pedido} ← ${p.unidade_origem} · somado depois com a senha de liberação por ${quemLib}`,
+    });
+    await sb.from('pedidos_internos').update({
+      obs: [p.obs, `somado depois com senha por ${quemLib} em ${_horaManaus(new Date().toISOString())}`].filter(Boolean).join(' · '),
+    }).eq('id', pedidoId);
+    toast(`${r.faltam.length} item(ns) somado(s) no ${_rotuloLocal(lugar)} ✅`, 'ok');
     await carregarTransferencias();
   } finally { _transfEmVoo = false; }
 }
@@ -6142,10 +6369,35 @@ async function abrirConfigurarPins() {
     const el = document.getElementById(`pin-${s.replace(/ /g, '_')}`);
     if (el) el.value = pinsAtual[s] || '';
   });
+  const { data: sl } = await sb.from('inv_configuracoes').select('valor').eq('chave', _SENHA_LIB_CHAVE).maybeSingle();
+  const st = document.getElementById('senha-lib-status');
+  ['senha-lib-atual', 'senha-lib-nova'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('senha-lib-atual')?.classList.toggle('d-none', !sl?.valor?.hash);
+  if (st) st.innerHTML = sl?.valor?.hash
+    ? `Cadastrada${sl.valor.definida_em ? ' em ' + esc(_horaManaus(sl.valor.definida_em)) : ''}${sl.valor.definida_por ? ' por ' + esc(sl.valor.definida_por) : ''}. Para trocar, digite a atual e a nova.`
+    : '<span class="text-danger fw-semibold">Ainda não cadastrada: o ajuste ✏️ no Estoque da Loja e no Estoque Delivery fica bloqueado até cadastrar.</span>';
   new bootstrap.Modal(document.getElementById('modal-pins')).show();
 }
 
+// Troca a senha de liberacao, se o campo "Nova senha" foi preenchido. Trocar uma senha
+// ja cadastrada pede a atual. Devolve false quando nao pode salvar.
+async function _salvarSenhaLiberacao() {
+  const nova  = (document.getElementById('senha-lib-nova')?.value || '').trim();
+  if (!nova) return true;
+  if (nova.length < 4) { toast('A senha de liberação precisa de pelo menos 4 caracteres.', 'erro'); return false; }
+  const hashAtual = await _senhaLibHash();
+  if (hashAtual && await _hashSenhaLib(document.getElementById('senha-lib-atual')?.value) !== hashAtual) {
+    toast('Senha de liberação atual errada. Nada foi salvo.', 'erro'); return false;
+  }
+  const { error } = await sb.from('inv_configuracoes').upsert({ chave: _SENHA_LIB_CHAVE,
+    valor: { hash: await _hashSenhaLib(nova), definida_em: new Date().toISOString(), definida_por: _nomeUsuario() } });
+  if (error) { toast(_msgErroBanco(error), 'erro'); return false; }
+  _senhaLibAjusteAte = 0;
+  return true;
+}
+
 async function salvarPins() {
+  if (!await _salvarSenhaLiberacao()) return;
   const pins = {};
   _PIN_CHAVES.forEach(s => {
     const val = document.getElementById(`pin-${s.replace(/ /g, '_')}`)?.value?.trim();
@@ -14637,7 +14889,7 @@ function _nomeUsuario() {
   return (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
 }
 
-function _pedirAjusteSaldo(nome, local, atual) {
+function _pedirAjusteSaldo(nome, local, atual, avisoHtml = '') {
   return new Promise(resolve => {
     document.getElementById('modal-ajuste-saldo')?.remove();
     const opts = _MOTIVOS_AJUSTE.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
@@ -14652,6 +14904,7 @@ function _pedirAjusteSaldo(nome, local, atual) {
         <div class="modal-body">
           <div class="mb-3"><strong>${esc(nome)}</strong>
             <div class="text-muted small">${esc(local)} · saldo atual: ${esc(String(atual))}</div></div>
+          ${avisoHtml}
           <label class="form-label" for="aj-novo">Novo saldo</label>
           <input id="aj-novo" type="text" inputmode="decimal" class="form-control mb-3" value="${esc(String(atual))}">
           <label class="form-label" for="aj-motivo">Motivo <span class="text-danger">*</span></label>
@@ -14659,7 +14912,7 @@ function _pedirAjusteSaldo(nome, local, atual) {
           <input id="aj-obs" type="text" class="form-control" maxlength="200"
             placeholder="Detalhe (opcional; obrigatório em “Outro”)">
           <div id="aj-erro" class="text-danger small mt-2" role="alert"></div>
-          <div class="text-muted small mt-2">Fica registrado em nome de <strong>${esc(_nomeUsuario() || '—')}</strong>.</div>
+          <div class="text-muted small mt-2">Fica registrado em nome de <strong>${esc(_nomeUsuario() || '—')}</strong>.${_AJUSTE_COM_SENHA.includes(local) ? ' Neste estoque o ajuste pede a <strong>senha de liberação</strong>.' : ''}</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -14686,11 +14939,57 @@ function _pedirAjusteSaldo(nome, local, atual) {
   });
 }
 
+// Senha de liberacao no ✏️ (19/10/2026): Estoque da Loja e Estoque Delivery sao de onde
+// sai mercadoria para os setores — ajuste errado ali vira pedido errado. Os outros lugares
+// (Central, setores) seguem so com motivo + nome. A senha certa vale 10 min nesta aba,
+// para nao pedir a cada linha num acerto em lote.
+const _AJUSTE_COM_SENHA = ['ESTOQUE_LOJA', LOCAL_ESTOQUE_P10];
+let _senhaLibAjusteAte = 0;
+
+// O que esta a caminho deste produto neste lugar: transferencia enviada e ainda nao
+// recebida (vai SOMAR) e pedido de setor liberado nas ultimas 24 h (vai TIRAR).
+async function _avisoACaminho(produto_id, lugar) {
+  const desde = new Date(Date.now() - _PED_ATRASO_H * 3600e3).toISOString();
+  const { data: peds } = await sb.from('pedidos_internos')
+    .select('id,num_pedido,tipo,status,local,setor,unidade_origem,liberado_em').eq('status', 'liberado')
+    .or(`tipo.eq.transferencia,liberado_em.gte.${desde}`).limit(300);
+  if (!peds?.length) return '';
+  const porId = Object.fromEntries(peds.map(p => [p.id, p]));
+  const r = await _razaoEmLotes(l => sb.from('pedidos_internos_itens').select('pedido_id,qtd_liberada')
+    .eq('produto_id', produto_id).in('pedido_id', l), peds.map(p => p.id));
+  const linhas = [];
+  for (const it of r.linhas || []) {
+    const p = porId[it.pedido_id], q = Number(it.qtd_liberada) || 0;
+    if (!p || !q) continue;
+    if (p.tipo === 'transferencia' && _transfLugar(p.local) === lugar)
+      linhas.push(`<b>${esc(p.num_pedido)}</b> (transferência do ${esc(p.unidade_origem || '')}) ainda vai <b>somar ${_transfQ(q)}</b>. Se o que você contou já inclui essa mercadoria, a chegada não soma de novo este item.`);
+    else if (p.tipo !== 'transferencia' && _origemPedidoInterno(p.local) === lugar && p.liberado_em
+             && Date.now() - new Date(p.liberado_em).getTime() < _PED_ATRASO_H * 3600e3)
+      linhas.push(`<b>${esc(p.num_pedido)}</b> (${esc(_SETOR_LABEL[p.setor] || p.setor || '')}) foi liberado e ainda vai <b>tirar ${_transfQ(q)}</b> quando o setor confirmar.`);
+  }
+  return linhas.length
+    ? `<div class="alert alert-warning small py-2 mb-3"><div class="fw-semibold mb-1">A caminho deste estoque:</div>${linhas.join('<br>')}</div>` : '';
+}
+
 async function ajustarSaldoLocal(produto_id, local, nome) {
   const atual = _saldoMatrix[produto_id]?.[local] ?? 0;
-  const pedido = await _pedirAjusteSaldo(nome, local, atual);
+  const pedido = await _pedirAjusteSaldo(nome, local, atual, await _avisoACaminho(produto_id, local).catch(() => ''));
   if (!pedido) return;                                  // cancelou
   if (!await _garantirSessao()) return;
+  if (_AJUSTE_COM_SENHA.includes(local)) {
+    if (Date.now() > _senhaLibAjusteAte) {
+      const k = await _janelaTrava({
+        titulo: `Ajuste no ${esc(_rotuloLocal(local))}`,
+        html: `<div><b>${esc(nome)}</b>: ${_transfQ(atual)} → <b>${_transfQ(pedido.novoSaldo)}</b></div>
+          <div class="small mt-1">${esc(pedido.motivo)}</div>
+          <div style="margin-top:.5rem">Ajuste manual neste estoque precisa da senha de liberação da gerência.</div>`,
+        botoes: [{ k: null, txt: 'Cancelar', cor: 'cinza' }, { k: 'ok', txt: 'Ajustar', cor: 'azul', senha: true }],
+      });
+      if (k !== 'ok') { toast('Nada foi ajustado.', 'warn'); return; }
+      _senhaLibAjusteAte = Date.now() + 10 * 60e3;
+    }
+    pedido.motivo += ` · liberado com senha (${_nomeUsuario()})`;
+  }
   const novoSaldo = pedido.novoSaldo;
   const resp = _nomeUsuario();
   const { error } = await sb.from('est_saldo_local')
