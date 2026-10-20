@@ -43,6 +43,7 @@ GROUP BY s.local ORDER BY s.local;
 WITH inv_p10 AS (
   SELECT id, num_inv, setor, criado_em FROM est_inventarios
   WHERE local = 'Delivery P10' AND setor IN ('COZINHA', 'CHURRASQUEIRA')
+    AND criado_em >= '2026-10-13'   -- o P10 conta setor desde 13/10; as de jul/ago sao do Centro com a unidade errada
 ),
 ult_centro AS (
   SELECT c.setor, ci.produto_id, max(c.criado_em) AS ate
@@ -80,6 +81,7 @@ ORDER BY x.local, p.nome;
 WITH inv_p10 AS (
   SELECT id, num_inv, setor, criado_em FROM est_inventarios
   WHERE local = 'Delivery P10' AND setor IN ('COZINHA', 'CHURRASQUEIRA')
+    AND criado_em >= '2026-10-13'   -- o P10 conta setor desde 13/10; as de jul/ago sao do Centro com a unidade errada
 ),
 ult_p10 AS (          -- ultima contagem do P10 de cada item (repetido na mesma contagem: o maior)
   SELECT DISTINCT ON (i.setor, ii.produto_id) i.setor, ii.produto_id, coalesce(ii.estoque, 0) AS estoque, i.criado_em, i.num_inv
@@ -145,7 +147,8 @@ BEGIN;
 
 CREATE TEMP TABLE sep_inv_p10 ON COMMIT DROP AS
 SELECT id, num_inv, setor, criado_em FROM est_inventarios
-WHERE local = 'Delivery P10' AND setor IN ('COZINHA', 'CHURRASQUEIRA');
+WHERE local = 'Delivery P10' AND setor IN ('COZINHA', 'CHURRASQUEIRA')
+  AND criado_em >= '2026-10-13';   -- o P10 conta setor desde 13/10; as de jul/ago sao do Centro com a unidade errada
 
 CREATE TEMP TABLE sep_ja_rodou ON COMMIT DROP AS
 SELECT EXISTS (SELECT 1 FROM est_movimentacoes
