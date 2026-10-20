@@ -925,39 +925,61 @@ async function _conferirContagemFora(itens, setor, local) {
     if (!ids.length) return true;                       // ninguem digitou numero grande
 
     const desde = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+    const historico = async (invIds, pids) => {         // produto_id -> [total > 0]
+      const h = {}, lotes = [];
+      for (let i = 0; i < invIds.length; i += 200) lotes.push(invIds.slice(i, i + 200));
+      const resps = await Promise.all(lotes.map(l => sb.from('est_inventario_itens')
+        .select('produto_id,total').in('inventario_id', l).in('produto_id', pids)));
+      resps.forEach(({ data: linhas }) => (linhas || []).forEach(l => {
+        const v = Number(l.total) || 0;
+        if (v > 0) (h[l.produto_id] = h[l.produto_id] || []).push(v);
+      }));
+      return h;
+    };
+
     let q = sb.from('est_inventarios').select('id').eq('setor', setor).gte('data', desde);
     if (local) q = q.eq('local', local);
     const { data: invs } = await q;
-    if (!invs?.length) return true;                     // sem historico, nao ha o que comparar
+    const hist = await historico((invs || []).map(i => i.id), ids);
 
-    const hist = {};
-    const invIds = invs.map(i => i.id);
-    for (let i = 0; i < invIds.length; i += 200) {
-      const { data: linhas } = await sb.from('est_inventario_itens')
-        .select('produto_id,total').in('inventario_id', invIds.slice(i, i + 200)).in('produto_id', ids);
-      (linhas || []).forEach(l => {
-        const v = Number(l.total) || 0;
-        if (v > 0) (hist[l.produto_id] = hist[l.produto_id] || []).push(v);
-      });
+    // Item sem 3 contagens AQUI (unidade ou setor novo) compara com o mesmo produto em
+    // qualquer unidade e setor. Sem isto a trava ficava muda justamente na estreia: em
+    // 13/10/2026 a Cozinha do P10 contou pela primeira vez e passaram murupi 494,852,
+    // dende 400 e pimenta de cheiro 180 (gramas no campo de kg); em 15/10 o dende 399
+    // passou porque o P10 tinha so 2 contagens dele - uma era o proprio 400. Simulado de
+    // 01/08 a 20/10: pega esses 4 e o alcool em gel 600 do Salao; o resto (10) e
+    // descartavel que o P10 conta em unidade e o Centro em pacote, so nos primeiros dias.
+    const semHist = ids.filter(id => (hist[id] || []).length < 3);
+    let geral = {};
+    if (semHist.length) {
+      const todos = [];
+      for (let de = 0; ; de += 1000) {                  // a API corta em 1000 linhas
+        const { data } = await sb.from('est_inventarios').select('id').gte('data', desde).range(de, de + 999);
+        todos.push(...(data || []).map(i => i.id));
+        if (!data || data.length < 1000) break;
+      }
+      geral = await historico(todos, semHist);
     }
 
     const suspeitos = [];
     itens.forEach(it => {
       const v = Number(it.total) || 0;
-      const h = hist[it.produto_id];
-      if (v < 50 || !h || h.length < 3) return;
+      if (v < 50 || !it.produto_id) return;
+      const aqui = (hist[it.produto_id] || []).length >= 3;
+      const h = aqui ? hist[it.produto_id] : geral[it.produto_id];
+      if (!h || h.length < 3) return;
       h.sort((a, b) => a - b);
       const mediana = h[Math.floor(h.length / 2)];
       if (mediana <= 0 || v < 50 * mediana) return;
       const emKg = v / 1000;
       const pareceGrama = emKg >= mediana / 5 && emKg <= mediana * 5;
-      suspeitos.push({ nome: it.nome, v, mediana, emKg, pareceGrama });
+      suspeitos.push({ nome: it.nome, v, mediana, emKg, pareceGrama, aqui });
     });
     if (!suspeitos.length) return true;
 
     const fmt = n => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
     const linhas = suspeitos.map(s =>
-      `• ${s.nome}: você digitou ${fmt(s.v)} — o normal aqui é ${fmt(s.mediana)}` +
+      `• ${s.nome}: você digitou ${fmt(s.v)} — o normal ${s.aqui ? 'aqui' : 'nas outras contagens'} é ${fmt(s.mediana)}` +
       (s.pareceGrama ? `\n   (${fmt(s.v)} gramas seria ${fmt(s.emKg)})` : '')
     ).join('\n');
 
@@ -1827,6 +1849,7 @@ async function salvarSaldoInicialSetorMob() {
     estoque: parseFloat(document.getElementById(`est-${i}`)?.value) || 0,
   }));
 
+  if (!await _conferirContagemFora(itens.map(it => ({ ...it, total: it.estoque })), _setor, _local)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
   if (!await _conferirUnidadeDaNoite(resp, _local, data)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
   if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
 
