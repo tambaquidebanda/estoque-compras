@@ -11165,8 +11165,9 @@ function fecharAjusteHistoricoCompExterno() {
 
 // ─── SALDO ESTOQUE DA LOJA ────────────────────────────────────────
 const _SETOR_EMOJI = { CHURRASQUEIRA:'🔥', COZINHA:'🍳', BAR:'🍹', SALAO:'🪑', ASG:'🧹', DELIVERY:'🛵',
-                      'MATERIAL DE LIMPEZA':'🧹', BEBIDAS:'🥤', DESCARTAVEL:'🥡' };
-const _SETOR_COR   = { CHURRASQUEIRA:'#dc3545', COZINHA:'#fd7e14', BAR:'#6f42c1', SALAO:'#0d6efd', ASG:'#20c997', DELIVERY:'#e6ac00' };
+                      'MATERIAL DE LIMPEZA':'🧹', BEBIDAS:'🥤', DESCARTAVEL:'🥡', SOBREMESAS:'🍮' };
+const _SETOR_COR   = { CHURRASQUEIRA:'#dc3545', COZINHA:'#fd7e14', BAR:'#6f42c1', SALAO:'#0d6efd', ASG:'#20c997', DELIVERY:'#e6ac00',
+                      'MATERIAL DE LIMPEZA':'#0f766e', BEBIDAS:'#2563eb', DESCARTAVEL:'#a16207', SOBREMESAS:'#db2777' };
 const _SETOR_LABEL = { CHURRASQUEIRA:'Churrasqueira', COZINHA:'Cozinha', BAR:'Bar', SALAO:'Salão', ASG:'ASG', DELIVERY:'Delivery',
                       'MATERIAL DE LIMPEZA':'Material de Limpeza', BEBIDAS:'Bebidas', DESCARTAVEL:'Descartável', SOBREMESAS:'Sobremesas' };
 
@@ -11174,6 +11175,7 @@ let _saldoList   = [];
 let _saldoGrupo  = null;
 let _saldoMatrix = {};
 let _saldoSetores = [];
+let _saldoComuns  = [];   // colunas que a unidade divide com o Centro (so mostra, nao soma)
 // Valorização / inventário momentizado
 let _saldoCustoBase  = 'ultimo_preco';   // 'ultimo_preco' | 'media_3m'
 let _saldoCustoMedia = {};               // produto_id -> custo médio 90 dias
@@ -11186,8 +11188,10 @@ let _saldoTodosItens = [];               // todos os produtos (todas as unidades
 // razao. Antes a tela era montada so com a estrutura do Centro, e as colunas Estoque
 // Central / Producao so apareciam para produto que tambem existe no Centro (29/09/2026:
 // o Central mostrava R$ 855 e o Delivery P10 nem aparecia).
-// P10: so o setor ESTOQUE DELIVERY tem lugar proprio; os outros setores do P10 ainda
-// gravam no mesmo lugar do Centro (ver _localDaContagem) e nao entram aqui.
+// P10 (20/10/2026): mostra os setores dele, igual ao Centro. Os que so o P10 tem
+// (Bebidas, Descartavel, Material de Limpeza, Sobremesas) tem lugar proprio e somam.
+// Cozinha e Churrasqueira do P10 gravam no MESMO lugar do Centro (ver _localDaContagem):
+// aparecem para ver o item em comum, mas o numero e dos dois e nao soma no P10.
 const _SALDO_UNIDADES = [
   { nome: 'Centro',          rotulo: '📍 Centro',          cor: '#16a34a' },
   { nome: 'Delivery P10',    rotulo: '🛵 Delivery P10',    cor: '#e6ac00', setor: 'ESTOQUE DELIVERY' },
@@ -11214,9 +11218,13 @@ function _saldoLocaisDe(u) {
   const cfg = _saldoUnidadeCfg(u);
   if (!cfg.setor) {
     const setores = Object.keys(_saldoEstruturaCentro()).filter(s => s !== 'ESTOQUE DA LOJA');
-    return { principal: 'ESTOQUE_LOJA', setores };
+    return { principal: 'ESTOQUE_LOJA', setores, comuns: [] };
   }
-  return { principal: _localDaContagem(u, cfg.setor), setores: [] };
+  const principal = _localDaContagem(u, cfg.setor);
+  if (cfg.setor !== _ESPELHO_SETOR_P10) return { principal, setores: [], comuns: [] };
+  const doCentro = new Set(_saldoLocaisDe('Centro').setores);
+  const locais = Object.keys(_todasEstruturas[u] || {}).filter(s => s !== cfg.setor).map(s => _localDaContagem(u, s));
+  return { principal, setores: locais.filter(l => !doCentro.has(l)), comuns: locais.filter(l => doCentro.has(l)) };
 }
 function _saldoTodosLocais() {
   const todos = new Set();
@@ -11268,9 +11276,10 @@ async function selecionarUnidadeSaldo(u) {
 }
 
 function _montarBotoesGrupoSaldo() {
-  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
+  const { principal, setores, comuns } = _saldoLocaisDe(_saldoUnidade);
   _saldoLocalPrincipal = principal;
   _saldoSetores        = setores;
+  _saldoComuns         = comuns;
   const grupos = Object.keys(_saldoGruposDe(_saldoUnidade));
   const container = document.getElementById('saldo-grupo-btns');
   if (container) {
@@ -14668,17 +14677,20 @@ function renderSaldoKpis() {
     </div>`);
   });
   // Detalhe da unidade aberta
-  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
+  const { principal, setores, comuns } = _saldoLocaisDe(_saldoUnidade);
   let detalhe = '';
   if (setores.length) {
+    const cfgAb = _saldoUnidadeCfg(_saldoUnidade);
     detalhe = [principal, ...setores].map(l => {
-      const cor = l === 'ESTOQUE_LOJA' ? '#16a34a' : (_SETOR_COR[l] || '#6c757d');
+      const cor = l === 'ESTOQUE_LOJA' ? '#16a34a' : l === principal ? cfgAb.cor : (_SETOR_COR[l] || '#6c757d');
       const rot = l === 'ESTOQUE_LOJA' ? '🏪 Estoque da Loja' : (_SETOR_COR[l] ? `${_SETOR_EMOJI[l] || ''} ${_SETOR_LABEL[l] || l}` : _rotuloLocal(l));
       return `<span style="border:1px solid ${cor}44;border-radius:1rem;padding:.15rem .6rem;white-space:nowrap">
         <span class="text-muted">${rot}</span> <strong style="color:${cor}">${brl(_saldoValorLocal[l] || 0)}</strong></span>`;
     }).join('');
-  } else if (_saldoUnidade === 'Delivery P10') {
-    detalhe = `<span class="text-muted">Aqui aparece só o setor <strong>Estoque Delivery</strong>. Os outros setores do P10 (Bar, Cozinha...) ainda gravam no mesmo saldo do Centro.</span>`;
+  }
+  if (comuns.length) {
+    const nomes = comuns.map(l => _SETOR_LABEL[l] || l).join(' e ');
+    detalhe += `<span class="text-muted">${esc(nomes)} do P10 gravam no mesmo saldo do Centro: a coluna aparece para ver o item em comum, mas o número é dos dois e não soma no P10.</span>`;
   }
   if (detalhe) cards.push(`<div class="col-12"><div class="d-flex flex-wrap gap-2 small">${detalhe}</div></div>`);
   el.innerHTML = cards.join('');
@@ -14737,7 +14749,7 @@ async function selecionarGrupoSaldo(grupo) {
   });
 
   // Colunas = lugares da unidade aberta (ver _saldoLocaisDe)
-  ({ principal: _saldoLocalPrincipal, setores: _saldoSetores } = _saldoLocaisDe(_saldoUnidade));
+  ({ principal: _saldoLocalPrincipal, setores: _saldoSetores, comuns: _saldoComuns } = _saldoLocaisDe(_saldoUnidade));
 
   // Saldo de todos os locais via est_saldo_local
   const ids = _saldoList.filter(p => p.produto_id).map(p => p.produto_id);
@@ -14791,6 +14803,11 @@ function renderSaldo() {
           <small style="font-weight:400;font-size:.68rem;opacity:.75">saldo</small>
         </th>`;
       }).join('')}
+      ${_saldoComuns.map(s => `<th class="text-center" style="min-width:100px;background:#f1f5f9;color:#64748b;border-top:3px dashed #94a3b8"
+          title="${esc(_SETOR_LABEL[s] || s)} do P10 grava no mesmo saldo do Centro: o número é dos dois e não soma no total do P10">
+          ${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}<br>
+          <small style="font-weight:400;font-size:.68rem">igual ao Centro</small>
+        </th>`).join('')}
       <th class="text-center" style="min-width:70px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
         Total
       </th>
@@ -14819,6 +14836,10 @@ function renderSaldo() {
       const numBg  = val <= 0 ? '#fff5f5' : bgRow;
       const numCor = val <= 0 ? '#dc3545' : '#212529';
       return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val}</td>`;
+    }).join('') + _saldoComuns.map(s => {      // so mostra: o saldo e do Centro tambem, nao entra no total
+      const val = p.produto_id ? (_saldoMatrix[p.produto_id]?.[s]) : undefined;
+      if (val === undefined) return `<td class="text-center" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
+      return `<td class="text-center fst-italic" style="background:#f8fafc;color:#64748b;border-left:1px dashed #cbd5e1">${val}</td>`;
     }).join('');
 
     const elBg     = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
@@ -14856,7 +14877,7 @@ function renderSaldo() {
   }).join('');
 
   // Rodapé: subtotal do grupo (label cobre Produto..Total, td vazio p/ Custo Un., valor na última coluna)
-  const colSpan = 4 + _saldoSetores.length;
+  const colSpan = 4 + _saldoSetores.length + _saldoComuns.length;
   tbody.innerHTML += `<tr style="background:#1a1a2e;color:#fff">
     <td colspan="${colSpan}" class="text-end fw-semibold" style="padding:.6rem 1rem">
       Subtotal do grupo <span style="opacity:.7">(${esc(_saldoGrupo || '')})</span> —
