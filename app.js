@@ -4910,7 +4910,7 @@ function _localRazao(unidade, setor) {
   if (unidade === 'Produção P10')    return 'PRODUCAO P10';
   if (unidade === 'Produção')        return LOCAL_PRODUCAO;
   const s = setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
-  if (unidade === 'Delivery P10')    return 'P10_' + s;
+  if (unidade === 'Delivery P10')    return setor === 'ESTOQUE DELIVERY' ? 'ESTOQUE DELIVERY' : 'P10_' + s;
   return s;                                     // Centro: BAR, COZINHA, ESTOQUE_LOJA...
 }
 
@@ -4925,15 +4925,15 @@ function _rotuloLocal(l) {
   return _SETOR_LABEL[l] || l;
 }
 
-// Onde uma CONTAGEM do computador cai no razao. Estoque Central e Producao ja
-// usam o lugar proprio (CENTRAL / PRODUCAO) — sem isto a contagem la gravava
-// no nome do setor e ninguem somava. O P10 continua no setor do Centro de
-// proposito: o pedido interno do P10 tambem credita o setor do Centro, e ligar
-// o prefixo so na contagem deixaria as duas pontas em lugares diferentes.
-// Liga as duas juntas, quando for a vez do P10.
+// Onde uma CONTAGEM (e a entrada do pedido interno no setor) cai no razao.
+// Estoque Central e Producao usam o lugar proprio (CENTRAL / PRODUCAO). O P10 usa
+// P10_<SETOR> desde 20/10/2026: antes a Cozinha e a Churrasqueira do P10 gravavam
+// na MESMA linha de saldo do Centro, e a contagem de uma loja apagava a da outra
+// (20/10: o P10 contou a Cozinha as 16h e 47 itens do Centro ficaram com o numero
+// do P10). Contagem e pedido interno ligaram juntos — as duas pontas no mesmo lugar.
+// Mesma regra em contagem.html (_localDoSetor).
 function _localDaContagem(unidade, setor) {
-  if (unidade === 'Estoque Central' || unidade === 'Produção') return _localRazao(unidade, setor);
-  return setor === 'ESTOQUE DA LOJA' ? 'ESTOQUE_LOJA' : setor;
+  return _localRazao(unidade, setor);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -5307,6 +5307,7 @@ async function _confirmarRecebimentoInv() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
   const pedidoId = _pedReceberId, setor = _pedReceberSetor, origem = _origemPedidoInterno(_pedReceberLocal);
+  const destino  = setor ? _localDaContagem(_pedReceberLocal, setor) : null;   // P10: P10_COZINHA...
   const itenIds  = JSON.parse(document.getElementById('rec-itens')?.value || '[]');
   const qtdTela  = id => parseQtd(document.getElementById(`rec-qtd-${id}`)?.value);
   const qtds     = Object.fromEntries(itenIds.map(id => [id, qtdTela(id)]));
@@ -5341,7 +5342,7 @@ async function _confirmarRecebimentoInv() {
     if (!qtd) return;
     const uso = qtd * _fatorDe(it.produto_id);
     await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -uso, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
-    if (setor) await movimentar({ produto_id: it.produto_id, local: setor, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
+    if (setor) await movimentar({ produto_id: it.produto_id, local: destino, tipo: 'pedido_interno_entrada', quantidade: +uso, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   bootstrap.Modal.getInstance(document.getElementById('modal-receber-pedido'))?.hide();
@@ -5373,8 +5374,7 @@ async function _confirmarRecebimentoInv() {
 // transferência existia no banco em 25/09.
 //
 // Lugar no razão: _localRazao(unidade, 'ESTOQUE DA LOJA') -> Centro ESTOQUE_LOJA,
-// Central CENTRAL, Produção PRODUCAO. O P10 fica de fora até o prefixo P10_ ser
-// ligado junto com o pedido interno (ver _localDaContagem).
+// Central CENTRAL, Produção PRODUCAO. O P10 recebe no ESTOQUE DELIVERY (_transfLugar).
 //
 // Toque duplo: a troca de status só vale se o status ainda for o esperado
 // (.eq('status', ...)). Quem chega depois não acha linha e não mexe no saldo —
@@ -5385,8 +5385,8 @@ async function _confirmarRecebimentoInv() {
 // ════════════════════════════════════════════════════════════════
 
 // Delivery P10 entrou em 02/10/2026: pede ao Central e recebe no ESTOQUE DELIVERY
-// (o estoque proprio dele, o mesmo da contagem do P10). Os outros setores do P10
-// continuam fora — eles ainda gravam nos lugares do Centro (ver _localDaContagem).
+// (o estoque proprio dele, o mesmo da contagem do P10). Os setores do P10 (P10_COZINHA...)
+// nao recebem transferencia: abastecem pelo pedido interno.
 const _TRANSF_UNIDADES = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
 const _transfLugar = u => u === 'Delivery P10' ? LOCAL_ESTOQUE_P10 : _localRazao(u, 'ESTOQUE DA LOJA');
 const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
@@ -11175,7 +11175,6 @@ let _saldoList   = [];
 let _saldoGrupo  = null;
 let _saldoMatrix = {};
 let _saldoSetores = [];
-let _saldoComuns  = [];   // colunas que a unidade divide com o Centro (so mostra, nao soma)
 // Valorização / inventário momentizado
 let _saldoCustoBase  = 'ultimo_preco';   // 'ultimo_preco' | 'media_3m'
 let _saldoCustoMedia = {};               // produto_id -> custo médio 90 dias
@@ -11188,10 +11187,8 @@ let _saldoTodosItens = [];               // todos os produtos (todas as unidades
 // razao. Antes a tela era montada so com a estrutura do Centro, e as colunas Estoque
 // Central / Producao so apareciam para produto que tambem existe no Centro (29/09/2026:
 // o Central mostrava R$ 855 e o Delivery P10 nem aparecia).
-// P10 (20/10/2026): mostra os setores dele, igual ao Centro. Os que so o P10 tem
-// (Bebidas, Descartavel, Material de Limpeza, Sobremesas) tem lugar proprio e somam.
-// Cozinha e Churrasqueira do P10 gravam no MESMO lugar do Centro (ver _localDaContagem):
-// aparecem para ver o item em comum, mas o numero e dos dois e nao soma no P10.
+// P10 (20/10/2026): mostra os setores dele, igual ao Centro, cada um no seu lugar
+// P10_<SETOR> (ver _localDaContagem).
 const _SALDO_UNIDADES = [
   { nome: 'Centro',          rotulo: '📍 Centro',          cor: '#16a34a' },
   { nome: 'Delivery P10',    rotulo: '🛵 Delivery P10',    cor: '#e6ac00', setor: 'ESTOQUE DELIVERY' },
@@ -11218,14 +11215,15 @@ function _saldoLocaisDe(u) {
   const cfg = _saldoUnidadeCfg(u);
   if (!cfg.setor) {
     const setores = Object.keys(_saldoEstruturaCentro()).filter(s => s !== 'ESTOQUE DA LOJA');
-    return { principal: 'ESTOQUE_LOJA', setores, comuns: [] };
+    return { principal: 'ESTOQUE_LOJA', setores };
   }
   const principal = _localDaContagem(u, cfg.setor);
-  if (cfg.setor !== _ESPELHO_SETOR_P10) return { principal, setores: [], comuns: [] };
-  const doCentro = new Set(_saldoLocaisDe('Centro').setores);
-  const locais = Object.keys(_todasEstruturas[u] || {}).filter(s => s !== cfg.setor).map(s => _localDaContagem(u, s));
-  return { principal, setores: locais.filter(l => !doCentro.has(l)), comuns: locais.filter(l => doCentro.has(l)) };
+  if (cfg.setor !== _ESPELHO_SETOR_P10) return { principal, setores: [] };
+  const setores = Object.keys(_todasEstruturas[u] || {}).filter(s => s !== cfg.setor).map(s => _localDaContagem(u, s));
+  return { principal, setores };
 }
+// Setor sem o prefixo da unidade (P10_COZINHA -> COZINHA), para cor, emoji e rotulo
+const _setorBase = l => l.startsWith('P10_') ? l.slice(4) : l;
 function _saldoTodosLocais() {
   const todos = new Set();
   _SALDO_UNIDADES.forEach(c => { const l = _saldoLocaisDe(c.nome); todos.add(l.principal); l.setores.forEach(x => todos.add(x)); });
@@ -11276,10 +11274,9 @@ async function selecionarUnidadeSaldo(u) {
 }
 
 function _montarBotoesGrupoSaldo() {
-  const { principal, setores, comuns } = _saldoLocaisDe(_saldoUnidade);
+  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
   _saldoLocalPrincipal = principal;
   _saldoSetores        = setores;
-  _saldoComuns         = comuns;
   const grupos = Object.keys(_saldoGruposDe(_saldoUnidade));
   const container = document.getElementById('saldo-grupo-btns');
   if (container) {
@@ -14677,20 +14674,17 @@ function renderSaldoKpis() {
     </div>`);
   });
   // Detalhe da unidade aberta
-  const { principal, setores, comuns } = _saldoLocaisDe(_saldoUnidade);
+  const { principal, setores } = _saldoLocaisDe(_saldoUnidade);
   let detalhe = '';
   if (setores.length) {
     const cfgAb = _saldoUnidadeCfg(_saldoUnidade);
     detalhe = [principal, ...setores].map(l => {
-      const cor = l === 'ESTOQUE_LOJA' ? '#16a34a' : l === principal ? cfgAb.cor : (_SETOR_COR[l] || '#6c757d');
-      const rot = l === 'ESTOQUE_LOJA' ? '🏪 Estoque da Loja' : (_SETOR_COR[l] ? `${_SETOR_EMOJI[l] || ''} ${_SETOR_LABEL[l] || l}` : _rotuloLocal(l));
+      const b   = _setorBase(l);
+      const cor = l === 'ESTOQUE_LOJA' ? '#16a34a' : l === principal ? cfgAb.cor : (_SETOR_COR[b] || '#6c757d');
+      const rot = l === 'ESTOQUE_LOJA' ? '🏪 Estoque da Loja' : (_SETOR_COR[b] ? `${_SETOR_EMOJI[b] || ''} ${_SETOR_LABEL[b] || b}` : _rotuloLocal(l));
       return `<span style="border:1px solid ${cor}44;border-radius:1rem;padding:.15rem .6rem;white-space:nowrap">
         <span class="text-muted">${rot}</span> <strong style="color:${cor}">${brl(_saldoValorLocal[l] || 0)}</strong></span>`;
     }).join('');
-  }
-  if (comuns.length) {
-    const nomes = comuns.map(l => _SETOR_LABEL[l] || l).join(' e ');
-    detalhe += `<span class="text-muted">${esc(nomes)} do P10 gravam no mesmo saldo do Centro: a coluna aparece para ver o item em comum, mas o número é dos dois e não soma no P10.</span>`;
   }
   if (detalhe) cards.push(`<div class="col-12"><div class="d-flex flex-wrap gap-2 small">${detalhe}</div></div>`);
   el.innerHTML = cards.join('');
@@ -14749,7 +14743,7 @@ async function selecionarGrupoSaldo(grupo) {
   });
 
   // Colunas = lugares da unidade aberta (ver _saldoLocaisDe)
-  ({ principal: _saldoLocalPrincipal, setores: _saldoSetores, comuns: _saldoComuns } = _saldoLocaisDe(_saldoUnidade));
+  ({ principal: _saldoLocalPrincipal, setores: _saldoSetores } = _saldoLocaisDe(_saldoUnidade));
 
   // Saldo de todos os locais via est_saldo_local
   const ids = _saldoList.filter(p => p.produto_id).map(p => p.produto_id);
@@ -14797,17 +14791,12 @@ function renderSaldo() {
              ${_saldoUnidadeCfg(_saldoUnidade).rotulo}<br><small style="font-weight:400;opacity:.85;font-size:.7rem">saldo</small>
            </th>`}
       ${_saldoSetores.map(s => {
-        const cor = _SETOR_COR[s] || '#6c757d';
+        const b = _setorBase(s), cor = _SETOR_COR[b] || '#6c757d';
         return `<th class="text-center" style="min-width:100px;background:${cor}22;color:${cor};border-top:3px solid ${cor}">
-          ${_SETOR_COR[s] ? `${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}` : _rotuloLocal(s)}<br>
+          ${_SETOR_COR[b] ? `${_SETOR_EMOJI[b] || ''} ${_SETOR_LABEL[b] || b}` : _rotuloLocal(s)}<br>
           <small style="font-weight:400;font-size:.68rem;opacity:.75">saldo</small>
         </th>`;
       }).join('')}
-      ${_saldoComuns.map(s => `<th class="text-center" style="min-width:100px;background:#f1f5f9;color:#64748b;border-top:3px dashed #94a3b8"
-          title="${esc(_SETOR_LABEL[s] || s)} do P10 grava no mesmo saldo do Centro: o número é dos dois e não soma no total do P10">
-          ${_SETOR_EMOJI[s] || ''} ${_SETOR_LABEL[s] || s}<br>
-          <small style="font-weight:400;font-size:.68rem">igual ao Centro</small>
-        </th>`).join('')}
       <th class="text-center" style="min-width:70px;background:#1a1a2e;color:#ffc107;border-left:2px solid #ffc107">
         Total
       </th>
@@ -14829,17 +14818,13 @@ function renderSaldo() {
 
     let total = p.saldo;
     const setorCells = _saldoSetores.map(s => {
-      const cor = _SETOR_COR[s] || '#6c757d';
+      const cor = _SETOR_COR[_setorBase(s)] || '#6c757d';
       const val = p.produto_id ? (_saldoMatrix[p.produto_id]?.[s]) : undefined;
       if (val === undefined) return `<td class="text-center" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
       total += val;
       const numBg  = val <= 0 ? '#fff5f5' : bgRow;
       const numCor = val <= 0 ? '#dc3545' : '#212529';
       return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val}</td>`;
-    }).join('') + _saldoComuns.map(s => {      // so mostra: o saldo e do Centro tambem, nao entra no total
-      const val = p.produto_id ? (_saldoMatrix[p.produto_id]?.[s]) : undefined;
-      if (val === undefined) return `<td class="text-center" style="background:#f8f9fa;color:#ccc;font-size:.8rem">—</td>`;
-      return `<td class="text-center fst-italic" style="background:#f8fafc;color:#64748b;border-left:1px dashed #cbd5e1">${val}</td>`;
     }).join('');
 
     const elBg     = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
@@ -14877,7 +14862,7 @@ function renderSaldo() {
   }).join('');
 
   // Rodapé: subtotal do grupo (label cobre Produto..Total, td vazio p/ Custo Un., valor na última coluna)
-  const colSpan = 4 + _saldoSetores.length + _saldoComuns.length;
+  const colSpan = 4 + _saldoSetores.length;
   tbody.innerHTML += `<tr style="background:#1a1a2e;color:#fff">
     <td colspan="${colSpan}" class="text-end fw-semibold" style="padding:.6rem 1rem">
       Subtotal do grupo <span style="opacity:.7">(${esc(_saldoGrupo || '')})</span> —

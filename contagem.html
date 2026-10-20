@@ -1272,6 +1272,13 @@ const _ESTOQUES_MOB = {
   'Produção':        { setor: 'PRODUCAO',         local: 'PRODUCAO',         pin: 'PRODUCAO',         emoji: '🍳', nome: 'Produção',        unico: true },
 };
 function _estoqueMob() { return _ESTOQUES_MOB[_local] || _ESTOQUES_MOB['Centro']; }
+// Lugar do setor no razao — o mesmo do computador (_localRazao em app.js). O P10 grava
+// em P10_<SETOR> desde 20/10/2026: antes a Cozinha e a Churrasqueira do P10 caiam na
+// mesma linha de saldo do Centro e a contagem de uma loja apagava a da outra.
+function _localDoSetor(unidade, setor) {
+  if (setor === _ESTOQUES_MOB[unidade]?.setor) return _ESTOQUES_MOB[unidade].local;
+  return unidade === 'Delivery P10' ? 'P10_' + setor : setor;
+}
 function _modoSaldo()  { return !!_setor && _setor === _estoqueMob().setor; }   // contagem so de saldo, sem pedido
 
 // Setores que so o Delivery P10 tem (02/10/2026): ASG virou MATERIAL DE LIMPEZA e os
@@ -1833,7 +1840,7 @@ async function salvarSaldoInicialSetorMob() {
   );
 
   const saldoRows = itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(_local, _setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_setor}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
@@ -2053,7 +2060,7 @@ async function _enviarPedido() {
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _setor, saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(_local, _setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
     const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_setor}/${_grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
@@ -2710,6 +2717,7 @@ async function _confirmarRecebimento() {
   if (!_pedReceberId) return;
   // congela o que está na tela ANTES do primeiro await
   const pedidoId = _pedReceberId, setor = _pedReceberSetor, origem = _origemPedidoInterno(_pedReceberLocal);
+  const destino  = setor ? _localDoSetor(_pedReceberLocal, setor) : null;   // P10: P10_COZINHA...
   if (!_meusSetorLiberado(setor)) { toast('Digite o PIN do setor antes de confirmar.', 'err'); return; }
   const quem = _lerQuem('rec-quem');
   if (!quem) return;
@@ -2747,7 +2755,7 @@ async function _confirmarRecebimento() {
   // Movimentar saldo (livro-razão): saída do estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), entrada no setor
   await Promise.all(itens.filter(it => it.produto_id && it.qtd).map(async it => {
     await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -it.qtd, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
-    if (setor) await movimentar({ produto_id: it.produto_id, local: setor, tipo: 'pedido_interno_entrada', quantidade: +it.qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
+    if (setor) await movimentar({ produto_id: it.produto_id, local: destino, tipo: 'pedido_interno_entrada', quantidade: +it.qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });
   }));
 
   fecharModal('modal-receber');
