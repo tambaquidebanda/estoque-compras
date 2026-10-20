@@ -838,7 +838,7 @@ let _estoqueDesbloqueado = false;
 // Bar — o Bar libera a cerveja à noite, e só isso. Rastro: 28/09/2026 23:00-23:06 o celular do
 // Bar, com o PIN do Estoque, liberou e recebeu os 21 pedidos da noite (Cozinha e Bar) que o
 // estoque libera de manhã (Logs do Supabase: mesma sessão das contagens do Bar).
-let _estoqueEscopo = null;   // null = acesso completo | 'BAR_ALCOOLICAS' | 'P10'
+let _estoqueEscopo = null;   // null = PIN do Estoque (Centro) | 'BAR_ALCOOLICAS' | 'P10'
 // PIN do Estoque Delivery (pins['ESTOQUE DELIVERY']) em "Pedidos dos Setores": abre o que e do
 // P10 — as transferencias que chegam do Estoque Central (02/10/2026) e, desde 14/10/2026, os
 // pedidos dos setores do P10 (local 'Delivery P10'), que agora saem do ESTOQUE DELIVERY.
@@ -847,11 +847,16 @@ function _ehAlcoolicas(obs) { return norm(obs).replace(/[^a-z]/g, '') === 'alcoo
 function _msgForaEscopo(acao) {
   return _estoqueEscopo === 'P10'
     ? `Com o PIN do Estoque Delivery só dá para ${acao} pedidos do Delivery P10.`
-    : `Com o PIN do Bar só dá para ${acao} pedidos de ALCOÓLICAS do Bar.`;
+    : _estoqueEscopo === 'BAR_ALCOOLICAS'
+    ? `Com o PIN do Bar só dá para ${acao} pedidos de ALCOÓLICAS do Bar.`
+    : `Pedido do Delivery P10 é com o PIN do Estoque Delivery. Com o PIN do Estoque do Centro não dá para ${acao} pedidos do P10.`;
 }
 function _pedNoEscopo(ped) {
   if (_estoqueEscopo === 'P10') return ped?.local === 'Delivery P10';
-  if (_estoqueEscopo !== 'BAR_ALCOOLICAS') return true;
+  // PIN do Estoque (Centro): os pedidos do P10 ficam fora. 20/10/2026 08:46 o Anderson, no
+  // celular do Centro, liberou os 5 pedidos da tarde do P10 (PED-3521..3525) junto com os do
+  // Centro; quando o estoque do P10 abriu a tela, so restava o de Bebidas para liberar.
+  if (_estoqueEscopo !== 'BAR_ALCOOLICAS') return ped?.local !== 'Delivery P10';
   return ped?.setor === 'BAR' && ped?.tipo === 'normal' && _ehAlcoolicas(ped?.obs);
 }
 let _nomeResponsavel     = '';
@@ -2101,13 +2106,14 @@ async function carregarPedidosEstoque() {
   if (restrito) q = q.eq('setor', 'BAR').eq('tipo', 'normal').ilike('obs', 'alco%licas');
   else if (setor) q = q.eq('setor', setor);
   if (soP10) q = q.eq('local', 'Delivery P10');
+  else q = q.neq('local', 'Delivery P10');
   const [{ data: pedsQ }, blocoTransfQ] = await Promise.all([q, restrito ? '' : _blocoTransfMob()]);
   const peds = (pedsQ || []).filter(_pedNoEscopo);
   const blocoTransf = (restrito
     ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🍺 PIN do Bar: aqui aparecem só os pedidos de ALCOÓLICAS do Bar.</div>'
     : soP10
     ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🛵 PIN do Estoque Delivery: aqui aparecem só os pedidos dos setores do P10 e o que chega do Estoque Central para o P10.</div>'
-    : '') + (blocoTransfQ || '');
+    : '<div class="vazio" style="padding:.6rem;font-size:.8rem">🏪 PIN do Estoque do Centro: os pedidos do Delivery P10 ficam com o PIN do Estoque Delivery.</div>') + (blocoTransfQ || '');
   const el = document.getElementById('lst-pedidos-estoque');
   if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
@@ -2578,7 +2584,7 @@ async function confirmarLiberacao() {
 }
 
 async function cancelarPedidoInterno(id, num) {
-  if (_estoqueEscopo) {
+  {
     const { data: pc } = await sb.from('pedidos_internos').select('setor,tipo,obs,local').eq('id', id).single();
     if (!_pedNoEscopo(pc)) { toast(_msgForaEscopo('mexer nos'), 'err'); return; }
   }
