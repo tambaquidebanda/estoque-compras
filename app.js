@@ -5608,7 +5608,7 @@ async function enviarTransferencia(pedidoId) {
 // ─── SENHA DE LIBERACAO ─────────────────────────────────────────
 // Destrava o que a tela barra para nao lancar em dobro (19/10/2026):
 //  - somar item de transferencia que o destino ja contou depois que ela saiu;
-//  - o ajuste manual (✏️) no Estoque da Loja e no Estoque Delivery (so no computador).
+//  - o ajuste manual (✏️) no Estoque da Loja (so no computador; o Delivery saiu em 22/10).
 // Quem conta e quem recebe e a mesma pessoa, por isso NAO e o PIN do Estoque: a senha
 // fica com a gerencia. Mora em inv_configuracoes['senha_liberacao'] so como hash SHA-256,
 // nunca o texto. E trava de processo, nao de seguranca. Mesmo bloco em app.js e contagem.html.
@@ -6416,7 +6416,7 @@ async function abrirConfigurarPins() {
   document.getElementById('senha-lib-atual')?.classList.toggle('d-none', !sl?.valor?.hash);
   if (st) st.innerHTML = sl?.valor?.hash
     ? `Cadastrada${sl.valor.definida_em ? ' em ' + esc(_horaManaus(sl.valor.definida_em)) : ''}${sl.valor.definida_por ? ' por ' + esc(sl.valor.definida_por) : ''}. Para trocar, digite a atual e a nova.`
-    : '<span class="text-danger fw-semibold">Ainda não cadastrada: o ajuste ✏️ no Estoque da Loja e no Estoque Delivery fica bloqueado até cadastrar.</span>';
+    : '<span class="text-danger fw-semibold">Ainda não cadastrada: o ajuste ✏️ no Estoque da Loja fica bloqueado até cadastrar.</span>';
   new bootstrap.Modal(document.getElementById('modal-pins')).show();
 }
 
