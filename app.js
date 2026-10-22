@@ -3248,16 +3248,19 @@ async function selecionarGrupoInv(grupo) {
 }
 
 function _pintarSoLista() {
-  const aviso = document.getElementById('inv-so-lista-aviso');
+  const aviso   = document.getElementById('inv-so-lista-aviso');
+  const fechada = _invSetor === 'ESTOQUE DA LOJA' && _contagemFechada(_invLocal, 'ESTOQUE DA LOJA');
   if (aviso) {
-    aviso.classList.toggle('d-none', !_invSoLista);
-    aviso.innerHTML = _invSoLista
+    aviso.classList.toggle('d-none', !_invSoLista && !fechada);
+    aviso.innerHTML = fechada
+      ? `<i class="bi bi-lock-fill"></i> ${esc(_MSG_EL_FECHADO)} A lista continua aqui só para ajustar os itens (+, excluir). O saldo fica em Saldo &amp; Inventário.`
+      : _invSoLista
       ? `<i class="bi bi-hourglass-split"></i> <strong>${esc(_invSoLista)}</strong> aguardando liberação. Dá para ajustar a lista (+, excluir, padrões); a contagem e o envio ficam desligados até ele ser liberado.`
       : '';
   }
   ['inv-btn-enviar', 'inv-btn-saldo-inicial', 'inv-btn-salvar-saldo'].forEach(id => {
     const b = document.getElementById(id);
-    if (b) b.disabled = !!_invSoLista;
+    if (b) b.disabled = !!_invSoLista || (fechada && id === 'inv-btn-salvar-saldo');
   });
 }
 
@@ -4366,6 +4369,7 @@ async function _enviarPedidoInterno() {
 
 async function salvarSaldoContagemDesktop() {
   if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
+  if (_contagemFechada(_invLocal, 'ESTOQUE DA LOJA')) { toast(_MSG_EL_FECHADO, 'erro'); return; }
   const data = document.getElementById('inv-data').value;
   const resp = (document.getElementById('inv-resp').value || '').trim();
   const btn  = document.getElementById('inv-btn-salvar-saldo');
@@ -4407,6 +4411,7 @@ async function salvarSaldoContagemDesktop() {
 
 async function salvarSaldoInicialSetor() {
   if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
+  if (_contagemFechada(_invLocal, _invSetor)) { toast(_MSG_EL_FECHADO, 'erro'); return; }
   if (!confirm(`Salvar saldo inicial de ${_invSetor} / ${_invGrupo}?\nIsso define o estoque de partida do setor.`)) return;
   const data = document.getElementById('inv-data').value;
   const resp = (document.getElementById('inv-resp').value || '').trim();
@@ -5169,6 +5174,16 @@ async function _conferirContagemFora(itens, setor, local) {
   }
 }
 
+// ESTOQUE DA LOJA DO TEATRO NAO SE CONTA (22/10/2026, decisao do Wagner). Tudo o que esta
+// la entra por recebimento de nota ou transferencia do Central e sai por pedido interno
+// para o setor; a contagem trocava esse saldo pelo numero contado e escondia desvio
+// (SA BATATA 100g: 438 entraram desde 19/10, 10 sairam por pedido, a contagem de 22/10
+// tirou 305). Central e Estoque Delivery seguem contando: ainda nao tem o recebimento
+// da producao. O ajuste manual no Estoque da Loja continua so com a senha de liberacao.
+const _LOCAIS_SEM_CONTAGEM = ['ESTOQUE_LOJA'];
+const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro não é mais contado: o saldo entra pelo recebimento e pelas transferências do Central e sai pelos pedidos dos setores.';
+const _contagemFechada = (unidade, setor) => _LOCAIS_SEM_CONTAGEM.includes(_localDaContagem(unidade, setor));
+
 async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null, data = null } = {}) {
   // O MESMO PRODUTO PODE APARECER DUAS VEZES NA MESMA CONTAGEM
   // A estrutura do setor lista dois nomes que caem no mesmo cadastro — "MP
@@ -5199,6 +5214,8 @@ async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null
   });
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
+  // Rede de protecao: nenhum caminho de contagem grava no Estoque da Loja do Teatro.
+  if (linhas.some(r => _LOCAIS_SEM_CONTAGEM.includes(r.local))) return { error: { message: _MSG_EL_FECHADO } };
 
   // 1) esperado (saldo anterior) por produto+local — para o delta do razão
   const anterior = {};
@@ -14985,7 +15002,9 @@ function _pedirAjusteSaldo(nome, local, atual, avisoHtml = '') {
 // sai mercadoria para os setores — ajuste errado ali vira pedido errado. Os outros lugares
 // (Central, setores) seguem so com motivo + nome. A senha certa vale 10 min nesta aba,
 // para nao pedir a cada linha num acerto em lote.
-const _AJUSTE_COM_SENHA = ['ESTOQUE_LOJA', LOCAL_ESTOQUE_P10];
+// 22/10/2026: o Estoque Delivery saiu da lista (sem recebimento da producao, o P10 ainda
+// acerta o saldo a mao); volta quando a producao do P10 entrar por recebimento.
+const _AJUSTE_COM_SENHA = ['ESTOQUE_LOJA'];
 let _senhaLibAjusteAte = 0;
 
 // O que esta a caminho deste produto neste lugar: transferencia enviada e ainda nao

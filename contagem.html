@@ -1085,6 +1085,8 @@ async function registrarContagem(rows, opts) {
   });
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
+  // Rede de protecao: nenhum caminho de contagem grava no Estoque da Loja do Teatro.
+  if (linhas.some(r => _LOCAIS_SEM_CONTAGEM.includes(r.local))) return { error: { message: _MSG_EL_FECHADO } };
 
   const anterior = {};
   const ids = [...new Set(linhas.map(r => r.produto_id))];
@@ -1294,6 +1296,14 @@ const _ESTOQUES_MOB = {
   'Produção':        { setor: 'PRODUCAO',         local: 'PRODUCAO',         pin: 'PRODUCAO',         emoji: '🍳', nome: 'Produção',        unico: true },
 };
 function _estoqueMob() { return _ESTOQUES_MOB[_local] || _ESTOQUES_MOB['Centro']; }
+// ESTOQUE DA LOJA DO TEATRO NAO SE CONTA (22/10/2026, decisao do Wagner). Tudo o que esta
+// la entra por recebimento de nota ou transferencia do Central e sai por pedido interno
+// para o setor; a contagem trocava esse saldo pelo numero contado e escondia desvio
+// (SA BATATA 100g: 438 entraram desde 19/10, 10 sairam por pedido, a contagem de 22/10
+// tirou 305). Central e Estoque Delivery seguem contando: ainda nao tem o recebimento
+// da producao. O ajuste manual no Estoque da Loja continua so com a senha de liberacao.
+const _LOCAIS_SEM_CONTAGEM = ['ESTOQUE_LOJA'];
+const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro não é mais contado: o saldo entra pelo recebimento e pelas transferências do Central e sai pelos pedidos dos setores.';
 // Lugar do setor no razao — o mesmo do computador (_localRazao em app.js). O P10 grava
 // em P10_<SETOR> desde 20/10/2026: antes a Cozinha e a Churrasqueira do P10 caiam na
 // mesma linha de saldo do Centro e a contagem de uma loja apagava a da outra.
@@ -1532,6 +1542,7 @@ function pedirPinEstoque() {
 }
 function pedirPinEstoqueLoja() {
   const est = _estoqueMob();
+  if (_LOCAIS_SEM_CONTAGEM.includes(est.local)) { toast(_MSG_EL_FECHADO, 'err'); return; }
   const pin = _pins[est.pin];
   if (!pin) { selecionarEstoqueLoja(); return; }
   _pinTarget = { tipo: 'estoque_loja', pinKey: est.pin };
@@ -1648,6 +1659,7 @@ function _rodapeDaUnidade() {
 }
 function selecionarEstoqueLoja() {
   const est = _estoqueMob();
+  if (_LOCAIS_SEM_CONTAGEM.includes(est.local)) { toast(_MSG_EL_FECHADO, 'err'); return; }
   if (est.setor === _ESPELHO_SETOR_P10) _aplicarEspelhoDeliveryMob();
   _setor = est.setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display         = 'none';
@@ -1662,6 +1674,7 @@ function selecionarEstoqueLoja() {
 
 async function salvarSaldoContagem() {
   if (!_setor || !_grupo || !_grupoProds.length) return;
+  if (_LOCAIS_SEM_CONTAGEM.includes(_localDoSetor(_local, _setor))) { toast(_MSG_EL_FECHADO, 'err'); return; }
   const btn = document.getElementById('btn-salvar-saldo');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
 
@@ -1837,6 +1850,7 @@ function calcPedido(i) {
 // ─── SALDO INICIAL DO SETOR ──────────────────────────────────────
 async function salvarSaldoInicialSetorMob() {
   if (!_setor || !_grupo || !_grupoProds.length) return;
+  if (_LOCAIS_SEM_CONTAGEM.includes(_localDoSetor(_local, _setor))) { toast(_MSG_EL_FECHADO, 'err'); return; }
   if (!confirm(`Salvar saldo inicial de ${_setor} / ${_grupo}?`)) return;
   const btn = document.getElementById('btn-saldo-inicial');
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
