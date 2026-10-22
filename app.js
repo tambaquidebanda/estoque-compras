@@ -7638,26 +7638,24 @@ async function confirmarRecebimento() {
   const totalRecebido = totalItens + acrescimo;
   const temDiverg     = itensReceb.some(i => i.divergencia);
 
-  // Guard: bloqueia apenas se o lançamento já foi PAGO; se pendente, permite receber e ajusta valor
-  // Parcelado: qualquer parcela já paga tranca o pedido (o vínculo da conta
-  // aponta para uma parcela só, então checa pelo número do pedido também).
+  // Pedido PAGO antes da entrega (Pix, adiantamento de boleto). Ate 22/10/2026 isto
+  // BLOQUEAVA o recebimento ("ja foi pago... nao pode ser alterado"): a mercadoria nunca
+  // entrava no estoque e a equipe acabava usando "Fechar pedido". 19 pedidos assim
+  // (#01806 e a varredura de 22/10). Agora avisa e deixa receber; o valor pago nao muda
+  // (_sincronizarLancamentoParcelas pula lancamento pago). Receber em dobro continua
+  // barrado pela trava logo abaixo, que confere o status dos itens no banco.
+  // Por numero_pedido: parcelado tem varias linhas e a conta aponta so para a 1a.
   const { data: _lancPagos } = await sb.from('lancamentos')
-    .select('id').eq('numero_pedido', pedido_num).eq('status', 'pago').limit(1);
+    .select('valor').eq('numero_pedido', pedido_num).eq('status', 'pago');
   if (_lancPagos?.length) {
-    toast('Este pedido já foi pago no financeiro e não pode ser alterado.', 'erro');
-    return;
-  }
-
-  const { data: _guardConta } = await sb.from('cmp_contas_pagar')
-    .select('lancamento_id').eq('pedido_num', pedido_num).maybeSingle();
-  if (_guardConta?.lancamento_id) {
-    const { data: _lancCheck } = await sb.from('lancamentos')
-      .select('status').eq('id', _guardConta.lancamento_id).maybeSingle();
-    if (_lancCheck?.status === 'pago') {
-      toast('Este pedido já foi pago no financeiro e não pode ser alterado.', 'erro');
-      return;
-    }
-    // Lançamento pendente → recebimento liberado; valor será ajustado automaticamente abaixo
+    const _pago = _lancPagos.reduce((s, l) => s + (Number(l.valor) || 0), 0);
+    const _difere = Math.abs(_pago - totalRecebido) >= 0.01;
+    if (!confirm(
+      `Este pedido já foi pago no financeiro (${brl(_pago)}).\n\n` +
+      `O recebimento coloca os itens no estoque e não muda o valor pago.` +
+      (_difere ? `\n\nO total deste recebimento (${brl(totalRecebido)}) é diferente do valor pago: avise o financeiro.` : '') +
+      `\n\nConfirmar o recebimento?`
+    )) return;
   }
 
   // Guard anti-duplicação: re-checa o status ATUAL dos itens. Se todos já estão 'recebido',
@@ -10231,10 +10229,9 @@ async function _sincronizarLancamentoParcelas(pedido_num, notaTotal, acrescimo) 
   const { data: lancs } = await sb.from('lancamentos')
     .select('id,status').eq('numero_pedido', pedido_num).order('vencimento');
   if (!lancs?.length) return false;
-  if (lancs.some(l => l.status === 'pago')) {
-    toast('Atenção: uma parcela deste pedido já está paga — ajuste o valor direto no financeiro.', 'erro');
-    return false;
-  }
+  // Pago nao se mexe. Quem recebe ja foi avisado (e do valor diferente) no confirm do
+  // recebimento, antes de gravar.
+  if (lancs.some(l => l.status === 'pago')) return false;
   const notas = _dividirParcelas(notaTotal, lancs.length);
   const acrs  = _dividirParcelas(acrescimo, lancs.length);
   for (let i = 0; i < lancs.length; i++) {
@@ -10327,9 +10324,9 @@ async function abrirGerarConta(pedido_num, forn, fornId, total, tipo = 'nf') {
   if (tipo === 'adiantamento') {
     titulo.innerHTML = '<i class="bi bi-send"></i> Enviar ao Financeiro';
     infoEl.innerHTML = `<div class="alert alert-warning py-2 small mb-2 mt-2">
-      📤 <strong>Envio antecipado:</strong> O valor sairá da conta antes do recebimento.
-      Após receber os itens com o valor real da NF, use <strong>"Gerar NF"</strong> para
-      registrar o custo definitivo no financeiro.</div>`;
+      📤 <strong>Envio antecipado:</strong> o financeiro paga antes da mercadoria chegar.
+      Quando ela chegar, <strong>faça o recebimento normalmente</strong>: é ele que coloca
+      os itens no saldo. O sistema usa este mesmo lançamento e não cria outro.</div>`;
     infoEl.classList.remove('d-none');
   } else {
     titulo.innerHTML = '<i class="bi bi-arrow-left-right"></i> Gerar Conta a Pagar no Financeiro';
@@ -10507,6 +10504,23 @@ function previewContaFinanceiro() {
   document.getElementById('gc-preview').classList.remove('d-none');
 }
 
+// cmp_contas_pagar NAO tem UNIQUE em pedido_num (ha pedidos repetidos de antes, #00665 e
+// #01396), entao o upsert com onConflict:'pedido_num' falhava SEMPRE (42P10) sem aviso:
+// a conta nunca nascia no envio antecipado e o estoque nao sabia que o pedido ja tinha
+// sido pago. 391 envios assim; achado no #01806 em 22/10/2026. Procura e atualiza a
+// primeira conta do pedido, ou cria uma.
+async function _salvarContaPagar(pedido_num, campos, colunas = '*') {
+  const { data: ex, error: errSel } = await sb.from('cmp_contas_pagar')
+    .select('id').eq('pedido_num', pedido_num).order('criado_em').limit(1);
+  if (errSel) return { data: null, error: errSel };
+  const q = ex?.length
+    ? sb.from('cmp_contas_pagar').update(campos).eq('id', ex[0].id)
+    : sb.from('cmp_contas_pagar').insert([{ pedido_num, ...campos }]);
+  const res = await q.select(colunas).single();
+  if (res.error) toast('Não foi possível gravar a conta a pagar do pedido: ' + res.error.message, 'erro');
+  return res;
+}
+
 async function confirmarGerarConta() {
   const pedido_num    = document.getElementById('gc-pedido-num').value;
   const fornecedor_id = document.getElementById('gc-fornecedor-id').value || null;
@@ -10520,6 +10534,10 @@ async function confirmarGerarConta() {
   const obs           = document.getElementById('gc-obs').value.trim();
   const forn_nome     = document.getElementById('gc-fornecedor-label').textContent;
   const tipo          = document.getElementById('gc-tipo').value || 'nf';
+  // Quem enviou e quando ficam no lancamento: o financeiro nao guarda usuario e o
+  // rascunho, que guardaria, e apagado na aprovacao.
+  const _hj           = hojeLocal();
+  const enviadoPor    = ` — enviado por ${_nomeUsuario() || '?'} em ${_hj.slice(8, 10)}/${_hj.slice(5, 7)}`;
 
   if (!nota || nota <= 0) { toast('Informe um valor válido.', 'erro'); return; }
   if (!vencimento) { toast('Informe a data de vencimento.', 'erro'); return; }
@@ -10532,30 +10550,26 @@ async function confirmarGerarConta() {
 
   if (tipo === 'adiantamento') {
     // Fluxo Adiantamento: cria/atualiza cmp_contas_pagar sem tocar em lancamento_id
-    const { data: conta } = await sb.from('cmp_contas_pagar')
-      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' }],
-              { onConflict: 'pedido_num', ignoreDuplicates: false })
-      .select().single();
+    const { data: conta } = await _salvarContaPagar(pedido_num,
+      { fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente' });
     await gerarContaFinanceiro({
       pedido_num, vencimento, valor, acrescimo: acrescimo_val,
       fornecedor_id, fornecedor_nome: forn_nome,
       plano_conta, nf_numero, conta_id: conta?.id || null,
-      obs: obs || `Adiantamento Pedido ${pedido_num}`,
+      obs: (obs || `Adiantamento Pedido ${pedido_num}`) + enviadoPor,
       temRateio, rateioItensResolvidos, unidade_id,
       campo_id_destino: 'adiantamento_lancamento_id',
     });
   } else {
     // Fluxo NF normal (padrão)
-    const { data: conta } = await sb.from('cmp_contas_pagar')
-      .upsert([{ pedido_num, fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente',
-                 parcelas: parcelasGC, parcela_intervalo: parcelaIntGC }],
-              { onConflict: 'pedido_num', ignoreDuplicates: false })
-      .select().single();
+    const { data: conta } = await _salvarContaPagar(pedido_num,
+      { fornecedor: forn_nome, vencimento, valor, nf_numero, status: 'pendente',
+        parcelas: parcelasGC, parcela_intervalo: parcelaIntGC });
     await gerarContaFinanceiro({
       pedido_num, vencimento, valor, acrescimo: acrescimo_val,
       fornecedor_id, fornecedor_nome: forn_nome,
       plano_conta, nf_numero, conta_id: conta?.id || null,
-      obs: obs || `Pedido ${pedido_num}`,
+      obs: (obs || `Pedido ${pedido_num}`) + enviadoPor,
       temRateio, rateioItensResolvidos, unidade_id,
       campo_id_destino: 'lancamento_id',
       parcelas: parcelasGC, parcelaIntervalo: parcelaIntGC,
@@ -10706,10 +10720,8 @@ async function _executarFinalizarRegular(pedido_num, conta, ref, unidade_id, nf)
   const venc = conta?.vencimento || dataRec;
 
   // Grava o valor real recebido — cria a conta se ela não existir (ex: recebimento antigo que não a criou)
-  const { data: contaUp } = await sb.from('cmp_contas_pagar')
-    .upsert([{ pedido_num, fornecedor: ref?.fornecedor_nome || '', valor: totalAcumulado, vencimento: venc, status: 'pendente' }],
-            { onConflict: 'pedido_num' })
-    .select('id').single();
+  const { data: contaUp } = await _salvarContaPagar(pedido_num,
+    { fornecedor: ref?.fornecedor_nome || '', valor: totalAcumulado, vencimento: venc, status: 'pendente' }, 'id');
 
   // Rateio pelo que foi recebido: plano de contas x unidade. Uma linha so = sem
   // rateio (o de sempre). Antes ia tudo no plano e na unidade do PRIMEIRO item.
