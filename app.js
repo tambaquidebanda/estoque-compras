@@ -991,6 +991,17 @@ async function prepararFormCompra() {
     document.getElementById('aviso-editando')?.classList.add('d-none');
     const nomeComp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
     if (compSel) compSel.value = nomeComp;
+    if (_pedidoDoPlan) {
+      // Veio de uma lista (MP para comprar da Meta): itens já em _pedidoItens; aqui só o cabeçalho
+      const pl = _pedidoDoPlan;
+      _pedidoDoPlan = null;
+      document.getElementById('c-forn').value = pl.fornNome || '';
+      document.getElementById('c-forn-id').value = pl.fornId || '';
+      if (setorSel) setorSel.value = pl.setor || '';
+      if (usoSel && pl.unidadeId) usoSel.value = pl.unidadeId;
+      _renderItensPedido();
+      toast(`${pl.n} ${pl.n === 1 ? 'item veio' : 'itens vieram'} ${pl.origem === 'Planejamento' ? 'do Planejamento' : 'da ' + pl.origem}. Confira fornecedor, pagamento e entrega e finalize.`, 'ok');
+    }
   }
 
   consultarPedidos();
@@ -17161,29 +17172,210 @@ function _pintarMeta() {
     (aprovada ? 'A meta aprovada fica congelada com os números do dia da aprovação.' : 'Ao aprovar, os números congelam.');
 }
 
-function abrirMpMeta() {
-  if (!_metaD) return;
-  const u = _metaD.linhas[_metaUn].u;
-  const { itens } = _metaMp(_metaUn);
-  document.getElementById('meta-mp-titulo').textContent = `MP para a meta do ${u.rotulo}`;
-  const lin = i => {
-    const p = prodFT(i.pid);
-    return `<tr class="${i.falta > 0 ? '' : 'text-muted'}">
-      <td>${esc(p?.nome || i.pid)}<div class="small text-muted">${i.usos.map(s => esc(prodFT(s)?.nome || '')).join(', ')}</div></td>
-      <td class="text-end">${_metaNum(i.q)} ${esc(p?.unidade_uso || '')}</td>
-      <td class="text-end">${_metaNum(i.noMp)}</td>
-      <td class="text-end">${_metaNum(i.naProd)}</td>
-      <td class="text-end fw-bold ${i.falta > 0 ? 'text-danger' : ''}">${i.falta > 0 ? _metaNum(i.falta) : 'ok'}</td></tr>`;
+// ════════════════════════════════════════════════════════════════
+// PEDIDO DE COMPRA A PARTIR DE UMA LISTA (23/10/2026)
+// O "MP para comprar" da Meta de Produção leva os marcados para a tela de
+// Pedido de Compra, que segue igual (fornecedor, pagamento, entrega, Finalizar).
+// ════════════════════════════════════════════════════════════════
+const _PLAN_PEDIDO_DIAS = 21;          // pedido pendente mais velho que isso não conta como "a caminho"
+// Unidade do financeiro (cmp_compras.unidade_uso) de cada unidade da Produção
+const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'Delivery P10' };
+const _planFracao = un => ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(un || '').toUpperCase());
+const _planArred = (v, un) => !(v > 0) ? 0 : _planFracao(un) ? Math.ceil(v * 10 - 1e-9) / 10 : Math.ceil(v - 1e-9);
+let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
+
+// Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
+// (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço e a categoria de compra.
+// Usado pelo "MP para comprar" da Meta de Produção.
+function _planCompras(compras, un, hoje, p) {
+  const fin = _PLAN_UNI_FIN[un];
+  const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
+  const pedido = {}, pedidoDet = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
+  [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
+    const pid = c.produto_id;
+    const minha = c.unidade_uso === fin;
+    if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
+      const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
+      pedido[pid] = (pedido[pid] || 0) + q;
+      (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})`);
+    }
+    if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
+      comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
+    if (minha && !ultimo[pid]) ultimo[pid] = c;
+    if (!ultimoOutra[pid]) ultimoOutra[pid] = c;
+    const cn = prodFT(pid)?.categoria;
+    if (cn && c.categoria) { const v = (catVotos[cn] ||= {}); v[c.categoria] = (v[c.categoria] || 0) + 1; }
+  });
+  const catDaCategoria = {};
+  Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
+  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado };
+}
+
+// O que a tela de Pedido de Compra precisa de um produto: embalagem, custo, fornecedor, categoria
+function _planCompraDe(pid, C) {
+  const pr = prodFT(pid) || {};
+  const ult = C.ultimo[pid] || C.ultimoOutra[pid] || null;
+  const fator = Number(pr.fator_conversao) || 1;
+  const custo = Number(pr.custo_comp) > 0 ? Number(pr.custo_comp)
+    : Number(ult?.custo_unit) > 0 ? Number(ult.custo_unit) : (Number(pr.custo_uso) || 0) * fator;
+  return {
+    pid, nome: pr.nome || pid, unComp: pr.unidade_comp || pr.unidade_uso || 'UN', fator, custo,
+    forn: ult?.fornecedor_nome || '', fornId: ult?.fornecedor_id || null,
+    catCompra: ult?.categoria || C.catDaCategoria[pr.categoria] || '', setor: C.ultimo[pid]?.setor || '',
   };
-  document.getElementById('meta-mp-corpo').innerHTML = itens.length ? `
+}
+
+// marc = [{ l: _planCompraDe(...), qtd na unidade de compra }]. false = não foi (aviso já dado)
+function _levarAoPedidoCompra(marc, un, origem) {
+  if (!marc.length) { toast('Marque pelo menos um produto.', 'erro'); return false; }
+  if (_pedidoEditando) { toast(`Termine ou cancele a edição do pedido ${_pedidoEditando} antes.`, 'erro'); return false; }
+  const semCat = marc.filter(x => !x.l.catCompra);
+  if (semCat.length) {
+    toast(`Sem categoria de compra (nunca comprado): ${semCat.map(x => x.l.nome).slice(0, 4).join(', ')}${semCat.length > 4 ? '...' : ''}. Desmarque e lance à mão na tela de pedido.`, 'erro');
+    return false;
+  }
+  const voto = (arr, f) => { const v = {}; arr.forEach(x => { const k = f(x); if (k) v[k] = (v[k] || 0) + 1; }); return Object.keys(v).sort((a, b) => v[b] - v[a]); };
+  const forns = voto(marc, x => x.l.forn);
+  if (forns.length > 1 && !confirm(`Os itens marcados foram comprados por último de ${forns.length} fornecedores (${forns.slice(0, 4).join(', ')}${forns.length > 4 ? '...' : ''}).\n\nO pedido de compra é de um fornecedor só: ${forns[0]}. Dá para trocar na tela do pedido.\n\nDica: ${origem === 'Planejamento' ? 'filtre por fornecedor' : 'desmarque os de outro fornecedor'} para fazer um pedido para cada um.\n\nContinuar?`)) return false;
+  if (_pedidoItens.length && !confirm(`Já tem um pedido em montagem com ${_pedidoItens.length} item(ns). Trocar por estes ${marc.length}?`)) return false;
+  const fornNome = forns[0] || '';
+  const fornId = marc.find(x => x.l.forn === fornNome)?.l.fornId || cForn.find(f => norm(f.nome) === norm(fornNome))?.id || null;
+  const uni = cUnidades.find(x => norm(x.nome) === norm(_PLAN_UNI_FIN[un] || ''));
+  const setor = un === 'Delivery P10' ? 'Estoque Delivery' : (voto(marc, x => _localPedidoNorm(x.l.setor))[0] || 'Estoque Loja');
+  const comp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
+  _pedidoItens = marc.map(({ l, qtd }) => {
+    const catObj = cCat.find(k => k.nome === l.catCompra);
+    return {
+      data: hojeLocal(), fornNome, fornId, comp,
+      prod: l.nome, produtoId: l.pid, cat: l.catCompra, planoConta: catObj?.plano_conta || '',
+      un: l.unComp, custo: l.custo, qtd, uso: uni?.nome || _PLAN_UNI_FIN[un], unidadeId: uni?.id || null,
+      total: l.custo * qtd, bonificado: false, doPlan: true,
+    };
+  });
+  _pedidoEditando = null;
+  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem };
+  ir('pedido', document.querySelector('.nav-sb a[onclick*="\'pedido\'"]'));
+  return true;
+}
+
+// "MP para comprar": a Falta vira pedido de compra pela mesma tela do Planejamento
+// (Wagner, 23/10). Desconta também o que já foi pedido e não chegou.
+let _metaMpCompra = null;     // { un, C, pedir: { pid: qtd }, marca: { pid: bool } }
+
+async function abrirMpMeta() {
+  if (!_metaD) return;
+  const un = _metaUn;
+  const corpo = document.getElementById('meta-mp-corpo');
+  document.getElementById('meta-mp-titulo').textContent = `MP para a meta do ${_metaD.linhas[un].u.rotulo}`;
+  corpo.innerHTML = '<p class="text-muted mb-0"><span class="spinner-border spinner-border-sm"></span> Buscando compras...</p>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-meta-mp')).show();
+  try {
+    // relê toda vez: o pedido que acabou de ser feito entra no "Já pedido"
+    await carregarCaches();
+    const compras = await _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
+      q => q.gte('data', _isoMais(hojeLocal(), -180)).not('produto_id', 'is', null));
+    _metaMpCompra = { un, C: _planCompras(compras, un, hojeLocal()), pedir: {}, marca: {}, grupos: [] };
+  } catch (e) {
+    console.error(e);
+    _metaMpCompra = null;
+    corpo.innerHTML = `<p class="text-danger mb-0">Não consegui ler as compras (${esc(e.message)}).</p>`;
+    return;
+  }
+  _pintarMpMeta();
+}
+
+function _metaMpLinhas() {
+  const M = _metaMpCompra;
+  return _metaMp(M.un).itens.map(i => {
+    const l = _planCompraDe(i.pid, M.C);
+    const pedido = M.C.pedido[i.pid] || 0;
+    const falta = Math.max(0, i.falta - pedido);
+    const auto = _planArred(falta / l.fator, l.unComp);
+    const pedir = M.pedir[i.pid] ?? auto;
+    return { i, l, pedido, falta, auto, pedir, marcado: (M.marca[i.pid] ?? auto > 0) && pedir > 0 };
+  });
+}
+
+function _pintarMpMeta() {
+  const M = _metaMpCompra;
+  if (!M) return;
+  const u = _metaD.linhas[M.un].u;
+  const linhas = _metaMpLinhas();
+  const marc = linhas.filter(x => x.marcado);
+  const corpo = document.getElementById('meta-mp-corpo');
+  if (!linhas.length) { corpo.innerHTML = '<p class="text-muted mb-0">Nenhuma SA com meta, então nenhuma MP.</p>'; return; }
+  const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
+  const lin = ({ i, l, pedido, falta, auto, pedir, marcado }) => {
+    const p = prodFT(i.pid);
+    const unU = esc(p?.unidade_uso || '');
+    const mudou = M.pedir[i.pid] !== undefined;
+    const emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${unU}` : esc(l.unComp);
+    return `<tr class="${falta > 0 ? '' : 'text-muted'}">
+      <td class="text-center"><input type="checkbox" class="form-check-input" ${marcado ? 'checked' : ''} ${pedir > 0 ? '' : 'disabled'}
+           onchange="metaMpMarcar('${i.pid}', this.checked)" aria-label="Marcar ${esc(p?.nome || '')}"></td>
+      <td>${esc(p?.nome || i.pid)}<div class="small text-muted">${i.usos.map(s => esc(prodFT(s)?.nome || '')).join(', ')}</div></td>
+      <td class="text-end">${n1(i.q)} ${unU}</td>
+      <td class="text-end">${n1(i.noMp)}</td>
+      <td class="text-end">${n1(i.naProd)}</td>
+      <td class="text-end">${pedido > 0 ? `<span title="Pedidos não recebidos: ${esc((M.C.pedidoDet[i.pid] || []).join(', '))}" style="cursor:help;border-bottom:1px dotted">${n1(pedido)}</span>` : '—'}</td>
+      <td class="text-end fw-bold ${falta > 0 ? 'text-danger' : ''}">${falta > 0 ? n1(falta) : 'ok'}</td>
+      <td style="min-width:110px"><input type="number" class="form-control form-control-sm text-end${mudou ? ' border-warning' : ''}" min="0" step="any"
+           value="${pedir || ''}" placeholder="0" title="${mudou ? `A conta dava ${n1(auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}"
+           onchange="metaMpPedir('${i.pid}', this.value)"><div class="small text-muted text-center">${emb}</div></td>
+      <td class="text-end">${pedir > 0 && l.custo > 0 ? brl(pedir * l.custo) : '—'}</td>
+      <td class="small">${esc(l.forn || '—')}</td></tr>`;
+  };
+  const total = marc.reduce((t, x) => t + x.pedir * x.l.custo, 0);
+  // Um pedido de compra é de um fornecedor só: a lista vem separada pelo último
+  // fornecedor de cada MP, com um botão por grupo. O que não precisa comprar fica no fim.
+  const grupos = {};
+  linhas.forEach(x => { const k = x.pedir > 0 || x.marcado ? (x.l.forn || '') : null; (grupos[k] ||= []).push(x); });
+  const soma = arr => arr.filter(x => x.marcado).reduce((t, x) => t + x.pedir * x.l.custo, 0);
+  M.grupos = Object.keys(grupos).filter(k => k !== 'null')
+    .sort((a, b) => (!a) - (!b) || soma(grupos[b]) - soma(grupos[a]) || a.localeCompare(b));
+  const cabGrupo = (k, gi) => {
+    const mk = grupos[k].filter(x => x.marcado);
+    return `<tr class="table-light"><td colspan="10"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div><strong>${k ? esc(k) : 'Sem compra anterior'}</strong>
+        <span class="small text-muted ms-2">${mk.length ? `${mk.length} ${mk.length === 1 ? 'marcado' : 'marcados'} · ${brl(soma(grupos[k]))}` : 'nada marcado'}</span>
+        ${k ? '' : '<div class="small text-muted">Nenhuma compra nos últimos 180 dias: escolha o fornecedor na tela do pedido.</div>'}</div>
+      <button class="btn btn-sm btn-outline-primary" onclick="metaMpGerarPedido(${gi})" ${mk.length ? '' : 'disabled'}>
+        <i class="bi bi-cart-plus"></i> Gerar pedido${mk.length ? ` com ${mk.length} ${mk.length === 1 ? 'item' : 'itens'}` : ''}</button>
+      </div></td></tr>`;
+  };
+  const corpoTab = M.grupos.map((k, gi) => cabGrupo(k, gi) + grupos[k].map(lin).join('')).join('') +
+    (grupos.null ? `<tr class="table-light"><td colspan="10"><strong>Não precisa comprar</strong>
+      <span class="small text-muted ms-2">${grupos.null.length} MP já cobertas pelo estoque ou pelo que já foi pedido</span></td></tr>` + grupos.null.map(lin).join('') : '');
+  corpo.innerHTML = `
     <p class="small text-muted mb-2">A meta final de cada SA aberta pela ficha até a matéria-prima. Já desconta o que está
-      no ${esc(_rotuloSemIcone(u.local_mp))} e na Produção do ${esc(u.rotulo)}. <strong>Falta</strong> é o que precisa ser comprado.</p>
+      no ${esc(_rotuloSemIcone(u.local_mp))}, na Produção do ${esc(u.rotulo)} e o que já foi pedido e não chegou (pedidos dos últimos ${_PLAN_PEDIDO_DIAS} dias).
+      <strong>Falta</strong> é o que precisa ser comprado; <strong>Pedir</strong> é a Falta na embalagem de compra, arredondada para cima, e pode ser trocada.</p>
     <div class="table-responsive"><table class="table table-sm align-middle mb-0">
-      <thead><tr><th>MP</th><th class="text-end">Precisa</th><th class="text-end">${esc(_rotuloSemIcone(u.local_mp))}</th>
-        <th class="text-end">Produção</th><th class="text-end">Falta</th></tr></thead>
-      <tbody>${itens.map(lin).join('')}</tbody></table></div>`
-    : '<p class="text-muted mb-0">Nenhuma SA com meta, então nenhuma MP.</p>';
-  new bootstrap.Modal(document.getElementById('modal-meta-mp')).show();
+      <thead><tr><th></th><th>MP</th><th class="text-end">Precisa</th><th class="text-end">${esc(_rotuloSemIcone(u.local_mp))}</th>
+        <th class="text-end">Produção</th><th class="text-end">Já pedido</th><th class="text-end">Falta</th><th class="text-center">Pedir</th>
+        <th class="text-end">Total</th><th>Último fornecedor</th></tr></thead>
+      <tbody>${corpoTab}</tbody></table></div>
+    <div class="small text-muted mt-3">${marc.length ? `${marc.length} ${marc.length === 1 ? 'item marcado' : 'itens marcados'} em ${M.grupos.filter(k => k && grupos[k].some(x => x.marcado)).length} fornecedores · ${brl(total)} pelo último custo.` : 'Nada marcado.'}
+      Um pedido por fornecedor: depois de finalizar um, abra de novo "MP para comprar" e o pedido feito já aparece em "Já pedido".
+      Para comprar de outro fornecedor, troque na tela do pedido.</div>`;
+}
+
+function metaMpMarcar(pid, v) { _metaMpCompra.marca[pid] = v; _pintarMpMeta(); }
+function metaMpPedir(pid, v) {
+  const M = _metaMpCompra;
+  if (v === '' || v === null) delete M.pedir[pid];
+  else M.pedir[pid] = Math.max(0, parseFloat(String(v).replace(',', '.')) || 0);
+  if (M.pedir[pid] > 0) M.marca[pid] = true;
+  _pintarMpMeta();
+}
+function metaMpGerarPedido(gi) {
+  const M = _metaMpCompra;
+  const forn = M.grupos[gi];
+  const marc = _metaMpLinhas().filter(x => x.marcado && (x.l.forn || '') === forn).map(x => ({ l: x.l, qtd: x.pedir }));
+  const modal = bootstrap.Modal.getInstance(document.getElementById('modal-meta-mp'));
+  // a tela de pedido abre por baixo do modal: fecha antes
+  if (marc.length && !_pedidoEditando) modal?.hide();
+  if (!_levarAoPedidoCompra(marc, M.un, 'Meta de Produção')) modal?.show();
 }
 
 async function salvarMeta(aprovar) {
