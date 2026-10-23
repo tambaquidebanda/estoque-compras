@@ -15576,7 +15576,7 @@ async function sincronizarPdv() {
       for (const cx of (j.caixas || [])) {
         for (const cm of (cx.comandas || [])) {
           if (cm.cancelada) continue;
-          for (const it of (cm.itens || [])) {
+          for (const it of _itensVendidosComanda(cm)) {
             if (it.status !== 'ativo') continue;
             const pid = it.produto_id;
             if (!(pid in agg)) agg[pid] = { nome: it.produto_nome, qty: 0 };
@@ -16434,6 +16434,16 @@ const _META_ACOMP_ESCOLHIDO = {
   '2680e403-e06b-4ae8-b0d1-f2f344e48e93': [_META_SA_BATATA],   // MARMITA FRANGO A PARMEGIANA (23/10/2026)
 };
 
+// Itens vendidos de uma comanda do iComanda: `itens` + os ATIVOS de `itens_transferidos`.
+// Item transferido de mesa sai de `itens` nas duas comandas e a API so o devolve em
+// `itens_transferidos` (ativo no destino). Sem isto sumia 9,5% da venda do Centro
+// (23/10/2026). Mesma regra de itens_vendidos() em scripts/baixa_estoque_pdv.py.
+function _itensVendidosComanda(cm) {
+  const itens = cm.itens || [];
+  const vistos = new Set(itens.map(it => it.id));
+  return itens.concat((cm.itens_transferidos || []).filter(it => !vistos.has(it.id)));
+}
+
 async function _metaPdvGet(path, params) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 120000);
@@ -16484,7 +16494,7 @@ async function _metaPdvDia(data, unidades, ctx) {
     const vp = (vendasPdv[uniDoPdv[un]] ||= {});
     (cx.comandas || []).forEach(cm => {
       if (cm.cancelada) return;
-      (cm.itens || []).forEach(it => {
+      _itensVendidosComanda(cm).forEach(it => {
         if (it.status !== 'ativo') return;
         vp[it.produto_id] = (vp[it.produto_id] || 0) + (Number(it.quantidade) || 0);
       });

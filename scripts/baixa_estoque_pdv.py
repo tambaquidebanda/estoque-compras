@@ -189,6 +189,22 @@ def unidade_do_caixa(caixa_id, data):
     return un
 
 
+def itens_vendidos(cm):
+    """Itens vendidos de uma comanda: `itens` + os ATIVOS de `itens_transferidos`.
+
+    Item que o garcom transfere de uma mesa para outra sai da lista `itens` das DUAS
+    comandas: a API o devolve so em `itens_transferidos` (na origem com status
+    'transferido', no destino com status 'ativo'). Lendo so `itens`, a venda transferida
+    sumia: 23/10/2026, Centro de 16/09 a 22/10, R$ 133,7 mil (9,5% do faturado; Original
+    600: 1.659 em vez de 1.804). Somando os ativos de `itens_transferidos` bate item por
+    item com o relatorio do iComanda. O id evita contar duas vezes se um dia a API
+    passar a repetir o item nas duas listas.
+    """
+    itens = cm.get('itens') or []
+    vistos = {it.get('id') for it in itens}
+    return itens + [it for it in (cm.get('itens_transferidos') or []) if it.get('id') not in vistos]
+
+
 def vendas_do_dia(data):
     """{ icomanda_produto_id(int) -> qtd } dos itens ativos de comandas não canceladas,
     SÓ da unidade em UNIDADE_PDV.
@@ -229,7 +245,7 @@ def vendas_do_dia(data):
         for cm in (cx.get('comandas') or []):
             if cm.get('cancelada'):
                 continue
-            for it in (cm.get('itens') or []):
+            for it in itens_vendidos(cm):
                 if it.get('status') != 'ativo':
                     continue
                 pid = it.get('produto_id')

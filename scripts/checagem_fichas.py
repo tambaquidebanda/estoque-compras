@@ -40,7 +40,7 @@ def _vendas30():
             if un!=bx.UNIDADE_PDV: continue
             for cm in (cx.get('comandas') or []):
                 if cm.get('cancelada'): continue
-                for it in (cm.get('itens') or []):
+                for it in bx.itens_vendidos(cm):   # inclui item transferido de mesa (23/10/2026)
                     if it.get('status')=='ativo':
                         cen[it.get('produto_id')]+=it.get('quantidade') or 0
                         nomes[it.get('produto_id')]=it.get('produto_nome') or '?'
