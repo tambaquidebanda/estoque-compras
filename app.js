@@ -6620,8 +6620,12 @@ async function carregarPlanejamento() {
   const tb = document.getElementById('plan-tbody');
   tb.innerHTML = '<tr><td colspan="13" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando o que comprar...</td></tr>';
   document.getElementById('plan-btn-pedido').disabled = true;
+  const hora = document.getElementById('plan-hora');
+  hora.textContent = '';
   try {
     _planD = await _planCarregar();
+    // A tela não se atualiza sozinha: um recebimento ou ajuste depois disso não aparece
+    hora.textContent = 'Calculado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   } catch (e) {
     console.error(e);
     _planD = null;
