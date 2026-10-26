@@ -6275,17 +6275,20 @@ let _produtosEmergDesk = [];
 
 // Lista de produtos do setor (só os da contagem/pedido daquele setor), resolvidos por
 // mapeamento/norm. Sem match, o produto aparece mesmo assim (ordenável pelo nome).
+// A emergência SÓ aceita produto desta lista (26/10/2026: churrasqueira pedia alface).
+// Mesma regra da tela de Contagem: exclusão vale para a estrutura, não para o "+"
+// (água e Stella do Bar estão excluídas e voltaram pelo "+"); "+" com prefixo da unidade.
 function _buildProdutosEmergDesk(setor) {
   const estruturaSetor = INVENTARIO_ESTRUTURA[setor] || {};
   const nomesEstrut = [];
-  Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n) nomesEstrut.push(n); }); });
+  Object.values(estruturaSetor).forEach(arr => { if (Array.isArray(arr)) arr.forEach(n => { if (n && !_invExcluidos.has(n)) nomesEstrut.push(n); }); });
+  const _prefAdic = _prefUnid(_invLocal, setor) + setor + '|';
   Object.entries(_invAdicoes).forEach(([chave, lista]) => {
-    if (chave.startsWith(setor + '|') && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
+    if (chave.startsWith(_prefAdic) && Array.isArray(lista)) lista.forEach(n => { if (n) nomesEstrut.push(n); });
   });
   const vistos = new Set();
   const lista  = [];
   nomesEstrut.forEach(nome => {
-    if (_invExcluidos.has(nome)) return;   // respeita exclusões (fantasmas removidos pelo usuário)
     const k = norm(nome);
     if (vistos.has(k)) return;
     vistos.add(k);
@@ -6328,9 +6331,12 @@ function removerItemEmerg(idx) {
   document.getElementById(`emerg-row-${idx}`)?.remove();
 }
 
-function abrirEmergencia() {
+async function abrirEmergencia() {
   _liberarTela('emergencia');   // abrir o modal emite um bilhete novo
   _emergIdx = 0;
+  // Sem o cadastro, nenhum item da lista tem produto_id e nada pode ser enviado
+  // (acontecia ao abrir a emergência antes de abrir algum grupo da contagem).
+  if (!cProdutosFT.length) await carregarProdutosFT();
   const sel = document.getElementById('emerg-setor');
   if (sel && _invSetor) sel.value = _invSetor;
   _buildProdutosEmergDesk((sel && sel.value) || _invSetor || '');
@@ -6353,23 +6359,13 @@ function buscarProdutoEmerg(idx) {
   const qn = norm((document.getElementById(`emerg-busca-${idx}`)?.value || '').trim());
   const el = document.getElementById(`emerg-sugest-${idx}`);
   if (!el) return;
-  // Sem texto → lista do setor (dropdown, mantida). Com texto → produtos do setor
-  // primeiro e depois QUALQUER produto do cadastro (emergência pode pedir qualquer item).
-  let hits;
-  if (qn.length < 1) {
-    hits = _produtosEmergDesk.slice(0, 60);
-  } else {
-    const setorHits = _produtosEmergDesk.filter(p => norm(p.nome).includes(qn));
-    const jaTem = new Set(setorHits.map(p => norm(p.nome)));
-    const cadHits = cProdutosFT
-      .filter(p => p.tipo !== 'VENDA' && norm(p.nome).includes(qn) && !jaTem.has(norm(p.nome)))
-      .map(p => ({ id: p.id, nome: p.nome }));
-    hits = [...setorHits, ...cadHits].slice(0, 60);
-  }
+  // Só a lista do setor, com ou sem texto (antes, digitando, entrava o cadastro inteiro).
+  const hits = (qn ? _produtosEmergDesk.filter(p => norm(p.nome).includes(qn)) : _produtosEmergDesk).slice(0, 60);
+  const setor = document.getElementById('emerg-setor')?.value || _invSetor || 'deste setor';
   el.innerHTML = hits.length
     ? hits.map(p => `<button type="button" class="list-group-item list-group-item-action py-1 small"
         onclick="selecionarProdEmerg(${idx},${JSON.stringify(p.id || '')},${JSON.stringify(p.nome)})">${esc(p.nome)}</button>`).join('')
-    : '<div class="list-group-item text-muted small py-1">Nenhum produto encontrado.</div>';
+    : `<div class="list-group-item text-muted small py-1">Este produto não está na lista do setor ${esc(setor)}. Se o setor usa este item, inclua-o na contagem do setor.</div>`;
 }
 
 function selecionarProdEmerg(idx, id, nome) {
