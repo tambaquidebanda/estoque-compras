@@ -6596,6 +6596,9 @@ const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'D
 // De onde sai o que vai para os setores (base "saída" de quem não está em ficha)
 const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P10': ['ESTOQUE DELIVERY'] };
 const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
+// Categorias que não vêm da venda: ficam fora do Planejamento (Wagner, 26/10/2026)
+const _PLAN_CAT_FORA = new Set(['MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
+  'MU ESCRITÓRIO', 'MU UNIFORMES', 'MU UTENSÍLIOS', 'Comida Funcionário']);   // nome antigo de REFEIÇÃO FUNCIONÁRIOS
 const _planEhCompra = p => !!p && (_PLAN_TIPOS_COMPRA.has(p.tipo) || /^(MP|MC|MU) /.test(p.categoria || ''));
 
 let _planUn = 'Centro';
@@ -6755,7 +6758,7 @@ function _planBase(un) {
   Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
   const linhas = [...ids].map(pid => {
     const pr = prodFT(pid);
-    if (!pr || pr.ativo === false) return null;
+    if (!pr || pr.ativo === false || _PLAN_CAT_FORA.has(pr.categoria)) return null;
     const perda = Math.min(Number(pr.perda) || 0, 90) / 100;
     const ficha = consumo[pid] || 0;
     const saiTudo = Math.max(0, saida[pid] || 0);
