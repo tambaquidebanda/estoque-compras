@@ -6635,9 +6635,10 @@ async function carregarPlanejamento() {
 
 async function _planCarregar() {
   await Promise.all([carregarProdutosFT(), carregarCaches()]);
-  const [unidades, cfgRow] = await Promise.all([
+  const [unidades, cfgRow, listasRows] = await Promise.all([
     _metaSelect('prod_unidades', '*', q => q.order('ordem')),
     sb.from('inv_configuracoes').select('valor').eq('chave', _PLAN_CFG).maybeSingle(),
+    sb.from('inv_configuracoes').select('chave,valor').in('chave', ['estrutura', 'adicoes', 'mapeamentos']),
   ]);
   if (!unidades.length) throw new Error('prod_unidades está vazia');
   _planCfg = cfgRow?.data?.valor || {};
@@ -6657,7 +6658,22 @@ async function _planCarregar() {
     _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
   ]);
-  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje };
+  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje, naLista: _planNaLista(listasRows.data) };
+}
+
+// Produtos que estão em alguma lista de contagem (qualquer unidade, setor ou "+").
+// A "saída" só vale para eles: produto que saiu de todas as listas não é mais pedido
+// pelos setores, e a saída antiga dele não é consumo (26/10/2026: MP COSTELA DE
+// TAMBAQUI, que a cozinha pedia no lugar da SA até 23/10, aparecia para comprar).
+function _planNaLista(rows) {
+  const cfg = Object.fromEntries((rows || []).map(r => [r.chave, r.valor || {}]));
+  const mapa = cfg.mapeamentos || {};
+  const nomes = new Set();
+  const add = n => { if (n) { nomes.add(norm(n)); if (mapa[n]) nomes.add(norm(mapa[n])); } };
+  Object.values(cfg.estrutura || {}).forEach(setores => Object.values(setores || {}).forEach(grupos =>
+    Object.values(grupos || {}).forEach(lst => (lst || []).forEach(add))));
+  Object.values(cfg.adicoes || {}).forEach(lst => (lst || []).forEach(add));
+  return new Set(cProdutosFT.filter(p => nomes.has(norm(p.nome))).map(p => p.id));
 }
 
 // Tudo o que não depende de margem/dias, por unidade. Fica guardado em _planD.base.
@@ -6738,7 +6754,9 @@ function _planBase(un) {
     if (!pr || pr.ativo === false) return null;
     const perda = Math.min(Number(pr.perda) || 0, 90) / 100;
     const ficha = consumo[pid] || 0;
-    const sai = Math.max(0, saida[pid] || 0);
+    const saiTudo = Math.max(0, saida[pid] || 0);
+    const foraLista = ficha <= 0 && saiTudo > 0 && !D.naLista.has(pid);   // saída antiga de quem saiu das listas
+    const sai = foraLista ? 0 : saiTudo;
     const base = ficha > 0 ? 'ficha' : sai > 0 ? 'saida' : null;
     // Vendido = o que a venda consumiu no período (sem a perda); a perda entra no Precisa
     const vendido = base === 'ficha' ? ficha : base === 'saida' ? sai : 0;
@@ -6747,7 +6765,7 @@ function _planBase(un) {
     const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
     return {
       ..._planCompraDe(pid, C), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      comprado: comprado[pid] || 0, tem: tem[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas });
@@ -6910,6 +6928,7 @@ function _pintarPlanTabela() {
       return cab + arr.map(({ l, c }) => {
         const unx = `<span class="plan-un">${esc(l.un)}</span>`;
         const baseTag = l.base === 'saida' ? '<span class="plan-base plan-base-saida" title="Nenhuma ficha usa este produto: o consumo é a saída do estoque para os setores no período">saída</span>'
+          : l.foraLista ? `<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`
           : !l.base && l.comprado > 0 ? `<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} de ${_ddmm(_planBase(un).p.ini)} a ${_ddmm(_planBase(un).p.fim)}, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`
           : !l.base ? '<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>' : '';
         const dura = l.consDia > 0 ? (l.tem + l.pedido) / l.consDia : null;
@@ -6945,6 +6964,7 @@ function _pintarPlanTabela() {
     '"Dura" = quantos dias o estoque mais o já pedido aguenta no consumo atual; acima de 60 dias fica em destaque (estoque alto ou consumo da ficha baixo). ' +
     '"comprado sem consumo" = entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores. ' +
     '"saída" = produto que nenhuma ficha usa (limpeza, descartável...): o consumo é o que saiu do estoque para os setores. ' +
+    '"fora da lista" = teve saída, mas não está mais em nenhuma lista de contagem; a saída não conta. ' +
     'Os dias trocados num produto ficam guardados para a próxima vez; margem e dias de cobertura também.';
 }
 
