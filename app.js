@@ -1430,6 +1430,7 @@ async function finalizarPedido() {
     return;
   }
 
+  let difFinanceiro = null;   // edição de pedido que já está no financeiro com outro valor
   const rows = _pedidoItens.map(it => ({
     data:            it.data,
     data_entrega,
@@ -1464,6 +1465,29 @@ async function finalizarPedido() {
       btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
       return;
     }
+    // Já foi para o financeiro? Editar aqui não muda a conta de lá (nem a
+    // transferência do comprador externo): o #01929 foi enviado com R$ 1.029,30,
+    // ganhou a massa de purê 40 min depois e o financeiro pagou sem os R$ 228 (26/10/2026).
+    const fin = await _valorNoFinanceiro(_pedidoEditando);
+    const novoTotal = _pedidoItens.reduce((s, it) => s + (it.bonificado ? 0 : (it.total || 0)), 0) + (acrescimo || 0);
+    difFinanceiro = fin && Math.abs(fin.valor - novoTotal) >= 0.01 ? { ...fin, novoTotal } : null;
+    if (difFinanceiro) {
+      const d = novoTotal - fin.valor;
+      const compExt = isCompExterna(_pedidoItens[0]?.fornNome);
+      const ok = confirm(
+        `${_pedidoEditando} já foi enviado ao financeiro (${fin.onde}) com ${brl(fin.valor)}.\n\n` +
+        `Com esta edição o pedido passa a ${brl(novoTotal)} — diferença de ${d > 0 ? '+' : '−'}${brl(Math.abs(d))}.\n\n` +
+        `O financeiro NÃO muda sozinho. Depois de salvar, ` +
+        (fin.rascunho ? 'peça ao financeiro para rejeitar o envio antigo nas Integrações Pendentes e envie de novo com o valor novo.'
+          : 'avise o financeiro para acertar a conta a pagar' + (compExt ? ' e a transferência do comprador externo (a diferença é outro PIX).' : '.')) +
+        `\n\nSalvar a edição mesmo assim?`);
+      if (!ok) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+        toast('Edição não salva. O pedido continua como estava.');
+        return;
+      }
+    }
     await sb.from('cmp_compras').delete().eq('pedido_num', _pedidoEditando);
   }
 
@@ -1477,6 +1501,7 @@ async function finalizarPedido() {
   const total = _pedidoItens.reduce((s, it) => s + it.total, 0);
   const acao  = _pedidoEditando ? 'atualizado' : 'finalizado';
   toast(`✅ Pedido ${pedido_num} ${acao} — ${_pedidoItens.length} item(s) — ${brl(total)}`, 'ok');
+  if (difFinanceiro) toast(`Avise o financeiro: ${pedido_num} está lá com ${brl(difFinanceiro.valor)} e agora é ${brl(difFinanceiro.novoTotal)}.`, 'erro');
 
   cancelarPedido();
   consultarPedidos();
@@ -7356,6 +7381,22 @@ async function renderPendentes() {
 // tres vezes no ESTOQUE_LOJA.
 // Confere o CABECALHO do recebimento, mesmo sem itens — e exatamente o rastro que
 // o Rejeitar deixa. Erro na consulta BLOQUEIA: na duvida, nao apaga.
+// Quanto do pedido já está no financeiro: lançamento (aprovado), rascunho nas
+// Integrações Pendentes ou só a conta a pagar marcada como enviada. null = não foi.
+async function _valorNoFinanceiro(pedido_num) {
+  const [{ data: lancs }, { data: rasc }, { data: contas }] = await Promise.all([
+    sb.from('lancamentos').select('valor').eq('numero_pedido', pedido_num),
+    sb.from('lancamentos_rascunho').select('valor,acrescimo,desconto').eq('pedido_num', pedido_num),
+    sb.from('cmp_contas_pagar').select('valor,lancamento_id,adiantamento_lancamento_id').eq('pedido_num', pedido_num),
+  ]);
+  const soma = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
+  if (lancs?.length) return { valor: soma(lancs, x => Number(x.valor) || 0), onde: 'conta a pagar' };
+  if (rasc?.length) return { valor: soma(rasc, x => (Number(x.valor) || 0) + (Number(x.acrescimo) || 0) - (Number(x.desconto) || 0)), onde: 'aguardando aprovação nas Integrações Pendentes', rascunho: true };
+  const enviada = (contas || []).filter(c => c.lancamento_id || c.adiantamento_lancamento_id);
+  if (enviada.length) return { valor: soma(enviada, x => Number(x.valor) || 0), onde: 'conta a pagar' };
+  return null;
+}
+
 async function _pedidoTemRecebimento(pedido_num, verbo) {
   const { data, error } = await sb.from('cmp_recebimentos')
     .select('id').eq('pedido_num', pedido_num).limit(1);
@@ -8700,6 +8741,10 @@ async function carregarCompras() {
       // Fluxo Comprador Externo
       if (lancSet.has(g.pedido_num)) {
         badgeFinanc = `<span class="badge" style="background:#6f42c1">💰 Financeiro</span>`;
+      } else if (aguardando) {
+        // Rascunho nas Integrações Pendentes: até 26/10/2026 caía no "Não enviado" com o
+        // botão de enviar de novo, e a tela escondia que já havia um valor esperando lá.
+        badgeFinanc = `<span class="badge bg-warning text-dark" title="Enviado ao financeiro; aguardando aprovação nas Integrações Pendentes">⏳ Aguardando</span>`;
       } else if (adiantado) {
         // Adiantamento enviado — mostra botão Finalizar se houver algum recebimento parcial
         badgeFinanc = `<span class="badge" style="background:#fd7e14">💳 Adiantamento</span>
@@ -10549,7 +10594,25 @@ async function _salvarContaPagar(pedido_num, campos, colunas = '*') {
   return res;
 }
 
+// Clique duplo no Enviar passava duas vezes pela checagem "rascunho já existe" antes de
+// qualquer um gravar e criava dois rascunhos do mesmo pedido. Suspeita no #01929
+// (23/10/2026): o financeiro rejeitou um para edição e o outro, com o valor antigo,
+// ficou nas Integrações e foi aprovado em 26/10.
+let _gcEnviando = false;
 async function confirmarGerarConta() {
+  if (_gcEnviando) return;
+  _gcEnviando = true;
+  const btnGc = document.getElementById('btn-gc-enviar');
+  const htmlGc = btnGc?.innerHTML;
+  if (btnGc) { btnGc.disabled = true; btnGc.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando...'; }
+  try { await _confirmarGerarConta(); }
+  finally {
+    _gcEnviando = false;
+    if (btnGc) { btnGc.disabled = false; btnGc.innerHTML = htmlGc; }
+  }
+}
+
+async function _confirmarGerarConta() {
   const pedido_num    = document.getElementById('gc-pedido-num').value;
   const fornecedor_id = document.getElementById('gc-fornecedor-id').value || null;
   const nota          = parseMoeda('gc-valor');
