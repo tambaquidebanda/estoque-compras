@@ -524,3 +524,25 @@ h1 {
 #meta-pratos .mp-vazio { color: #5f6d69; font-style: italic; }
 #meta-pratos .mp-meta { background: #eef6f4; font-weight: 600; }
 #meta-pratos .mp-tab th { vertical-align: bottom; line-height: 1.2; }
+
+/* Planejamento de Compras (22/10/2026) — mesma família visual da Meta de Produção */
+.plan-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.plan-filtros select, .plan-filtros input[type="search"] { width: auto; min-width: 190px; }
+.plan-tabela .plan-grupo td { background: #f1f6f5; color: #0e6b68; font-weight: 800; font-size: .78rem; letter-spacing: .05em; text-transform: uppercase; }
+.plan-tabela .plan-grupo .plan-grupo-sub { color: #5f6d69; font-weight: 600; text-transform: none; letter-spacing: 0; margin-left: 8px; }
+.plan-tabela tr.plan-ok td { color: #8a9692; }
+.plan-tabela tr.plan-marcado td { background: #fffaf0; }
+.plan-un { color: #6c757d; font-size: .72rem; margin-left: 2px; }
+.plan-base { display: inline-block; font-size: .66rem; font-weight: 700; border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+.plan-base-saida { background: #fff1d6; color: #8a5a00; }
+.plan-base-nada { background: #eceff1; color: #5f6d69; }
+.plan-dias { width: 58px; margin: 0 auto; text-align: center; padding: 1px 4px; }
+.plan-dias.plan-proprio { background: #fffaf0; border-color: #e0b354; font-weight: 700; }
+.plan-pedir { width: 104px; margin: 0 auto; }
+.plan-pedir input { text-align: center; font-weight: 700; color: #0e6b68; }
+.plan-pedir.plan-mudou input { background: #fffaf0; }
+.plan-falta { font-weight: 700; color: #b42318; }
+.plan-muito { white-space: nowrap; font-weight: 700; color: #8a5a00; background: #fff1d6; border-radius: 4px; padding: 0 4px; }
+.plan-base-alerta { background: #fde7e4; color: #b42318; }
+.plan-dica { cursor: help; border-bottom: 1px dotted #9aa8a4; }
+.plan-tabela td:nth-child(n+3) { white-space: nowrap; }

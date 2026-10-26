@@ -9,6 +9,9 @@ Grava em `prod_venda_sa_dia` (apaga o dia+unidade e regrava, então rodar de nov
 substitui em vez de somar). E em `prod_venda_sa_origem` o mesmo consumo aberto por
 prato vendido — é o que a tela da meta mostra ao passar o mouse na SA (08/10/2026).
 Sem essa tabela (SQL_PRODUCAO_VENDA_ORIGEM.sql não rodado) o robô segue igual.
+E em `prod_venda_item_dia` a venda de cada produto do cadastro, sem abrir a ficha
+(PDV mapeado × fator): é a base do PLANEJAMENTO DE COMPRAS (22/10/2026), que abre a
+ficha na tela até a MP. Sem a tabela (SQL_PLANEJAMENTO_COMPRAS.sql) o robô segue igual.
 
 NÃO é baixa. Não encosta em saldo, razão nem pedido. É medição, como o
 pdv_preparo_dia: se falhar, nada da operação para.
@@ -96,7 +99,7 @@ def carregar():
 def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
     bx.UNIDADE_PDV = unidade_pdv          # vendas_do_dia filtra por esta global
     vendas = bx.vendas_do_dia(data)
-    memo, out, origem, sem_mapa = {}, {}, {}, 0
+    memo, out, origem, itens, sem_mapa = {}, {}, {}, {}, 0
     for ip, qtd in vendas.items():
         m = mapa.get(ip)
         if not m:
@@ -104,6 +107,7 @@ def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
                 sem_mapa += qtd          # vendido e ainda sem decisao na pdv_map
             continue
         pid, fator = m
+        itens[pid] = itens.get(pid, 0) + qtd * fator
         # `sas` no lugar de `contado`: a recursão para em QUALQUER SA.
         folhas, _ = bx._bom(pid, fic, ings, sas, memo, set())
         for folha, fq in folhas.items():
@@ -112,21 +116,22 @@ def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
                 o = origem.setdefault((folha, pid), [0, 0])     # [pratos vendidos, SA consumida]
                 o[0] += qtd * fator
                 o[1] += fq * qtd * fator
-    return out, origem, sem_mapa
+    return out, origem, sem_mapa, itens
 
 
-def tem_tabela_origem():
+def tem_tabela(tabela, sem):
     try:
-        bx.sb_get_all('prod_venda_sa_origem?select=data&data=eq.1900-01-01')
+        bx.sb_get_all(f'{tabela}?select=data&data=eq.1900-01-01')
         return True
     except Exception as e:
-        print(f'  prod_venda_sa_origem indisponível ({e}): os pratos de cada SA não são guardados.')
+        print(f'  {tabela} indisponível ({e}): {sem}')
         return False
 
 
 def main():
     mapa, fic, ings, sas, unidades, nomes = carregar()
-    com_origem = tem_tabela_origem()
+    com_origem = tem_tabela('prod_venda_sa_origem', 'os pratos de cada SA não são guardados.')
+    com_itens = tem_tabela('prod_venda_item_dia', 'o Planejamento de Compras fica sem a venda do dia.')
     print(f'== Venda de SA por dia == {len(unidades)} unidades, {len(sas)} SA cadastradas, {len(mapa) - 1} itens mapeados')
     hoje = datetime.now(bx.MANAUS).date()
     for i in range(DIAS, 0, -1):
@@ -136,7 +141,7 @@ def main():
         data = dia.isoformat()
         for u in unidades:
             try:
-                sa, origem, sem_mapa = sa_do_dia(data, u['unidade_pdv'], mapa, fic, ings, sas)
+                sa, origem, sem_mapa, itens = sa_do_dia(data, u['unidade_pdv'], mapa, fic, ings, sas)
             except bx.DiaAindaAberto as e:
                 print(f'  {data} {u["unidade"]}: pulado — {e}')
                 continue
@@ -155,6 +160,12 @@ def main():
                 bx.sb_delete(f'prod_venda_sa_origem?data=eq.{data}&unidade=eq.{urllib.parse.quote(u["unidade"])}')
                 for j in range(0, len(orig), 500):
                     bx.sb_insert('prod_venda_sa_origem', orig[j:j + 500])
+            if com_itens:
+                vit = [{'data': data, 'unidade': u['unidade'], 'produto_id': pid, 'quantidade': round(q, 4)}
+                       for pid, q in itens.items() if q > 0]
+                bx.sb_delete(f'prod_venda_item_dia?data=eq.{data}&unidade=eq.{urllib.parse.quote(u["unidade"])}')
+                for j in range(0, len(vit), 500):
+                    bx.sb_insert('prod_venda_item_dia', vit[j:j + 500])
             print(f'  {data} {u["unidade"]}: {len(linhas)} SA gravadas'
                   + (f' · {sem_mapa:g} itens vendidos sem mapa no PDV' if sem_mapa else ''))
     print('== Fim ==')

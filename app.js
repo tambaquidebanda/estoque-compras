@@ -235,7 +235,7 @@ function ir(nome, el) {
   if (nome === 'saldo')         carregarSaldo();
   if (nome === 'perdas')        carregarPerdas();
   if (nome === 'devolucoes')    carregarDevolucoes();
-  if (nome === 'planejamento')  { setHoje('plan-data'); carregarPlanejamento(); }
+  if (nome === 'planejamento')  carregarPlanejamento();
   if (nome === 'recebimento')   { carregarCaches().then(() => abaReceb('pendentes', document.querySelector('#tabs-receb .nav-link'))); }
   if (nome === 'controlecmv')   renderHistoricoImport();
   if (nome === 'usuarios')      carregarUsuarios();
@@ -992,7 +992,7 @@ async function prepararFormCompra() {
     const nomeComp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
     if (compSel) compSel.value = nomeComp;
     if (_pedidoDoPlan) {
-      // Veio de uma lista (MP para comprar da Meta): itens já em _pedidoItens; aqui só o cabeçalho
+      // Veio do Planejamento: itens já em _pedidoItens; aqui só o cabeçalho
       const pl = _pedidoDoPlan;
       _pedidoDoPlan = null;
       document.getElementById('c-forn').value = pl.fornNome || '';
@@ -1428,6 +1428,29 @@ async function finalizarPedido() {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
     return;
+  }
+
+  // Item que veio do Planejamento entrou sem a pessoa passar pelo cabeçalho: vale o
+  // fornecedor, a data e o comprador que estão na tela agora.
+  if (_pedidoItens.some(it => it.doPlan)) {
+    const fornNome = document.getElementById('c-forn').value.trim();
+    const idTela   = document.getElementById('c-forn-id').value || null;
+    const fornId   = cForn.find(f => f.id === idTela && norm(f.nome) === norm(fornNome))?.id
+      || cForn.find(f => norm(f.nome) === norm(fornNome))?.id || null;
+    if (!fornNome) {
+      toast('Preencha o Fornecedor.', 'erro');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
+      return;
+    }
+    const dataTela = document.getElementById('c-data').value;
+    const compTela = document.getElementById('c-comp')?.value;
+    _pedidoItens.forEach(it => {
+      if (!it.doPlan) return;
+      it.fornNome = fornNome; it.fornId = fornId;
+      if (dataTela) it.data = dataTela;
+      if (compTela) it.comp = compTela;
+    });
   }
 
   let difFinanceiro = null;   // edição de pedido que já está no financeiro com outro valor
@@ -6545,486 +6568,496 @@ function _processarWbInv(wb) {
 
 
 // ═══════════════════════════════════════════════════════════════
-// PLANEJAMENTO
+// PLANEJAMENTO DE COMPRAS (refeito do zero em 22/10/2026)
 // ═══════════════════════════════════════════════════════════════
-let _planDados    = [];   // dados importados de Excel (vazio = usa catálogo)
-let _planProdutos = [];   // produtos do catálogo com médias calculadas
+// Troca a planilha "INV ESTOQUE TDB". Uma unidade de cada vez: Centro e P10 compram
+// e guardam separado. Conta (Wagner, 22/10/2026):
+//   Consumo/dia = venda das últimas 4 semanas aberta pela ficha até a MP (a mesma conta
+//                 da Meta de Produção), ÷ dias com venda gravada. A venda por produto
+//                 vem do robô scripts/venda_sa_dia.py (tabela prod_venda_item_dia).
+//                 A ficha desce por SA e preparos e para no que se compra (MP/MC);
+//                 a perda do cadastro entra (a ficha pede o líquido).
+//                 Item que nenhuma ficha usa (limpeza, descartável...) usa a SAÍDA do
+//                 estoque para os setores no mesmo período, e a tela marca "saída".
+//   Precisa     = consumo/dia × dias de cobertura × (1 + margem)  (padrão 7 dias e 25%,
+//                 como a planilha; os dias podem mudar por produto e ficam guardados)
+//   Falta       = Precisa − Tem agora (tudo da unidade, igual à meta) − Já pedido
+//                 (pedido de compra dos últimos 21 dias ainda não recebido)
+//   Pedir       = Falta ÷ embalagem (fator_conversao), arredondado para cima, na
+//                 unidade de compra. Pode ser trocado na linha.
+// "Gerar pedido" leva os marcados para a tela de Pedido de Compra, que segue igual.
+// ════════════════════════════════════════════════════════════════
+const _PLAN_MARGEM_PADRAO = 0.25;
+const _PLAN_DIAS_PADRAO = 7;
+const _PLAN_PEDIDO_DIAS = 21;          // pedido pendente mais velho que isso não conta como "a caminho"
+const _PLAN_CFG = 'planejamento_compras';   // inv_configuracoes: margem, dias e dias por produto
+// Unidade do financeiro (cmp_compras.unidade_uso) de cada unidade da Produção
+const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'Delivery P10' };
+// De onde sai o que vai para os setores (base "saída" de quem não está em ficha)
+const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P10': ['ESTOQUE DELIVERY'] };
+const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
+const _planEhCompra = p => !!p && (_PLAN_TIPOS_COMPRA.has(p.tipo) || /^(MP|MC|MU) /.test(p.categoria || ''));
+
+let _planUn = 'Centro';
+let _planD = null;                  // o que veio do banco
+let _planCfg = {};                  // { [unidade]: { margem, dias, diasProd: { pid: n } } }
+let _planParam = {};                // período trocado na tela, por unidade (não fica guardado)
+let _planPedir = {};                // { [unidade]: { pid: qtd } } trocado na linha
+let _planMarca = {};                // { [unidade]: { pid: true/false } } marcado/desmarcado à mão
+let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar' };   // ver: comprar | nao | todos
+let _planTocado = new Set();        // linha mexida nesta visita: não some da lista se deixar de faltar
+let _planCfgTimer = null;
+let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
+
+const _planPeriodoPadrao = () => ({ ini: _isoMais(hojeLocal(), -28), fim: _isoMais(hojeLocal(), -1) });
+const _planUCfg = un => (_planCfg[un] ||= {});
+const _planMargem = un => _planUCfg(un).margem ?? _PLAN_MARGEM_PADRAO;
+const _planDiasDe = (un, pid) => _planUCfg(un).diasProd?.[pid] ?? _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
+const _planFracao = un => ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(un || '').toUpperCase());
+const _planArred = (v, un) => !(v > 0) ? 0 : _planFracao(un) ? Math.ceil(v * 10 - 1e-9) / 10 : Math.ceil(v - 1e-9);
 
 async function carregarPlanejamento() {
-  setHoje('plan-data');
-  setHoje('plan-data-entrega');
-
-  if (!cForn.length) await carregarCaches();
-
-  const nomeComp   = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
-  const compEl     = document.getElementById('plan-comp');
-  const compFornEl = document.getElementById('plan-comp-forn');
-  if (compEl)     compEl.value     = nomeComp;
-  if (compFornEl) compFornEl.value = nomeComp;
-
-  await _popularSelectInvPlan();
-
-  // Carrega produtos com médias (catálogo de fallback)
-  const [{ data: prods }, { data: compras }] = await Promise.all([
-    sb.from('est_produtos')
-      .select('id,nome,tipo,categoria,unidade_uso,custo_uso,estoque_min,vendas_medias,ativo')
-      .eq('ativo', true)
-      .in('tipo', ['MP','SA','MC'])
-      .order('categoria').order('nome'),
-    sb.from('cmp_compras')
-      .select('produto,quantidade,data,fornecedor_nome,categoria,tipo_produto,unidade_med')
-      .gte('data', _planDataAtras(12)),
-  ]);
-
-  // Média semanal por produto (últimas 12 semanas)
-  const histMap = {};
-  (compras || []).forEach(c => {
-    const key = (c.produto || '').trim().toUpperCase();
-    if (!histMap[key]) histMap[key] = { qtd: 0, semanas: new Set(), forn: '', cat: '', tipo: '', un: '' };
-    const dias = Math.floor((Date.now() - new Date(c.data).getTime()) / 86400000);
-    histMap[key].semanas.add(Math.floor(dias / 7));
-    histMap[key].qtd += parseFloat(c.quantidade) || 0;
-    if (c.fornecedor_nome) histMap[key].forn = c.fornecedor_nome;
-    if (c.categoria)       histMap[key].cat  = c.categoria;
-    if (c.tipo_produto)    histMap[key].tipo = c.tipo_produto;
-    if (c.unidade_med)     histMap[key].un   = c.unidade_med;
-  });
-
-  _planProdutos = (prods || []).map(p => {
-    const h   = histMap[p.nome.trim().toUpperCase()] || {};
-    const medHist = h.semanas?.size ? Math.round((h.qtd / h.semanas.size) * 10) / 10 : 0;
-    // Usa demanda semanal salva quando disponível; cai no histórico calculado se não
-    const med = parseFloat(p.vendas_medias) > 0 ? parseFloat(p.vendas_medias) : medHist;
-    return {
-      id: p.id, nome: p.nome, tipo: p.tipo,
-      categoria: p.categoria || '', unidade: p.unidade_uso || 'UN',
-      valor: p.custo_uso || 0, plano: '',
-      estoque_min: parseFloat(p.estoque_min) || 0,
-      est_atual: 0, coz_bar: 0, outros: 0,
-      vendas_med: med,
-      forn_pad:  h.forn || '', cat_pad: h.cat || p.categoria || '',
-      tipo_pad:  h.tipo || '', un_pad:  h.un  || p.unidade_uso || 'UN',
-    };
-  });
-
-  renderPlanejamento();
-}
-
-async function _popularSelectInvPlan() {
-  const { data: invs } = await sb.from('est_inventarios')
-    .select('id,num_inv,data,local,responsavel')
-    .order('criado_em', { ascending: false })
-    .limit(30);
-  const sel = document.getElementById('inv-plan-sel');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— selecione —</option>' +
-    (invs || []).map(inv => {
-      const dataBR = (inv.data || '').split('-').reverse().join('/');
-      const num    = inv.num_inv || String(inv.id).slice(0, 8);
-      const label  = `${num} — ${inv.local} — ${dataBR}${inv.responsavel ? ' (' + inv.responsavel + ')' : ''}`;
-      return `<option value="${inv.id}">${label}</option>`;
-    }).join('');
-}
-
-async function carregarSaldoInventarioPlan() {
-  const msgEl = document.getElementById('msg-inv-plan');
-  const selId = document.getElementById('inv-plan-sel')?.value;
-  if (!selId) {
-    if (msgEl) msgEl.innerHTML = '<span class="text-warning">⚠️ Selecione uma contagem.</span>';
-    return;
-  }
-
-  const { data: itens } = await sb.from('est_inventario_itens')
-    .select('produto_id,nome,estoque,cozinha_bar,outros')
-    .eq('inventario_id', selId);
-
-  if (!itens?.length) {
-    if (msgEl) msgEl.innerHTML = '<span class="text-danger">Contagem sem itens.</span>';
-    return;
-  }
-
-  const saldoMap = {};
-  itens.forEach(it => {
-    if (it.produto_id) saldoMap[it.produto_id] = it;
-    if (it.nome) saldoMap[(it.nome || '').toLowerCase().trim()] = it;
-  });
-
-  let atualizados = 0;
-  if (_planDados.length) {
-    _planDados = _planDados.map(r => {
-      const s = saldoMap[r.produto_id] || saldoMap[(r.nome || '').toLowerCase().trim()];
-      if (!s) return r;
-      atualizados++;
-      const est = parseFloat(s.estoque) || 0, cb = parseFloat(s.cozinha_bar) || 0, out = parseFloat(s.outros) || 0;
-      return { ...r, estoque: est, cb, outros: out, total_inv: est + cb + out };
-    });
-  } else {
-    _planProdutos = _planProdutos.map(p => {
-      const s = saldoMap[p.id] || saldoMap[(p.nome || '').toLowerCase().trim()];
-      if (!s) return p;
-      atualizados++;
-      return { ...p, est_atual: parseFloat(s.estoque) || 0, coz_bar: parseFloat(s.cozinha_bar) || 0, outros: parseFloat(s.outros) || 0 };
-    });
-  }
-
-  const { data: invInfo } = await sb.from('est_inventarios').select('num_inv,data,local').eq('id', selId).single();
-  const dataBR = (invInfo?.data || '').split('-').reverse().join('/');
-  if (msgEl) msgEl.innerHTML = `<span class="text-success">✅ <strong>${invInfo?.num_inv || '—'}</strong> — ${dataBR} — <strong>${atualizados}</strong> produto(s) atualizados</span>`;
-  renderPlanejamento();
-}
-
-function handleDropPlan(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarArqPlan(f); }
-function importarPlanExcel(e) { const f = e.target.files[0]; if (f) _processarArqPlan(f); }
-
-function _processarArqPlan(file) {
-  const ext    = file.name.split('.').pop().toLowerCase();
-  const reader = new FileReader();
-  reader.onload = e => {
-    let wb;
-    if (ext === 'csv') wb = XLSX.read(e.target.result, { type: 'string' });
-    else               wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
-    _processarWbPlan(wb);
-  };
-  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
-  else               reader.readAsArrayBuffer(file);
-}
-
-function _processarWbPlan(wb) {
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: true, defval: '' });
-  const msgEl = document.getElementById('msg-imp-plan');
-  if (!rows.length) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-warning">Planilha vazia.</div>'; return; }
-
-  const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim());
-  const ci = (...ts) => { for (const t of ts) { const i = headers.findIndex(h => h.includes(t)); if (i >= 0) return i; } return -1; };
-
-  const col = {
-    nome:       ci('produto','product','nome','item','descriç'),
-    vendas:     ci('dem. semanal','dem.semanal','dem_semanal','venda','médias','media','demanda','consumo','semanal'),
-    estmin:     ci('mínimo','minimo','est. min','estoque min','est.min'),
-    estoque:    -1,
-    cb:         ci('cozinha','bar'),
-    outros:     ci('outros','other'),
-    total:      ci('total'),
-    unidade:    ci('unidade','unit','un.','und'),
-    valor:      ci('valor','preço','preco','custo','unit'),
-    plano:      ci('plano','conta'),
-    fornecedor: ci('fornecedor','supplier','forn'),
-    categoria:  ci('categoria','category','categ'),
-    tipo:       ci('tipo','destino','type'),
-  };
-  col.estoque = headers.findIndex(h => h.includes('estoque') && !h.includes('mín') && !h.includes('min'));
-
-  if (col.nome < 0) {
-    if (msgEl) msgEl.innerHTML = '<div class="alert alert-danger">Coluna "Produto" não encontrada.</div>';
-    return;
-  }
-
-  _planDados = rows.map(r => {
-    const vals = Object.values(r);
-    const nome = String(vals[col.nome] || '').trim();
-    if (!nome) return null;
-    const est = col.estoque >= 0 ? (parseFloat(vals[col.estoque]) || 0) : 0;
-    const cb  = col.cb     >= 0 ? (parseFloat(vals[col.cb])      || 0) : 0;
-    const out = col.outros >= 0 ? (parseFloat(vals[col.outros])  || 0) : 0;
-    const totCol = col.total >= 0 ? (parseFloat(vals[col.total]) || 0) : 0;
-    const total_inv = totCol > 0 ? totCol : (est + cb + out);
-    const prod = _planProdutos.find(p => p.nome.toLowerCase() === nome.toLowerCase());
-    return {
-      nome,
-      vendas_medias:  col.vendas  >= 0 ? (parseFloat(vals[col.vendas])  || 0) : (prod?.vendas_med || 0),
-      estoque_minimo: col.estmin  >= 0 ? (parseFloat(vals[col.estmin])  || 0) : (prod?.estoque_min || 0),
-      estoque: est, cb, outros: out, total_inv,
-      unidade:       col.unidade >= 0 ? String(vals[col.unidade] || '').trim() : (prod?.unidade || 'UN'),
-      valor_unitario: col.valor  >= 0 ? (parseFloat(String(vals[col.valor]).replace(/[R$\s.]/g,'').replace(',','.')) || 0) : (prod?.valor || 0),
-      plano_conta:   col.plano   >= 0 ? String(vals[col.plano]   || '').trim() : '',
-      fornecedor:    (col.fornecedor >= 0 ? String(vals[col.fornecedor] || '').trim() : '') || prod?.forn_pad || '',
-      categoria:     (col.categoria  >= 0 ? String(vals[col.categoria]  || '').trim() : '') || prod?.cat_pad  || '',
-      tipo:          (col.tipo       >= 0 ? String(vals[col.tipo]       || '').trim() : '') || prod?.tipo_pad || '',
-      produto_id:    prod?.id || null,
-    };
-  }).filter(Boolean);
-
-  document.getElementById('imp-plan-file').value = '';
-  if (msgEl) msgEl.innerHTML = `<div class="alert alert-success">✅ <strong>${_planDados.length}</strong> produto(s) importado(s). Clique em 🔄 Recalcular.</div>`;
-  setTimeout(() => { const m = document.getElementById('msg-imp-plan'); if (m) m.innerHTML = ''; }, 5000);
-  renderPlanejamento();
-}
-
-function limparDadosPlan() {
-  if (!confirm('Limpar a planilha importada? A tabela voltará a usar os dados do catálogo.')) return;
-  _planDados = [];
-  renderPlanejamento();
-}
-
-
-// ─── IMPORTAR DEMANDA SEMANAL ───────────────────────────────────
-function handleDropDem(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) _processarDemanda(f); }
-function importarDemandaSemanal(e) { const f = e.target.files[0]; if (f) _processarDemanda(f); }
-
-async function _processarDemanda(file) {
-  const msgEl = document.getElementById('msg-dem-semanal');
-  msgEl.innerHTML = '<span class="text-muted">Lendo arquivo...</span>';
-
+  const tb = document.getElementById('plan-tbody');
+  tb.innerHTML = '<tr><td colspan="13" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando o que comprar...</td></tr>';
+  document.getElementById('plan-btn-pedido').disabled = true;
   try {
-    const buf  = await file.arrayBuffer();
-    const wb   = XLSX.read(new Uint8Array(buf), { type: 'array' });
-    const ws   = wb.Sheets[wb.SheetNames[0]];
-
-    // Planilha tem 3 linhas de cabeçalho; linha 3 (índice 2) contém "Produto" e "Dem. Semanal"
-    const rows = XLSX.utils.sheet_to_json(ws, { range: 2, defval: '' });
-
-    if (!rows.length) {
-      msgEl.innerHTML = '<div class="alert alert-warning small">Planilha vazia ou formato não reconhecido.</div>';
-      return;
-    }
-
-    const allKeys = Object.keys(rows[0]);
-    const prodKey = allKeys.find(k => k.toLowerCase().includes('produto') || k.toLowerCase().includes('product'));
-    const demKey  = allKeys.find(k => k.toLowerCase().includes('dem') || k.toLowerCase().includes('semanal'));
-
-    if (!prodKey || !demKey) {
-      msgEl.innerHTML = `<div class="alert alert-danger small">Colunas "Produto" e "Dem. Semanal" não encontradas. Detectadas: ${allKeys.slice(0, 8).join(', ')}</div>`;
-      return;
-    }
-
-    const parseNum = v => {
-      if (typeof v === 'number') return v;
-      return parseFloat(String(v || '0').replace(/\./g, '').replace(',', '.')) || 0;
-    };
-
-    const linhas = rows
-      .map(r => ({ nome: String(r[prodKey] || '').trim(), dem: parseNum(r[demKey]) }))
-      .filter(r => r.nome && r.dem > 0);
-
-    if (!linhas.length) {
-      msgEl.innerHTML = '<div class="alert alert-warning small">Nenhum produto válido encontrado na planilha.</div>';
-      return;
-    }
-
-    msgEl.innerHTML = `<span class="text-muted">Carregando catálogo e atualizando ${linhas.length} produtos...</span>`;
-    await carregarProdutosFT(true);
-
-    const naoEncontrados = [];
-    const matched = linhas.map(u => {
-      const prod = cProdutosFT.find(p => p.nome.trim().toLowerCase() === u.nome.toLowerCase());
-      if (!prod) { naoEncontrados.push(u.nome); return null; }
-      return { id: prod.id, vendas_medias: u.dem };
-    }).filter(Boolean);
-
-    // Atualiza em lotes de 20 chamadas paralelas
-    const BATCH = 20;
-    let atualizados = 0;
-    for (let i = 0; i < matched.length; i += BATCH) {
-      await Promise.all(
-        matched.slice(i, i + BATCH).map(u =>
-          sb.from('est_produtos').update({ vendas_medias: u.vendas_medias }).eq('id', u.id)
-        )
-      );
-      atualizados += Math.min(BATCH, matched.length - i);
-    }
-
-    document.getElementById('imp-dem-file').value = '';
-
-    let html = `<div class="alert alert-success small">✅ <strong>${atualizados}</strong> produto(s) atualizados com a Demanda Semanal.`;
-    if (naoEncontrados.length) {
-      html += ` <strong>${naoEncontrados.length}</strong> não encontrado(s) no cadastro: ${naoEncontrados.slice(0, 5).map(n => `<em>${n}</em>`).join(', ')}${naoEncontrados.length > 5 ? '...' : ''}.`;
-    }
-    html += '</div>';
-    msgEl.innerHTML = html;
-
-    // Recarrega o planejamento com os novos valores
-    await carregarPlanejamento();
-
-  } catch (err) {
-    msgEl.innerHTML = `<div class="alert alert-danger small">Erro ao processar arquivo: ${err.message}</div>`;
+    _planD = await _planCarregar();
+  } catch (e) {
+    console.error(e);
+    _planD = null;
+    const dica = /prod_venda_item_dia/.test(e.message) ? ' Se for a primeira vez, rode o SQL_PLANEJAMENTO_COMPRAS.sql e o robô "Venda de SA por dia" com dias = 40.' : '';
+    tb.innerHTML = `<tr><td colspan="13" class="text-center text-danger py-4">Não consegui montar o planejamento (${esc(e.message)}).${dica}</td></tr>`;
+    return;
   }
+  if (!_planD.unidades.some(u => u.unidade === _planUn)) _planUn = _planD.unidades[0].unidade;
+  _pintarPlan();
 }
 
-
-function _planDataAtras(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n * 7);
-  return d.toISOString().split('T')[0];
+async function _planCarregar() {
+  await Promise.all([carregarProdutosFT(), carregarCaches()]);
+  const [unidades, cfgRow] = await Promise.all([
+    _metaSelect('prod_unidades', '*', q => q.order('ordem')),
+    sb.from('inv_configuracoes').select('valor').eq('chave', _PLAN_CFG).maybeSingle(),
+  ]);
+  if (!unidades.length) throw new Error('prod_unidades está vazia');
+  _planCfg = cfgRow?.data?.valor || {};
+  const param = {};
+  unidades.forEach(u => { param[u.unidade] = { ..._planPeriodoPadrao(), ..._planParam[u.unidade] }; });
+  const vIni = Object.values(param).map(x => x.ini).sort()[0];
+  const vFim = Object.values(param).map(x => x.fim).sort().pop();
+  const hoje = hojeLocal();
+  const locaisSaida = [...new Set(Object.values(_PLAN_LOCAIS_SAIDA).flat())];
+  const [vendas, saldos, fichas, ings, saidas, compras] = await Promise.all([
+    _metaSelect('prod_venda_item_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
+    _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
+    _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
+    _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
+    _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data',
+      q => q.eq('tipo', 'pedido_interno_saida').in('local', locaisSaida).gte('data', vIni).lt('data', _isoMais(vFim, 1))),
+    _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
+      q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
+  ]);
+  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje };
 }
 
-function renderPlanejamento() {
-  const soRepor = document.getElementById('plan-so-repor')?.checked;
-
-  // Monta linhas da fonte ativa
-  let linhas;
-  if (_planDados.length) {
-    linhas = _planDados.map((r, i) => {
-      const comprar  = Math.round(Math.max(0, r.vendas_medias + Math.abs(r.estoque_minimo || 0) - r.total_inv));
-      const totalEst = comprar * (r.valor_unitario || 0);
-      return { key: `imp_${i}`, nome: r.nome, forn: r.fornecedor, cat: r.categoria, tipo: r.tipo,
-               vendas: r.vendas_medias, estMin: Math.round(Math.abs(r.estoque_minimo || 0)),
-               estoque: r.estoque, cb: r.cb, outros: r.outros, total_inv: r.total_inv,
-               un: r.unidade, valor: r.valor_unitario, plano: r.plano_conta,
-               comprar, totalEst };
+// Tudo o que não depende de margem/dias, por unidade. Fica guardado em _planD.base.
+function _planBase(un) {
+  const D = _planD;
+  if ((D.base ||= {})[un]) return D.base[un];
+  const u = D.unidades.find(x => x.unidade === un);
+  const p = D.param[un];
+  // ── consumo pela ficha ──
+  const fichaDe = {}, ingsDe = {};
+  D.fichas.forEach(f => { fichaDe[f.produto_id] = { id: f.id, rend: Number(f.rendimento) || 1 }; });
+  D.ings.forEach(i => (ingsDe[i.ficha_id] ||= []).push([i.ingrediente_id, Number(i.quantidade) || 0]));
+  Object.entries(_META_ACOMP_ESCOLHIDO).forEach(([prato, tirar]) => {   // batata escolhida no PDV: igual à meta
+    const f = fichaDe[prato];
+    if (f) ingsDe[f.id] = (ingsDe[f.id] || []).filter(([ing]) => !tirar.includes(ing));
+  });
+  const memo = {};
+  const folhas = (pid, stack) => {
+    if (memo[pid]) return memo[pid];
+    const f = fichaDe[pid];
+    if (!f || _PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo) || stack.has(pid)) return (memo[pid] = { [pid]: 1 });
+    stack.add(pid);
+    const out = {};
+    (ingsDe[f.id] || []).forEach(([ing, q]) => {
+      const fator = (q || 0) / (f.rend || 1);
+      if (!ing || !(fator > 0)) return;
+      Object.entries(folhas(ing, stack)).forEach(([fo, fq]) => { out[fo] = (out[fo] || 0) + fq * fator; });
     });
-  } else {
-    if (!_planProdutos.length) {
-      document.getElementById('lst-planejamento').innerHTML =
-        '<tr><td colspan="16" class="text-center text-muted py-4">Cadastre produtos ou importe uma planilha.</td></tr>';
-      _planKpis([]);
-      return;
-    }
-    linhas = _planProdutos.map(p => {
-      const total_inv = p.est_atual + p.coz_bar + p.outros;
-      const comprar   = Math.round(Math.max(0, p.vendas_med + p.estoque_min - total_inv));
-      const totalEst  = comprar * (p.valor || 0);
-      return { key: p.id, nome: p.nome, forn: p.forn_pad, cat: p.cat_pad, tipo: p.tipo_pad,
-               vendas: p.vendas_med, estMin: p.estoque_min,
-               estoque: p.est_atual, cb: p.coz_bar, outros: p.outros, total_inv,
-               un: p.unidade, valor: p.valor, plano: p.plano || '',
-               comprar, totalEst };
-    });
-  }
-
-  const filtradas = soRepor ? linhas.filter(l => l.comprar > 0) : linhas;
-  const fmt = v => v % 1 === 0 ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
-
-  const buildOpts = (lista, cur, ph) => {
-    const opts = ['', ...lista.map(x => typeof x === 'string' ? x : x.nome)];
-    if (cur && !opts.includes(cur)) opts.push(cur);
-    return opts.map(v => `<option value="${v}"${v === cur ? ' selected' : ''}>${v || ph}</option>`).join('');
+    stack.delete(pid);
+    return (memo[pid] = out);
   };
-
-  document.getElementById('lst-planejamento').innerHTML = filtradas.map(l => {
-    const cor    = l.comprar > 0 ? '#E71D36' : '#2EC4B6';
-    const status = l.comprar > 0 ? '🚨 Repor' : '✅ OK';
-    const bg     = l.comprar > 0 ? 'background:#fff5f5' : '';
-    return `<tr style="${bg}">
-      <td><strong>${esc(l.nome)}</strong></td>
-      <td><select class="form-select form-select-sm" id="plan-forn-${l.key}" style="min-width:130px" onchange="sincFiltroFornPlan()">${buildOpts(cForn, l.forn, '— Fornecedor —')}</select></td>
-      <td><select class="form-select form-select-sm" id="plan-cat-${l.key}"  style="min-width:120px">${buildOpts(cCat, l.cat, '— Categoria —')}</select></td>
-      <td><select class="form-select form-select-sm" id="plan-tipo-${l.key}" style="min-width:110px">${buildOpts(cTipo, l.tipo, '— Tipo/Destino —')}</select></td>
-      <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center" id="plan-vend-${l.key}"
-          min="0" step="0.001" value="${l.vendas}" style="width:80px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
-      </td>
-      <td class="text-center text-muted">${l.estMin}</td>
-      <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center" id="plan-est-${l.key}"
-          min="0" step="0.001" value="${l.estoque}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
-      </td>
-      <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center" id="plan-cb-${l.key}"
-          min="0" step="0.001" value="${l.cb}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
-      </td>
-      <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center" id="plan-out-${l.key}"
-          min="0" step="0.001" value="${l.outros}" style="width:75px;margin:auto" oninput="recalcLinhaPlan('${l.key}')">
-      </td>
-      <td class="text-center fw-semibold" id="plan-tinv-${l.key}">${fmt(l.total_inv)}</td>
-      <td class="text-center"><small>${esc(l.un)}</small></td>
-      <td class="text-center fw-bold fs-6" id="plan-comprar-${l.key}" style="color:${cor}">${fmt(l.comprar)}</td>
-      <td class="text-center text-muted small">${l.valor ? brl(l.valor) : '—'}</td>
-      <td><small class="text-muted">${esc(l.plano || '—')}</small></td>
-      <td class="text-center fw-bold" id="plan-total-${l.key}" style="color:#06D6A0">${l.totalEst > 0 ? brl(l.totalEst) : '—'}</td>
-      <td class="text-center"><span class="badge" style="background:${cor}">${status}</span></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="16" class="text-center text-muted py-3">Nenhum item.</td></tr>';
-
-  document.getElementById('lst-planejamento').dataset.keys = JSON.stringify(filtradas.map(l => l.key));
-
-  // Popula filtro de fornecedor — usa cadastro completo (cForn)
-  const filtFornEl = document.getElementById('plan-filtro-forn');
-  const curFilt    = filtFornEl?.value || '';
-  if (filtFornEl) {
-    filtFornEl.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
-      cForn.map(f => `<option value="${esc(f.nome)}"${f.nome === curFilt ? ' selected' : ''}>${esc(f.nome)}</option>`).join('');
-  }
-
-  _planKpis(linhas);
-  _planAtualizarTotal();
+  // Semanas do período (de 7 em 7 a partir do início), para a quebra que a planilha mostra
+  const nCal = Math.round((new Date(p.fim + 'T12:00:00') - new Date(p.ini + 'T12:00:00')) / 864e5) + 1;
+  const semanas = [];
+  for (let d = p.ini; d <= p.fim; d = _isoMais(d, 7)) { const f = _isoMais(d, 6); semanas.push({ ini: d, fim: f > p.fim ? p.fim : f }); }
+  const semDe = d => Math.floor((new Date(d + 'T12:00:00') - new Date(p.ini + 'T12:00:00')) / 864e5 / 7);
+  const consumo = {}, consumoSem = {}, dias = new Set();
+  D.vendas.forEach(v => {
+    if (v.unidade !== un || v.data < p.ini || v.data > p.fim) return;
+    dias.add(v.data);
+    const w = semDe(v.data);
+    Object.entries(folhas(v.produto_id, new Set())).forEach(([fo, fq]) => {
+      const q = fq * (Number(v.quantidade) || 0);
+      consumo[fo] = (consumo[fo] || 0) + q;
+      (consumoSem[fo] ||= semanas.map(() => 0))[w] += q;
+    });
+  });
+  const nDias = dias.size;
+  // ── saída do estoque para os setores (quem nenhuma ficha usa) ──
+  const saida = {}, saidaSem = {};
+  const locSaida = _PLAN_LOCAIS_SAIDA[un] || [];
+  D.saidas.forEach(m => {
+    const d = String(m.data || '').slice(0, 10);
+    if (!locSaida.includes(m.local) || d < p.ini || d > p.fim) return;
+    saida[m.produto_id] = (saida[m.produto_id] || 0) - (Number(m.quantidade) || 0);
+    (saidaSem[m.produto_id] ||= semanas.map(() => 0))[semDe(d)] -= Number(m.quantidade) || 0;
+  });
+  // ── tem agora: tudo da unidade, mesma regra da meta (_metaCarregar) ──
+  const configurados = new Set(D.unidades.flatMap(x => [...(x.locais_tem || []), x.local_mp, x.local_producao, x.local_destino]));
+  const pref = un === 'Delivery P10' ? 'P10_' : '';
+  const tem = {}, temDet = {};
+  D.saldos.forEach(s => {
+    const l = s.local;
+    const daUni = (u.locais_tem || []).includes(l) || (!configurados.has(l) && (pref ? l.startsWith(pref) : !l.startsWith('P10_')));
+    const q = Number(s.saldo) || 0;
+    if (!daUni || !(q > 0)) return;
+    tem[s.produto_id] = (tem[s.produto_id] || 0) + q;
+    (temDet[s.produto_id] ||= []).push([l, q]);
+  });
+  // ── compras: já pedido, último fornecedor/preço/categoria ──
+  const C = _planCompras(D.compras, un, D.hoje, p);
+  const { pedido, pedidoDet, comprado } = C;
+  // ── linhas ──
+  const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
+  Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
+  const linhas = [...ids].map(pid => {
+    const pr = prodFT(pid);
+    if (!pr || pr.ativo === false) return null;
+    const perda = Math.min(Number(pr.perda) || 0, 90) / 100;
+    const ficha = consumo[pid] || 0;
+    const sai = Math.max(0, saida[pid] || 0);
+    const base = ficha > 0 ? 'ficha' : sai > 0 ? 'saida' : null;
+    // Vendido = o que a venda consumiu no período (sem a perda); a perda entra no Precisa
+    const vendido = base === 'ficha' ? ficha : base === 'saida' ? sai : 0;
+    const vendSem = base === 'ficha' ? consumoSem[pid] : base === 'saida' ? saidaSem[pid] : null;
+    const diasBase = base === 'ficha' ? nDias : nCal;
+    const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
+    return {
+      ..._planCompraDe(pid, C), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
+      comprado: comprado[pid] || 0, tem: tem[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
+    };
+  }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
+  return (D.base[un] = { linhas, nDias, nCal, p, semanas });
 }
 
-function recalcLinhaPlan(key) {
-  const vendas  = parseFloat(document.getElementById(`plan-vend-${key}`)?.value) || 0;
-  const estoque = parseFloat(document.getElementById(`plan-est-${key}`)?.value)  || 0;
-  const cb      = parseFloat(document.getElementById(`plan-cb-${key}`)?.value)   || 0;
-  const outros  = parseFloat(document.getElementById(`plan-out-${key}`)?.value)  || 0;
-  const total_inv = estoque + cb + outros;
-  const tInvEl  = document.getElementById(`plan-tinv-${key}`);
-  const fmt     = v => v % 1 === 0 ? String(v) : v.toFixed(3).replace(/\.?0+$/, '');
-  if (tInvEl) tInvEl.textContent = fmt(total_inv);
-
-  // Descobre estMin e valor
-  let estMin = 0, valor = 0;
-  if (key.startsWith('imp_')) {
-    const idx = parseInt(key.replace('imp_', ''));
-    const r = _planDados[idx];
-    if (r) {
-      estMin = Math.round(Math.abs(r.estoque_minimo || 0));
-      valor  = r.valor_unitario || 0;
-      r.vendas_medias = vendas; r.estoque = estoque; r.cb = cb; r.outros = outros; r.total_inv = total_inv;
+// Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
+// (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço e a categoria de compra.
+// Usado pelo Planejamento e pelo "MP para comprar" da Meta de Produção.
+function _planCompras(compras, un, hoje, p) {
+  const fin = _PLAN_UNI_FIN[un];
+  const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
+  const pedido = {}, pedidoDet = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
+  [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
+    const pid = c.produto_id;
+    const minha = c.unidade_uso === fin;
+    if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
+      const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
+      pedido[pid] = (pedido[pid] || 0) + q;
+      (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})`);
     }
+    if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
+      comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
+    if (minha && !ultimo[pid]) ultimo[pid] = c;
+    if (!ultimoOutra[pid]) ultimoOutra[pid] = c;
+    const cn = prodFT(pid)?.categoria;
+    if (cn && c.categoria) { const v = (catVotos[cn] ||= {}); v[c.categoria] = (v[c.categoria] || 0) + 1; }
+  });
+  const catDaCategoria = {};
+  Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
+  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado };
+}
+
+// O que a tela de Pedido de Compra precisa de um produto: embalagem, custo, fornecedor, categoria
+function _planCompraDe(pid, C) {
+  const pr = prodFT(pid) || {};
+  const ult = C.ultimo[pid] || C.ultimoOutra[pid] || null;
+  const fator = Number(pr.fator_conversao) || 1;
+  const custo = Number(pr.custo_comp) > 0 ? Number(pr.custo_comp)
+    : Number(ult?.custo_unit) > 0 ? Number(ult.custo_unit) : (Number(pr.custo_uso) || 0) * fator;
+  return {
+    pid, nome: pr.nome || pid, unComp: pr.unidade_comp || pr.unidade_uso || 'UN', fator, custo,
+    forn: ult?.fornecedor_nome || '', fornId: ult?.fornecedor_id || null,
+    catCompra: ult?.categoria || C.catDaCategoria[pr.categoria] || '', setor: C.ultimo[pid]?.setor || '',
+  };
+}
+
+// Margem, dias e o que foi trocado na linha
+function _planConta(un, l) {
+  const dias = _planDiasDe(un, l.pid);
+  const precisa = l.consDia * dias * (1 + _planMargem(un));
+  const falta = Math.max(0, precisa - l.tem - l.pedido);
+  const auto = _planArred(falta / l.fator, l.unComp);
+  const troca = _planPedir[un]?.[l.pid];
+  const pedir = troca ?? auto;
+  const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
+  return { dias, precisa, falta, auto, pedir, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio: _planUCfg(un).diasProd?.[l.pid] !== undefined };
+}
+
+function _planVisiveis(un) {
+  const B = _planBase(un);
+  const f = _planFiltros;
+  const q = norm(f.busca || '').trim();
+  return B.linhas.map(l => ({ l, c: _planConta(un, l) })).filter(({ l, c }) =>
+    (!f.cat || l.cat === f.cat) && (!f.forn || (l.forn || '—') === f.forn) &&
+    (!q || norm(l.nome).includes(q)) &&
+    (f.ver === 'todos' || (f.ver === 'nao' ? !(c.auto > 0) : (c.auto > 0 || c.marcado || _planTocado.has(l.pid)))));
+}
+
+function _pintarPlan() {
+  const D = _planD;
+  if (!D) return;
+  const un = _planUn;
+  const u = D.unidades.find(x => x.unidade === un);
+  const B = _planBase(un);
+  const p = B.p;
+  // abas das unidades
+  document.getElementById('plan-unis').innerHTML = D.unidades.map(x => {
+    const n = _planBase(x.unidade).linhas.filter(l => _planConta(x.unidade, l).auto > 0).length;
+    return `<button type="button" class="meta-uni meta-uni-${x.ordem}${x.unidade === un ? ' ativo' : ''}" onclick="planTrocarUnidade('${esc(x.unidade)}')">
+      <span class="meta-uni-nome">${esc(x.rotulo)}</span><span class="meta-uni-sub">${n} para comprar</span></button>`;
+  }).join('');
+  const eb = document.getElementById('plan-eyebrow');
+  eb.textContent = `Planejamento de Compras · ${u.rotulo}`;
+  eb.style.color = u.ordem === 2 ? '#8a4513' : '';
+  const margem = Math.round(_planMargem(un) * 100);
+  const diasP = _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
+  document.getElementById('plan-base').textContent =
+    `Vendido = o que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias) consumiu, aberta pela ficha até a MP. ` +
+    `Precisa = vendido ÷ ${B.nDias} dias × dias a cobrir × (1 + ${margem}%) — com período de 7 dias e cobrir 7, é a conta da planilha (venda × 1,25). ` +
+    `Falta = precisa − o que a unidade tem agora − o que já foi pedido e não chegou. Pedir = falta na embalagem de compra.`;
+  document.getElementById('plan-th-vend').textContent = `Vendido ${_ddmm(p.ini)}–${_ddmm(p.fim)}`;
+  document.getElementById('plan-vini').value = p.ini;
+  document.getElementById('plan-vfim').value = p.fim;
+  document.getElementById('plan-ndias').textContent = `(${B.nDias} de ${B.nCal} dias com venda gravada)`;
+  document.getElementById('plan-margem').value = margem;
+  document.getElementById('plan-margem-lbl').textContent = margem;
+  document.getElementById('plan-dias').value = diasP;
+  const padrao = _planPeriodoPadrao();
+  const ehPadrao = p.ini === padrao.ini && p.fim === padrao.fim && margem === 25 && diasP === _PLAN_DIAS_PADRAO;
+  document.getElementById('plan-param-padrao').classList.toggle('d-none', ehPadrao);
+  // avisos
+  const av = [];
+  if (!B.nDias) av.push(`<div class="alert alert-danger py-2 small">Não tem venda gravada de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} para ${esc(u.rotulo)}. O robô "Venda de SA por dia" precisa rodar (no GitHub, Run workflow com dias = 40).</div>`);
+  else if (B.nDias < B.nCal - 1) av.push(`<div class="alert alert-warning py-2 small">O robô gravou a venda de ${B.nDias} dos ${B.nCal} dias do período. A média usa só os dias gravados.</div>`);
+  document.getElementById('plan-avisos').innerHTML = av.join('');
+  // filtros
+  const todas = B.linhas.map(l => ({ l, c: _planConta(un, l) }));
+  const cats = {};
+  todas.forEach(({ l, c }) => { const k = (cats[l.cat] ||= { n: 0, f: 0 }); k.n++; if (c.auto > 0) k.f++; });
+  const fCat = document.getElementById('plan-f-cat');
+  if (_planFiltros.cat && !cats[_planFiltros.cat]) _planFiltros.cat = '';
+  fCat.innerHTML = `<option value="">Todas as categorias</option>` + Object.keys(cats).sort().map(k =>
+    `<option value="${esc(k)}"${k === _planFiltros.cat ? ' selected' : ''}>${esc(k)}${cats[k].f ? ` · ${cats[k].f} a comprar` : ''}</option>`).join('');
+  const forns = {};
+  todas.forEach(({ l, c }) => { if (!_planFiltros.cat || l.cat === _planFiltros.cat) { const k = l.forn || '—'; forns[k] = (forns[k] || 0) + (c.auto > 0 ? 1 : 0); } });
+  if (_planFiltros.forn && forns[_planFiltros.forn] === undefined) _planFiltros.forn = '';
+  document.getElementById('plan-f-forn').innerHTML = `<option value="">Todos os fornecedores</option>` +
+    Object.keys(forns).sort((a, b) => (a === '—') - (b === '—') || a.localeCompare(b)).map(k =>
+      `<option value="${esc(k)}"${k === _planFiltros.forn ? ' selected' : ''}>${k === '—' ? 'Sem compra nos últimos 6 meses' : esc(k)}${forns[k] ? ` · ${forns[k]}` : ''}</option>`).join('');
+  // O que mostrar: o que precisa comprar, o que não precisa (para avaliar) ou tudo
+  const naCat = todas.filter(({ l }) => (!_planFiltros.cat || l.cat === _planFiltros.cat) && (!_planFiltros.forn || (l.forn || '—') === _planFiltros.forn));
+  const nC = naCat.filter(({ c }) => c.auto > 0).length;
+  document.getElementById('plan-f-ver').innerHTML = [['comprar', 'Precisa comprar', nC], ['nao', 'Não precisa', naCat.length - nC], ['todos', 'Todos', naCat.length]]
+    .map(([k, rot, n]) => `<button type="button" class="btn btn-outline-secondary${_planFiltros.ver === k ? ' active' : ''}" onclick="planFiltro('ver','${k}')">${rot} <span class="badge text-bg-light">${n}</span></button>`).join('');
+  _pintarPlanTabela();
+}
+
+function _pintarPlanTabela() {
+  const un = _planUn;
+  const vis = _planVisiveis(un);
+  const todas = _planBase(un).linhas.map(l => _planConta(un, l));
+  const marc = vis.filter(x => x.c.marcado);
+  const kpi = (rot, val, cor, sub) => `<div class="col-md-3 col-6"><div class="card-kpi"${cor ? ` style="border-color:${cor}"` : ''}>
+    <div class="kpi-label">${rot}</div><div class="kpi-val"${cor ? ` style="color:${cor}"` : ''}>${val}</div>${sub ? `<div class="small text-muted">${sub}</div>` : ''}</div></div>`;
+  document.getElementById('plan-kpis').innerHTML =
+    kpi('Produtos na lista', vis.length, '', `de ${todas.length} da unidade`) +
+    kpi('Precisam comprar', todas.filter(c => c.auto > 0).length, '#b42318', 'na unidade toda') +
+    kpi('Marcados para o pedido', marc.length, '#0e6b68', 'dos que estão na lista') +
+    kpi('Valor marcado', brl(marc.reduce((s, x) => s + x.c.total, 0)), '#0e6b68', 'pelo último custo');
+  const btn = document.getElementById('plan-btn-pedido');
+  btn.disabled = !marc.length;
+  btn.innerHTML = `<i class="bi bi-cart-plus"></i> Gerar pedido${marc.length ? ` com ${marc.length} ${marc.length === 1 ? 'item' : 'itens'}` : ''}`;
+  const mt = document.getElementById('plan-marcar-todos');
+  mt.checked = vis.length > 0 && vis.every(x => x.c.marcado || !(x.c.pedir > 0));
+  mt.indeterminate = marc.length > 0 && !mt.checked;
+  const tb = document.getElementById('plan-tbody');
+  if (!vis.length) {
+    tb.innerHTML = `<tr><td colspan="13" class="text-center text-muted py-4">${_planFiltros.ver === 'comprar' ? 'Nada para comprar com estes filtros. Clique em "Não precisa" para ver o resto.' : 'Nenhum produto com estes filtros.'}</td></tr>`;
   } else {
-    const p = _planProdutos.find(x => x.id === key);
-    if (p) {
-      estMin = p.estoque_min; valor = p.valor || 0;
-      p.est_atual = estoque; p.coz_bar = cb; p.outros = outros; p.vendas_med = vendas;
-    }
+    const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
+    const sems = _planBase(un).semanas;
+    const vendTit = l => (l.base === 'saida' ? 'Saída para os setores' : 'Vendido (pela ficha)') + ' por semana:\n' +
+      sems.map((w, i) => `${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(l.vendSem?.[i] || 0)} ${l.un}`).join('\n') +
+      (l.perda > 0 ? `\nPerda do cadastro: ${Math.round(l.perda * 100)}% (entra no Precisa)` : '');
+    const grupos = {};
+    vis.forEach(x => (grupos[x.l.cat] ||= []).push(x));
+    tb.innerHTML = Object.entries(grupos).map(([cat, arr]) => {
+      const mk = arr.filter(x => x.c.marcado);
+      const cab = `<tr class="plan-grupo"><td colspan="13">${esc(cat)}<span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}</span></td></tr>`;
+      return cab + arr.map(({ l, c }) => {
+        const unx = `<span class="plan-un">${esc(l.un)}</span>`;
+        const baseTag = l.base === 'saida' ? '<span class="plan-base plan-base-saida" title="Nenhuma ficha usa este produto: o consumo é a saída do estoque para os setores no período">saída</span>'
+          : !l.base && l.comprado > 0 ? `<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} de ${_ddmm(_planBase(un).p.ini)} a ${_ddmm(_planBase(un).p.fim)}, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`
+          : !l.base ? '<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>' : '';
+        const dura = l.consDia > 0 ? (l.tem + l.pedido) / l.consDia : null;
+        // Compra numa unidade e usa noutra com conversão 1: a quantidade a pedir sai errada
+        const embTag = l.fator === 1 && norm(l.unComp) !== norm(l.un)
+          ? `<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>` : '';
+        const temTit = l.temDet.length ? l.temDet.map(([loc, q]) => `${_rotuloSemIcone(loc)}: ${n1(q)}`).join('\n') : 'Nada em estoque nesta unidade';
+        const pedTit = l.pedidoDet.length ? 'Pedidos não recebidos: ' + l.pedidoDet.join(', ') : '';
+        const emb = l.fator !== 1 ? `<div class="plan-un text-center">${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}</div>` : `<div class="plan-un text-center">${esc(l.unComp)}</div>`;
+        const mudou = _planPedir[un]?.[l.pid] !== undefined;
+        return `<tr class="${c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok'}">
+          <td class="text-center"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
+          <td><strong>${esc(l.nome)}</strong>${baseTag}${embTag}</td>
+          <td class="text-end">${l.vendido > 0 ? `<span class="plan-dica" title="${esc(vendTit(l))}">${n1(l.vendido)}</span>${unx}` : '—'}</td>
+          <td class="text-center"><input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}"
+               title="${c.proprio ? 'Dias só deste produto (fica guardado). Apague para voltar ao padrão.' : 'Dias de cobertura. Trocar aqui vale só para este produto e fica guardado.'}" onchange="planDiasProd('${l.pid}', this.value)"></td>
+          <td class="text-end">${c.precisa > 0 ? n1(c.precisa) + unx : '—'}</td>
+          <td class="text-end"><span class="plan-dica" title="${esc(temTit)}">${n1(l.tem)}</span>${unx}</td>
+          <td class="text-end">${l.pedido > 0 ? `<span class="plan-dica" title="${esc(pedTit)}">${n1(l.pedido)}</span>${unx}` : '—'}</td>
+          <td class="text-end">${dura === null ? '—' : `<span class="${dura < c.dias ? 'plan-falta' : dura > 60 ? 'plan-muito' : ''}">${dura >= 999 ? '999+' : Math.floor(dura)} d</span>`}</td>
+          <td class="text-end">${c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)}</span>${unx}` : '<span class="text-success">ok</span>'}</td>
+          <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
+               title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)">${emb}</div></td>
+          <td class="text-end">${l.custo > 0 ? brl(l.custo) : '—'}</td>
+          <td class="text-end fw-semibold">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '—'}</td>
+          <td class="small">${esc(l.forn || '—')}</td>
+        </tr>`;
+      }).join('');
+    }).join('');
   }
-
-  const comprar = Math.round(Math.max(0, vendas + estMin - total_inv));
-  const cor = comprar > 0 ? '#E71D36' : '#2EC4B6';
-  const compEl = document.getElementById(`plan-comprar-${key}`);
-  const totEl  = document.getElementById(`plan-total-${key}`);
-  if (compEl) { compEl.textContent = fmt(comprar); compEl.style.color = cor; }
-  if (totEl)  totEl.textContent = comprar > 0 ? brl(comprar * valor) : '—';
-  _planAtualizarTotal();
+  document.getElementById('plan-nota').textContent =
+    'Passe o mouse em "Tem agora" para ver onde está o estoque e em "Já pedido" para ver os pedidos. ' +
+    '"Dura" = quantos dias o estoque mais o já pedido aguenta no consumo atual; acima de 60 dias fica em destaque (estoque alto ou consumo da ficha baixo). ' +
+    '"comprado sem consumo" = entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores. ' +
+    '"saída" = produto que nenhuma ficha usa (limpeza, descartável...): o consumo é o que saiu do estoque para os setores. ' +
+    'Os dias trocados num produto ficam guardados para a próxima vez; margem e dias de cobertura também.';
 }
 
-function _planAtualizarTotal() {
-  let total = 0;
-  document.querySelectorAll('[id^="plan-total-"]').forEach(el => {
-    const v = (el.textContent || '').replace(/[R$\s.]/g,'').replace(',','.');
-    total += parseFloat(v) || 0;
+function planTrocarUnidade(un) { _planUn = un; _planFiltros.cat = ''; _planFiltros.forn = ''; _planTocado.clear(); _pintarPlan(); }
+function planFiltro(k, v) { _planFiltros[k] = v; if (k === 'cat') _planFiltros.forn = ''; k === 'busca' ? _pintarPlanTabela() : _pintarPlan(); }
+function planMarcar(pid, v) { _planTocado.add(pid); (_planMarca[_planUn] ||= {})[pid] = v; _pintarPlanTabela(); }
+function planMarcarTodos(v) {
+  const m = (_planMarca[_planUn] ||= {});
+  _planVisiveis(_planUn).forEach(({ l, c }) => { if (c.pedir > 0) m[l.pid] = v; });
+  _pintarPlanTabela();
+}
+function planPedirProd(pid, v) {
+  _planTocado.add(pid);
+  const m = (_planPedir[_planUn] ||= {});
+  if (v === '' || v === null) delete m[pid];
+  else m[pid] = Math.max(0, parseFloat(String(v).replace(',', '.')) || 0);
+  if (m[pid] > 0) (_planMarca[_planUn] ||= {})[pid] = true;
+  _pintarPlan();
+}
+function planDiasProd(pid, v) {
+  _planTocado.add(pid);
+  const c = _planUCfg(_planUn);
+  const n = parseInt(v, 10);
+  c.diasProd ||= {};
+  if (!(n > 0) || n === (c.dias ?? _PLAN_DIAS_PADRAO)) delete c.diasProd[pid];
+  else c.diasProd[pid] = Math.min(n, 60);
+  delete (_planPedir[_planUn] || {})[pid];
+  _planSalvarCfg();
+  _pintarPlan();
+}
+function planDiasPadrao(v) {
+  const n = parseInt(v, 10);
+  if (!(n > 0)) { _pintarPlan(); return; }
+  _planUCfg(_planUn).dias = Math.min(n, 60);
+  _planPedir[_planUn] = {};
+  _planSalvarCfg();
+  _pintarPlan();
+}
+function planMargem(v) {
+  const n = parseFloat(v);
+  if (!(n >= 0)) { _pintarPlan(); return; }
+  _planUCfg(_planUn).margem = Math.min(n, 200) / 100;
+  _planPedir[_planUn] = {};
+  _planSalvarCfg();
+  _pintarPlan();
+}
+function planPeriodo() {
+  const ini = document.getElementById('plan-vini').value, fim = document.getElementById('plan-vfim').value;
+  if (!ini || !fim || ini > fim) { toast('Período inválido.', 'erro'); return; }
+  _planParam[_planUn] = { ini, fim };
+  _planPedir[_planUn] = {};
+  carregarPlanejamento();
+}
+function planPeriodoRapido(n) {
+  _planParam[_planUn] = { ini: _isoMais(hojeLocal(), -n), fim: _isoMais(hojeLocal(), -1) };
+  _planPedir[_planUn] = {};
+  carregarPlanejamento();
+}
+function planParamPadrao() {
+  delete _planParam[_planUn];
+  const c = _planUCfg(_planUn);
+  delete c.margem; delete c.dias;
+  _planPedir[_planUn] = {};
+  _planSalvarCfg();
+  carregarPlanejamento();
+}
+// Margem e dias ficam no banco para a próxima vez (e para quem mais abrir a tela)
+function _planSalvarCfg() {
+  clearTimeout(_planCfgTimer);
+  _planCfgTimer = setTimeout(async () => {
+    const { error } = await sb.from('inv_configuracoes').upsert({ chave: _PLAN_CFG, valor: _planCfg }, { onConflict: 'chave' });
+    if (error) toast('Não consegui guardar os dias/margem: ' + error.message, 'erro');
+  }, 600);
+}
+
+// Leva os marcados para a tela de Pedido de Compra (que segue igual: fornecedor,
+// pagamento, entrega e Finalizar ficam lá).
+async function planGerarPedido() {
+  const marc = _planVisiveis(_planUn).filter(x => x.c.marcado).map(({ l, c }) => ({ l, qtd: c.pedir }));
+  return _levarAoPedidoCompra(marc, _planUn, 'Planejamento');
+}
+
+// marc = [{ l: _planCompraDe(...), qtd na unidade de compra }]. false = não foi (aviso já dado)
+function _levarAoPedidoCompra(marc, un, origem) {
+  if (!marc.length) { toast('Marque pelo menos um produto.', 'erro'); return false; }
+  if (_pedidoEditando) { toast(`Termine ou cancele a edição do pedido ${_pedidoEditando} antes.`, 'erro'); return false; }
+  const semCat = marc.filter(x => !x.l.catCompra);
+  if (semCat.length) {
+    toast(`Sem categoria de compra (nunca comprado): ${semCat.map(x => x.l.nome).slice(0, 4).join(', ')}${semCat.length > 4 ? '...' : ''}. Desmarque e lance à mão na tela de pedido.`, 'erro');
+    return false;
+  }
+  const voto = (arr, f) => { const v = {}; arr.forEach(x => { const k = f(x); if (k) v[k] = (v[k] || 0) + 1; }); return Object.keys(v).sort((a, b) => v[b] - v[a]); };
+  const forns = voto(marc, x => x.l.forn);
+  if (forns.length > 1 && !confirm(`Os itens marcados foram comprados por último de ${forns.length} fornecedores (${forns.slice(0, 4).join(', ')}${forns.length > 4 ? '...' : ''}).\n\nO pedido de compra é de um fornecedor só: ${forns[0]}. Dá para trocar na tela do pedido.\n\nDica: ${origem === 'Planejamento' ? 'filtre por fornecedor' : 'desmarque os de outro fornecedor'} para fazer um pedido para cada um.\n\nContinuar?`)) return false;
+  if (_pedidoItens.length && !confirm(`Já tem um pedido em montagem com ${_pedidoItens.length} item(ns). Trocar por estes ${marc.length}?`)) return false;
+  const fornNome = forns[0] || '';
+  const fornId = marc.find(x => x.l.forn === fornNome)?.l.fornId || cForn.find(f => norm(f.nome) === norm(fornNome))?.id || null;
+  const uni = cUnidades.find(x => norm(x.nome) === norm(_PLAN_UNI_FIN[un] || ''));
+  const setor = un === 'Delivery P10' ? 'Estoque Delivery' : (voto(marc, x => _localPedidoNorm(x.l.setor))[0] || 'Estoque Loja');
+  const comp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
+  _pedidoItens = marc.map(({ l, qtd }) => {
+    const catObj = cCat.find(k => k.nome === l.catCompra);
+    return {
+      data: hojeLocal(), fornNome, fornId, comp,
+      prod: l.nome, produtoId: l.pid, cat: l.catCompra, planoConta: catObj?.plano_conta || '',
+      un: l.unComp, custo: l.custo, qtd, uso: uni?.nome || _PLAN_UNI_FIN[un], unidadeId: uni?.id || null,
+      total: l.custo * qtd, bonificado: false, doPlan: true,
+    };
   });
-  const fmt = brl(total);
-  const e1 = document.getElementById('plan-kpi-total');
-  const e2 = document.getElementById('plan-rodape-total');
-  if (e1) e1.textContent = fmt;
-  if (e2) e2.textContent = fmt;
-}
-
-function _planKpis(linhas) {
-  const e1 = document.getElementById('plan-kpi-prod');
-  const e2 = document.getElementById('plan-kpi-repor');
-  const e3 = document.getElementById('plan-kpi-ok');
-  if (e1) e1.textContent = linhas.length;
-  if (e2) e2.textContent = linhas.filter(l => l.comprar > 0).length;
-  if (e3) e3.textContent = linhas.filter(l => l.comprar === 0).length;
-}
-
-function sincFiltroFornPlan() {
-  const tbody  = document.getElementById('lst-planejamento');
-  const keys   = JSON.parse(tbody.dataset.keys || '[]');
-  const filtEl = document.getElementById('plan-filtro-forn');
-  if (!filtEl) return;
-  const curFilt = filtEl.value;
-  const forns   = [...new Set(keys.map(k => document.getElementById(`plan-forn-${k}`)?.value || '').filter(Boolean))].sort();
-  filtEl.innerHTML = '<option value="">— Todos os fornecedores —</option>' +
-    forns.map(f => `<option value="${f}"${f === curFilt ? ' selected' : ''}>${esc(f)}</option>`).join('');
-  const btnConf = document.getElementById('btn-confirmar-forn');
-  if (btnConf) btnConf.disabled = !filtEl.value;
-}
-
-function filtrarPlanFornecedor() {
-  const forn    = document.getElementById('plan-filtro-forn')?.value || '';
-  const tbody   = document.getElementById('lst-planejamento');
-  const keys    = JSON.parse(tbody.dataset.keys || '[]');
-  const btnConf = document.getElementById('btn-confirmar-forn');
-
-  keys.forEach(key => {
-    const row     = document.getElementById(`plan-vend-${key}`)?.closest('tr');
-    if (!row) return;
-    const fornRow = document.getElementById(`plan-forn-${key}`)?.value || '';
-    row.style.display = (!forn || fornRow === forn) ? '' : 'none';
-  });
-  if (btnConf) btnConf.disabled = !forn;
+  _pedidoEditando = null;
+  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem };
+  ir('pedido', document.querySelector('.nav-sb a[onclick*="\'pedido\'"]'));
+  return true;
 }
 
 async function _gerarNumeroPedido() {
@@ -7036,211 +7069,6 @@ async function _gerarNumeroPedido() {
   const ultimo = data?.[0]?.pedido_num || '#00000';
   const num    = (parseInt(ultimo.replace(/\D/g, '')) || 0) + 1;
   return '#' + String(num).padStart(5, '0');
-}
-
-function _planLinhasDados(keys) {
-  return keys.map(key => {
-    const comprar   = parseInt(document.getElementById(`plan-comprar-${key}`)?.textContent) || 0;
-    const forn      = document.getElementById(`plan-forn-${key}`)?.value  || '';
-    const cat       = document.getElementById(`plan-cat-${key}`)?.value   || '';
-    const tipo      = document.getElementById(`plan-tipo-${key}`)?.value  || '';
-    let nome, unidade, valor, plano;
-    if (key.startsWith('imp_')) {
-      const r = _planDados[parseInt(key.replace('imp_', ''))];
-      if (!r) return null;
-      nome = r.nome; unidade = r.unidade; valor = r.valor_unitario; plano = r.plano_conta;
-    } else {
-      const p = _planProdutos.find(x => x.id === key);
-      if (!p) return null;
-      nome = p.nome; unidade = p.unidade; valor = p.valor || 0;
-      const catObj = cCat.find(c => c.nome === cat);
-      plano = catObj?.plano_conta || '';
-    }
-    // Vínculo por código: resolve o produto no cadastro pelo nome (uma vez, aqui).
-    const prodCad = cProdutosFT.find(p => norm(p.nome.trim()) === norm((nome || '').trim()));
-    return { key, comprar, forn, cat, tipo, nome, unidade, valor, plano, produto_id: prodCad?.id || null };
-  }).filter(Boolean);
-}
-
-async function confirmarPedidoFornecedor() {
-  const forn      = document.getElementById('plan-filtro-forn')?.value || '';
-  const comprador = document.getElementById('plan-comp-forn')?.value   || '';
-  const dataEntr  = document.getElementById('plan-data-entrega')?.value || '';
-  if (!forn)      { toast('Selecione um fornecedor no filtro.', 'erro'); return; }
-  if (!comprador) { toast('Selecione um comprador.', 'erro'); return; }
-  if (!dataEntr)  { toast('Informe a Data de Entrega combinada com o fornecedor.', 'erro'); document.getElementById('plan-data-entrega')?.focus(); return; }
-
-  const tbody = document.getElementById('lst-planejamento');
-  const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || hojeLocal();
-
-  const linhasRepor = _planLinhasDados(keys).filter(l => l.forn === forn && l.comprar > 0);
-  if (!linhasRepor.length) { toast(`Nenhum produto de "${forn}" com status 🚨 Repor.`, 'erro'); return; }
-
-  const pedido_num = await _gerarNumeroPedido();
-  const registros  = linhasRepor.map(l => ({
-    data, pedido_num, data_entrega: dataEntr || null,
-    fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
-    fornecedor_nome: l.forn, produto: l.nome, produto_id: l.produto_id || null,
-    categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
-    unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
-    quantidade: l.comprar, comprador,
-    unidade_uso: 'Loja', observacao: 'Gerado pelo Planejamento de Compra',
-    status_receb: 'pendente', criado_por: user.id,
-  }));
-
-  const { error } = await sb.from('cmp_compras').insert(registros);
-  if (error) { toast('Erro ao confirmar: ' + error.message, 'erro'); return; }
-  toast(`✅ Pedido ${pedido_num} gerado com ${linhasRepor.length} produto(s) de "${forn}".`, 'ok');
-}
-
-async function gerarPedidosPlanejamento() {
-  const comprador = document.getElementById('plan-comp')?.value || '';
-  if (!comprador) { toast('Selecione um comprador antes de gerar os pedidos.', 'erro'); return; }
-
-  const tbody = document.getElementById('lst-planejamento');
-  const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || hojeLocal();
-
-  const todasLinhas = _planLinhasDados(keys).filter(l => l.comprar > 0);
-  if (!todasLinhas.length) { toast('Nenhum produto com quantidade a comprar > 0.', 'erro'); return; }
-
-  const numPorForn = {};
-  const registros  = [];
-  for (const l of todasLinhas) {
-    if (!numPorForn[l.forn]) numPorForn[l.forn] = await _gerarNumeroPedido();
-    registros.push({
-      data, pedido_num: numPorForn[l.forn],
-      fornecedor_id:   cForn.find(f => f.nome === l.forn)?.id || null,
-      fornecedor_nome: l.forn, produto: l.nome, produto_id: l.produto_id || null,
-      categoria: l.cat, plano_conta: l.plano, tipo_produto: l.tipo,
-      unidade_med: l.unidade || 'UN', custo_unit: l.valor || 0,
-      quantidade: l.comprar, comprador,
-      unidade_uso: 'Loja', observacao: 'Gerado pelo Planejamento de Compra',
-      status_receb: 'pendente', criado_por: user.id,
-    });
-  }
-
-  const { error } = await sb.from('cmp_compras').insert(registros);
-  if (error) { toast('Erro ao gerar pedidos: ' + error.message, 'erro'); return; }
-  const numForn = Object.keys(numPorForn).length;
-  toast(`✅ ${registros.length} produto(s) em ${numForn} pedido(s) — um por fornecedor.`, 'ok');
-}
-
-function salvarLimparLista() {
-  _planDados = [];
-  _planProdutos.forEach(p => { p.est_atual = 0; p.coz_bar = 0; p.outros = 0; });
-  renderPlanejamento();
-  toast('Lista limpa. Use inventário ou importe planilha para carregar saldos.', 'ok');
-}
-
-function imprimirPlanejamento() {
-  const data   = document.getElementById('plan-data')?.value || hojeLocal();
-  const dataBR = data.split('-').reverse().join('/');
-  const tbody  = document.getElementById('lst-planejamento');
-  const keys   = JSON.parse(tbody.dataset.keys || '[]');
-  const total  = document.getElementById('plan-rodape-total')?.textContent || 'R$ 0,00';
-
-  const rows = _planLinhasDados(keys).map(l => {
-    const comprar = l.comprar;
-    const tinv    = document.getElementById(`plan-tinv-${l.key}`)?.textContent || '0';
-    const estMin  = l.key.startsWith('imp_') ? (_planDados[parseInt(l.key.replace('imp_',''))]?.estoque_minimo || 0) : (_planProdutos.find(p => p.id === l.key)?.estoque_min || 0);
-    const cor     = comprar > 0 ? '#E71D36' : '#2EC4B6';
-    const totalEst = brl(comprar * (l.valor || 0));
-    return `<tr>
-      <td>${esc(l.nome)}</td><td>${esc(l.forn||'—')}</td><td>${esc(l.cat||'—')}</td><td>${esc(l.tipo||'—')}</td>
-      <td style="text-align:center">${document.getElementById(`plan-vend-${l.key}`)?.value || 0}</td>
-      <td style="text-align:center">${estMin}</td>
-      <td style="text-align:center">${tinv}</td>
-      <td style="text-align:center;font-weight:bold;color:${cor}">${comprar}</td>
-      <td style="text-align:center">${l.valor ? brl(l.valor) : '—'}</td>
-      <td style="text-align:center;font-weight:bold">${comprar > 0 ? totalEst : '—'}</td>
-    </tr>`;
-  }).join('');
-
-  const w = window.open('', '_blank', 'width=1300,height=750');
-  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
-  <meta charset="UTF-8"><title>Planejamento — ${dataBR}</title>
-  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;padding:1cm}
-  h2{color:#FF6B35;font-size:1.2rem;margin-bottom:.3rem}p{color:#555;margin-bottom:.6rem}
-  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
-  th,td{padding:4px 6px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#fafafa}
-  .tot{background:#f0fdf4;font-weight:700}@media print{body{padding:.3cm}}</style></head>
-  <body>
-  <h2>Tambaqui de Banda — Planejamento de Compra</h2>
-  <p><strong>Semana:</strong> ${dataBR} &nbsp;|&nbsp; Fórmula: Comprar = Vendas Médias + Est. Mínimo − Total Inventário</p>
-  <table><thead><tr>
-    <th>Produto</th><th>Fornecedor</th><th>Categoria</th><th>Tipo</th>
-    <th style="text-align:center">Dem. Semanal</th><th style="text-align:center">Est. Mín.</th>
-    <th style="text-align:center">∑ Inventário</th><th style="text-align:center">Comprar</th>
-    <th style="text-align:center">Valor Unit.</th><th style="text-align:center">Total Est.</th>
-  </tr></thead>
-  <tbody>${rows}</tbody>
-  <tfoot><tr class="tot">
-    <td colspan="9" style="text-align:right;padding-right:6px">TOTAL ESTIMADO</td>
-    <td style="text-align:center">${total}</td>
-  </tr></tfoot>
-  </table>
-  <script>setTimeout(()=>window.print(),400)<\/script>
-  </body></html>`);
-  w.document.close();
-}
-
-function imprimirItensOKPlan() {
-  const tbody = document.getElementById('lst-planejamento');
-  const keys  = JSON.parse(tbody.dataset.keys || '[]');
-  const data  = document.getElementById('plan-data')?.value || hojeLocal();
-  const dataBR = data.split('-').reverse().join('/');
-
-  const itensOK = keys.filter(key => {
-    const comprar = parseInt(document.getElementById(`plan-comprar-${key}`)?.textContent) || 0;
-    const tr = document.getElementById(`plan-vend-${key}`)?.closest('tr');
-    return comprar === 0 && tr && tr.style.display !== 'none';
-  });
-
-  if (!itensOK.length) { toast('Nenhum item com status ✅ OK encontrado.', 'erro'); return; }
-
-  const rows = itensOK.map((key, i) => {
-    const tr     = document.getElementById(`plan-vend-${key}`)?.closest('tr');
-    const nome   = tr?.cells[0]?.querySelector('strong')?.textContent?.trim() || '—';
-    const forn   = document.getElementById(`plan-forn-${key}`)?.value || '—';
-    const cat    = document.getElementById(`plan-cat-${key}`)?.value  || '—';
-    const tinv   = document.getElementById(`plan-tinv-${key}`)?.textContent || '0';
-    const estMin = key.startsWith('imp_') ? (_planDados[parseInt(key.replace('imp_',''))]?.estoque_minimo||0) : (_planProdutos.find(p=>p.id===key)?.estoque_min||0);
-    const un     = tr?.cells[10]?.textContent?.trim() || '';
-    return `<tr>
-      <td>${i+1}</td><td><strong>${esc(nome)}</strong></td><td>${esc(forn)}</td><td>${esc(cat)}</td>
-      <td style="text-align:center">${estMin}</td>
-      <td style="text-align:center">${tinv}</td>
-      <td style="text-align:center">${un}</td>
-      <td style="text-align:center;color:#2EC4B6;font-weight:700">✅ OK</td>
-    </tr>`;
-  }).join('');
-
-  const w = window.open('', '_blank', 'width=1000,height=700');
-  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
-  <meta charset="UTF-8"><title>Itens OK — ${dataBR}</title>
-  <style>*{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;padding:1.5cm}
-  h2{color:#2EC4B6;font-size:1.2rem;margin-bottom:.3rem}p{color:#555;margin-bottom:.8rem;font-size:.85rem}
-  table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}
-  th,td{padding:5px 8px;border:1px solid #e0e0e0}tbody tr:nth-child(even){background:#f9fffe}
-  @media print{body{padding:.5cm}}</style></head>
-  <body>
-  <h2>✅ Tambaqui de Banda — Itens com Estoque OK</h2>
-  <p><strong>Data:</strong> ${dataBR} &nbsp;|&nbsp; <strong>Itens:</strong> ${itensOK.length} produto(s) sem necessidade de reposição</p>
-  <table><thead><tr>
-    <th>#</th><th>Produto</th><th>Fornecedor</th><th>Categoria</th>
-    <th style="text-align:center">Est. Mín.</th>
-    <th style="text-align:center">∑ Inventário</th>
-    <th style="text-align:center">Unidade</th>
-    <th style="text-align:center">Status</th>
-  </tr></thead>
-  <tbody>${rows}</tbody>
-  </table>
-  <script>setTimeout(()=>window.print(),400)<\/script>
-  </body></html>`);
-  w.document.close();
 }
 
 
@@ -17229,92 +17057,6 @@ function _pintarMeta() {
     `<strong>Sobra na segunda</strong> = Tem − venda de ${_metaRotFds(D.semana)}; ela abate da meta. <strong>Meta</strong> = venda de ${_META_COBRE_ROT[L.cobre || 7]} + ${pct}% − sobra na segunda. ` +
     `<strong>Ajuste</strong> soma ou tira da meta (+20, -10). O dia vem sugerido pelo sistema; quem aprova pode trocar. ` +
     (aprovada ? 'A meta aprovada fica congelada com os números do dia da aprovação.' : 'Ao aprovar, os números congelam.');
-}
-
-// ════════════════════════════════════════════════════════════════
-// PEDIDO DE COMPRA A PARTIR DE UMA LISTA (23/10/2026)
-// O "MP para comprar" da Meta de Produção leva os marcados para a tela de
-// Pedido de Compra, que segue igual (fornecedor, pagamento, entrega, Finalizar).
-// ════════════════════════════════════════════════════════════════
-const _PLAN_PEDIDO_DIAS = 21;          // pedido pendente mais velho que isso não conta como "a caminho"
-// Unidade do financeiro (cmp_compras.unidade_uso) de cada unidade da Produção
-const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'Delivery P10' };
-const _planFracao = un => ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(un || '').toUpperCase());
-const _planArred = (v, un) => !(v > 0) ? 0 : _planFracao(un) ? Math.ceil(v * 10 - 1e-9) / 10 : Math.ceil(v - 1e-9);
-let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
-
-// Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
-// (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço e a categoria de compra.
-// Usado pelo "MP para comprar" da Meta de Produção.
-function _planCompras(compras, un, hoje, p) {
-  const fin = _PLAN_UNI_FIN[un];
-  const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
-  const pedido = {}, pedidoDet = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
-  [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
-    const pid = c.produto_id;
-    const minha = c.unidade_uso === fin;
-    if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
-      const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
-      pedido[pid] = (pedido[pid] || 0) + q;
-      (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})`);
-    }
-    if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
-      comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
-    if (minha && !ultimo[pid]) ultimo[pid] = c;
-    if (!ultimoOutra[pid]) ultimoOutra[pid] = c;
-    const cn = prodFT(pid)?.categoria;
-    if (cn && c.categoria) { const v = (catVotos[cn] ||= {}); v[c.categoria] = (v[c.categoria] || 0) + 1; }
-  });
-  const catDaCategoria = {};
-  Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
-  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado };
-}
-
-// O que a tela de Pedido de Compra precisa de um produto: embalagem, custo, fornecedor, categoria
-function _planCompraDe(pid, C) {
-  const pr = prodFT(pid) || {};
-  const ult = C.ultimo[pid] || C.ultimoOutra[pid] || null;
-  const fator = Number(pr.fator_conversao) || 1;
-  const custo = Number(pr.custo_comp) > 0 ? Number(pr.custo_comp)
-    : Number(ult?.custo_unit) > 0 ? Number(ult.custo_unit) : (Number(pr.custo_uso) || 0) * fator;
-  return {
-    pid, nome: pr.nome || pid, unComp: pr.unidade_comp || pr.unidade_uso || 'UN', fator, custo,
-    forn: ult?.fornecedor_nome || '', fornId: ult?.fornecedor_id || null,
-    catCompra: ult?.categoria || C.catDaCategoria[pr.categoria] || '', setor: C.ultimo[pid]?.setor || '',
-  };
-}
-
-// marc = [{ l: _planCompraDe(...), qtd na unidade de compra }]. false = não foi (aviso já dado)
-function _levarAoPedidoCompra(marc, un, origem) {
-  if (!marc.length) { toast('Marque pelo menos um produto.', 'erro'); return false; }
-  if (_pedidoEditando) { toast(`Termine ou cancele a edição do pedido ${_pedidoEditando} antes.`, 'erro'); return false; }
-  const semCat = marc.filter(x => !x.l.catCompra);
-  if (semCat.length) {
-    toast(`Sem categoria de compra (nunca comprado): ${semCat.map(x => x.l.nome).slice(0, 4).join(', ')}${semCat.length > 4 ? '...' : ''}. Desmarque e lance à mão na tela de pedido.`, 'erro');
-    return false;
-  }
-  const voto = (arr, f) => { const v = {}; arr.forEach(x => { const k = f(x); if (k) v[k] = (v[k] || 0) + 1; }); return Object.keys(v).sort((a, b) => v[b] - v[a]); };
-  const forns = voto(marc, x => x.l.forn);
-  if (forns.length > 1 && !confirm(`Os itens marcados foram comprados por último de ${forns.length} fornecedores (${forns.slice(0, 4).join(', ')}${forns.length > 4 ? '...' : ''}).\n\nO pedido de compra é de um fornecedor só: ${forns[0]}. Dá para trocar na tela do pedido.\n\nDica: ${origem === 'Planejamento' ? 'filtre por fornecedor' : 'desmarque os de outro fornecedor'} para fazer um pedido para cada um.\n\nContinuar?`)) return false;
-  if (_pedidoItens.length && !confirm(`Já tem um pedido em montagem com ${_pedidoItens.length} item(ns). Trocar por estes ${marc.length}?`)) return false;
-  const fornNome = forns[0] || '';
-  const fornId = marc.find(x => x.l.forn === fornNome)?.l.fornId || cForn.find(f => norm(f.nome) === norm(fornNome))?.id || null;
-  const uni = cUnidades.find(x => norm(x.nome) === norm(_PLAN_UNI_FIN[un] || ''));
-  const setor = un === 'Delivery P10' ? 'Estoque Delivery' : (voto(marc, x => _localPedidoNorm(x.l.setor))[0] || 'Estoque Loja');
-  const comp = (user?.user_metadata?.nome || '').trim() || (user?.email || '').split('@')[0];
-  _pedidoItens = marc.map(({ l, qtd }) => {
-    const catObj = cCat.find(k => k.nome === l.catCompra);
-    return {
-      data: hojeLocal(), fornNome, fornId, comp,
-      prod: l.nome, produtoId: l.pid, cat: l.catCompra, planoConta: catObj?.plano_conta || '',
-      un: l.unComp, custo: l.custo, qtd, uso: uni?.nome || _PLAN_UNI_FIN[un], unidadeId: uni?.id || null,
-      total: l.custo * qtd, bonificado: false, doPlan: true,
-    };
-  });
-  _pedidoEditando = null;
-  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem };
-  ir('pedido', document.querySelector('.nav-sb a[onclick*="\'pedido\'"]'));
-  return true;
 }
 
 // "MP para comprar": a Falta vira pedido de compra pela mesma tela do Planejamento

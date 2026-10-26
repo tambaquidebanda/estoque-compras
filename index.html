@@ -2044,199 +2044,82 @@
     </section>
 
 
-    <!-- ══════ PLANEJAMENTO ══════ -->
+    <!-- ══════ PLANEJAMENTO DE COMPRAS (refeito em 22/10/2026) ══════ -->
     <section id="pg-planejamento" class="pagina">
-      <h1>🛒 Planejamento de Compra</h1>
+      <div class="meta-unis mb-3" id="plan-unis"></div>
 
-      <!-- Fórmula -->
-      <div class="alert alert-primary py-2 mb-3 small">
-        <strong>Fórmula:</strong> &nbsp; 🛒 <strong>Comprar</strong> = Dem. Semanal + Estoque Mínimo &minus; (Estoque + Coz.&amp;Bar + Outros)
-      </div>
-
-      <!-- Importar Demanda Semanal -->
-      <div class="card-grafico mb-3">
-        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-          <span style="font-size:1.2rem">📊</span>
-          <h6 class="mb-0 fw-semibold">Importar Demanda Semanal</h6>
-          <span class="badge bg-primary ms-auto" style="font-size:.7rem">Demanda_Semanal_Projecao</span>
-        </div>
-        <p class="text-muted small mb-2">
-          Planilha com <strong>3 linhas de cabeçalho</strong> — colunas <strong>Produto</strong> e <strong>Dem. Semanal</strong>.
-          Os valores são salvos em cada produto e usados como base fixa de compra semanal (substituem o cálculo automático por histórico).
-        </p>
-        <div class="drop-zone" id="drop-dem"
-             onclick="document.getElementById('imp-dem-file').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="this.classList.remove('drag-over');handleDropDem(event)"
-             style="cursor:pointer;border:2px dashed #dee2e6;border-radius:10px;padding:1rem;text-align:center">
-          <input type="file" id="imp-dem-file" accept=".xlsx,.xls,.csv" style="display:none"
-            onchange="importarDemandaSemanal(event)">
-          <div style="font-size:1.8rem">📂</div>
-          <div class="small mt-1">Clique ou arraste o arquivo Excel / CSV</div>
-        </div>
-        <div id="msg-dem-semanal" class="mt-2"></div>
-      </div>
-
-      <!-- Origem do saldo -->
-      <div class="card-grafico mb-3">
-        <h6 class="fw-semibold mb-3">📊 Origem do Saldo de Estoque</h6>
-        <div class="row g-3">
-          <div class="col-md-6">
-            <div class="rounded-3 p-3 h-100" style="background:#f0fdf4;border:1px solid #bbf7d0">
-              <div class="fw-semibold mb-1">📦 Usar Contagem do Sistema</div>
-              <p class="text-muted small mb-2">Selecione a data da contagem salva em <strong>Contagem/Pedido</strong> (Centro + P10).</p>
-              <select class="form-select form-select-sm mb-2" id="inv-plan-sel">
-                <option value="">— selecione —</option>
-              </select>
-              <div id="msg-inv-plan" class="small mb-2"></div>
-              <button class="btn btn-success w-100" onclick="carregarSaldoInventarioPlan()">
-                📦 Carregar Saldo da Contagem
-              </button>
+      <div class="d-flex justify-content-between align-items-end flex-wrap gap-3 mb-3">
+        <div>
+          <div class="meta-eyebrow" id="plan-eyebrow">Planejamento de Compras</div>
+          <h1 class="mb-1">O que comprar</h1>
+          <div class="text-muted small" style="max-width:95ch" id="plan-base"></div>
+          <div class="meta-param">
+            <label class="small text-muted" for="plan-vini">Venda de</label>
+            <input type="date" id="plan-vini" class="form-control form-control-sm" onchange="planPeriodo()">
+            <label class="small text-muted" for="plan-vfim">a</label>
+            <input type="date" id="plan-vfim" class="form-control form-control-sm" onchange="planPeriodo()">
+            <span class="small text-muted" id="plan-ndias"></span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Período rápido">
+              <button type="button" class="btn btn-outline-secondary" onclick="planPeriodoRapido(7)">última semana</button>
+              <button type="button" class="btn btn-outline-secondary" onclick="planPeriodoRapido(14)">2 semanas</button>
+              <button type="button" class="btn btn-outline-secondary" onclick="planPeriodoRapido(28)">4 semanas</button>
             </div>
-          </div>
-          <div class="col-md-6">
-            <div class="rounded-3 p-3 h-100" style="background:#fff7ed;border:1px solid #fed7aa">
-              <div class="fw-semibold mb-1">📥 Importar Planilha Excel</div>
-              <p class="text-muted small mb-2">Colunas: <strong>Produto, Vendas médias, Estoque Mínimo, Estoque, Coz.&amp;Bar, Outros, Unidade, Valor Unitário</strong></p>
-              <div class="drop-zone" id="drop-plan"
-                   onclick="document.getElementById('imp-plan-file').click()"
-                   ondragover="event.preventDefault();this.classList.add('drag-over')"
-                   ondragleave="this.classList.remove('drag-over')"
-                   ondrop="this.classList.remove('drag-over');handleDropPlan(event)"
-                   style="padding:.6rem;margin-bottom:.5rem;cursor:pointer;border:2px dashed #fed7aa;border-radius:8px;text-align:center">
-                <input type="file" id="imp-plan-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanExcel(event)">
-                <div style="font-size:1.2rem">📂</div>
-                <div class="small mt-1">Clique ou arraste o Excel / CSV</div>
-              </div>
-              <div id="msg-imp-plan" class="small mb-1"></div>
-              <button class="btn btn-sm btn-outline-danger" onclick="limparDadosPlan()">🗑️ Limpar planilha importada</button>
+            <label class="small text-muted ms-2" for="plan-margem">Margem</label>
+            <div class="input-group input-group-sm meta-margem-box">
+              <input type="number" id="plan-margem" class="form-control" min="0" max="200" step="1" onchange="planMargem(this.value)">
+              <span class="input-group-text">%</span>
             </div>
+            <label class="small text-muted ms-2" for="plan-dias">Cobrir</label>
+            <div class="input-group input-group-sm" style="width:118px">
+              <input type="number" id="plan-dias" class="form-control" min="1" max="60" step="1" onchange="planDiasPadrao(this.value)">
+              <span class="input-group-text">dias</span>
+            </div>
+            <a href="#" class="small d-none" id="plan-param-padrao" onclick="event.preventDefault();planParamPadrao()">voltar ao padrão (4 semanas, 25%, 7 dias)</a>
           </div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <button class="btn btn-sm btn-outline-secondary" onclick="carregarPlanejamento()" title="Busca de novo venda, saldo e pedidos"><i class="bi bi-arrow-clockwise"></i> Atualizar</button>
+          <button class="btn btn-sm btn-primary" id="plan-btn-pedido" onclick="planGerarPedido()" disabled><i class="bi bi-cart-plus"></i> Gerar pedido</button>
         </div>
       </div>
 
-      <!-- Controles -->
-      <div class="card-grafico mb-3">
-        <div class="row g-3 align-items-end">
-          <div class="col-md-2">
-            <label class="form-label fw-semibold">📅 Semana</label>
-            <input type="date" class="form-control" id="plan-data">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">👤 Comprador</label>
-            <input type="text" class="form-control" id="plan-comp" readonly>
-          </div>
-          <div class="col-md-3 d-flex align-items-end gap-2">
-            <button class="btn btn-outline-secondary w-100" onclick="renderPlanejamento()">🔄 Recalcular</button>
-            <button class="btn btn-success w-100" onclick="gerarPedidosPlanejamento()">✅ Gerar Pedidos</button>
-          </div>
-          <div class="col-md-4 d-flex align-items-end justify-content-end">
-            <label class="form-check-label small text-muted d-flex align-items-center gap-2">
-              <input type="checkbox" class="form-check-input" id="plan-so-repor" onchange="renderPlanejamento()">
-              Mostrar só quem precisa comprar
-            </label>
-          </div>
-        </div>
+      <div id="plan-avisos"></div>
+      <div class="row g-3 mb-3" id="plan-kpis"></div>
+
+      <div class="plan-filtros mb-2">
+        <select id="plan-f-cat" class="form-select form-select-sm" onchange="planFiltro('cat', this.value)" aria-label="Categoria"></select>
+        <select id="plan-f-forn" class="form-select form-select-sm" onchange="planFiltro('forn', this.value)" aria-label="Último fornecedor"></select>
+        <input type="search" id="plan-f-busca" class="form-control form-control-sm" placeholder="Buscar produto" oninput="planFiltro('busca', this.value)">
+        <div class="btn-group btn-group-sm" role="group" aria-label="O que mostrar" id="plan-f-ver"></div>
       </div>
 
-      <!-- KPIs -->
-      <div class="row g-3 mb-3">
-        <div class="col-md-3 col-6">
-          <div class="card-kpi">
-            <div class="kpi-label">📦 Produtos</div>
-            <div class="kpi-val" id="plan-kpi-prod">0</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div class="card-kpi" style="border-color:#E71D36">
-            <div class="kpi-label">🚨 Precisam comprar</div>
-            <div class="kpi-val" id="plan-kpi-repor" style="color:#E71D36">0</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div class="card-kpi" style="border-color:#2EC4B6">
-            <div class="kpi-label">✅ Estoque OK</div>
-            <div class="kpi-val" id="plan-kpi-ok" style="color:#2EC4B6">0</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div class="card-kpi" style="border-color:var(--verde)">
-            <div class="kpi-label">💰 Total Estimado</div>
-            <div class="kpi-val" id="plan-kpi-total">R$ 0,00</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tabela -->
-      <div class="card-grafico">
-        <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
-          <h5 class="mb-0">Lista de Compra Sugerida</h5>
-          <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-sm btn-outline-secondary" onclick="imprimirPlanejamento()">🖨️ Imprimir Lista</button>
-            <button class="btn btn-sm btn-outline-success" onclick="imprimirItensOKPlan()">✅ Imprimir Itens OK</button>
-            <button class="btn btn-sm btn-danger" onclick="salvarLimparLista()">💾 Salvar e Limpar Lista</button>
-          </div>
-        </div>
-
-        <!-- Filtro por fornecedor + confirmar pedido -->
-        <div class="row g-2 align-items-end mb-3 p-3 rounded-3" style="background:#f0f4ff;border:1px solid #c7d6fc">
-          <div class="col-md-4">
-            <label class="form-label fw-semibold small mb-1">🏭 Filtrar por Fornecedor</label>
-            <select class="form-select form-select-sm" id="plan-filtro-forn" onchange="filtrarPlanFornecedor()">
-              <option value="">— Todos os fornecedores —</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold small mb-1">👤 Comprador</label>
-            <input type="text" class="form-control form-control-sm" id="plan-comp-forn" readonly>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold small mb-1">🚚 Data de Entrega <span class="text-danger">*</span></label>
-            <input type="date" class="form-control form-control-sm" id="plan-data-entrega" required>
-          </div>
-          <div class="col-md-2 d-flex align-items-end">
-            <button class="btn btn-success w-100" onclick="confirmarPedidoFornecedor()" id="btn-confirmar-forn" disabled>
-              ✅ Confirmar
-            </button>
-          </div>
-        </div>
-
+      <div class="card-grafico p-0 overflow-hidden">
         <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead style="background:#1a1a2e;color:#fff;font-size:.78rem">
+          <table class="table table-sm align-middle mb-0 meta-tabela plan-tabela">
+            <thead>
               <tr>
-                <th style="min-width:170px">Produto</th>
-                <th style="min-width:130px">Fornecedor</th>
-                <th style="min-width:120px">Categoria</th>
-                <th style="min-width:110px">Tipo/Destino</th>
-                <th class="text-center" style="min-width:90px">📊 Dem. Semanal</th>
-                <th class="text-center" style="min-width:80px">📉 Est. Mín.</th>
-                <th class="text-center" style="min-width:80px">🏪 Estoque</th>
-                <th class="text-center" style="min-width:80px">🍳 Coz.&amp;Bar</th>
-                <th class="text-center" style="min-width:75px">📦 Outros</th>
-                <th class="text-center" style="min-width:65px">∑ Inv.</th>
-                <th class="text-center" style="min-width:60px">Un.</th>
-                <th class="text-center fw-bold" style="min-width:85px;color:#FF6B35">🛒 Comprar</th>
-                <th class="text-center" style="min-width:95px">Valor Unit.</th>
-                <th class="text-center" style="min-width:110px">Plano de Conta</th>
-                <th class="text-center fw-bold" style="min-width:105px;color:#06D6A0">Total Est.</th>
-                <th class="text-center" style="min-width:65px">Status</th>
+                <th class="text-center" style="width:34px"><input type="checkbox" class="form-check-input" id="plan-marcar-todos" title="Marcar/desmarcar os da lista" onchange="planMarcarTodos(this.checked)"></th>
+                <th>Produto</th>
+                <th class="text-end" id="plan-th-vend" title="O que a venda do período consumiu, aberta pela ficha até a MP. Passe o mouse no número para ver por semana.">Vendido</th>
+                <th class="text-center">Dias</th>
+                <th class="text-end">Precisa (+<span id="plan-margem-lbl">25</span>%)</th>
+                <th class="text-end">Tem agora</th>
+                <th class="text-end" title="Pedido de compra feito nos últimos 21 dias e ainda não recebido">Já pedido</th>
+                <th class="text-end" title="Quantos dias o que tem agora + o que já foi pedido dura no consumo de hoje">Dura</th>
+                <th class="text-end">Falta</th>
+                <th class="text-center">Pedir</th>
+                <th class="text-end">Custo</th>
+                <th class="text-end">Total</th>
+                <th>Último fornecedor</th>
               </tr>
             </thead>
-            <tbody id="lst-planejamento">
-              <tr><td colspan="16" class="text-center text-muted py-4">Carregando...</td></tr>
+            <tbody id="plan-tbody">
+              <tr><td colspan="13" class="text-center text-muted py-4">Carregando...</td></tr>
             </tbody>
-            <tfoot>
-              <tr style="background:#1a1a2e;color:#fff">
-                <td colspan="14" class="text-end fw-bold pe-3">TOTAL ESTIMADO DE COMPRAS</td>
-                <td class="text-center fw-bold" style="color:#06D6A0" id="plan-rodape-total">R$ 0,00</td>
-                <td></td>
-              </tr>
-            </tfoot>
           </table>
         </div>
       </div>
+      <p class="text-muted small mt-2" style="max-width:95ch" id="plan-nota"></p>
     </section>
 
     <!-- ══════ RECEBIMENTOS ══════ -->
