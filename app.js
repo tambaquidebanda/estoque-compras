@@ -6597,7 +6597,7 @@ const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'D
 const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P10': ['ESTOQUE DELIVERY'] };
 const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
 // Categorias que não vêm da venda: ficam fora do Planejamento (Wagner, 26/10/2026)
-const _PLAN_CAT_FORA = new Set(['MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
+const _PLAN_CAT_FORA = new Set(['MC DESCARTÁVEIS/EMBALAGENS', 'MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
   'MU ESCRITÓRIO', 'MU UNIFORMES', 'MU UTENSÍLIOS', 'Comida Funcionário']);   // nome antigo de REFEIÇÃO FUNCIONÁRIOS
 const _planEhCompra = p => !!p && (_PLAN_TIPOS_COMPRA.has(p.tipo) || /^(MP|MC|MU) /.test(p.categoria || ''));
 
