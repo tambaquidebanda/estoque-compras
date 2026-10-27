@@ -511,22 +511,22 @@ h1 {
   background: #fff; color: #1f2a27; border: 1px solid #d5ddda; border-radius: 8px;
   box-shadow: 0 10px 28px rgba(16, 40, 34, .18); padding: 12px 14px; font-size: .85rem;
   max-height: min(70vh, 560px); overflow-y: auto; }
-#meta-pratos .mp-tit { font-weight: 700; font-size: .95rem; }
-#meta-pratos .mp-sub { color: #5f6d69; font-size: .78rem; margin-bottom: 8px; }
-#meta-pratos .mp-tab { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-#meta-pratos .mp-tab th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #5f6d69;
+:is(#meta-pratos, .meta-det-pratos) .mp-tit { font-weight: 700; font-size: .95rem; }
+:is(#meta-pratos, .meta-det-pratos) .mp-sub { color: #5f6d69; font-size: .78rem; margin-bottom: 8px; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #5f6d69;
   font-weight: 600; border-bottom: 1px solid #e3e9e7; padding: 0 6px 4px; }
-#meta-pratos .mp-tab td { padding: 4px 6px; border-bottom: 1px solid #f0f3f2; }
-#meta-pratos .mp-tab th:first-child, #meta-pratos .mp-tab td:first-child { padding-left: 0; }
-#meta-pratos .mp-tab tfoot td { font-weight: 700; border-bottom: 0; border-top: 1px solid #d5ddda; }
-#meta-pratos .mp-nota { color: #5f6d69; font-size: .75rem; margin-top: 8px; }
-#meta-pratos .mp-aviso { background: #fff4d6; color: #7a5300; border-radius: 6px; padding: 6px 8px; font-size: .78rem; margin-bottom: 8px; }
-#meta-pratos .mp-vazio { color: #5f6d69; font-style: italic; }
-#meta-pratos .mp-meta { background: #eef6f4; font-weight: 600; }
-#meta-pratos .mp-tab th { vertical-align: bottom; line-height: 1.2; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab td { padding: 4px 6px; border-bottom: 1px solid #f0f3f2; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab th:first-child, :is(#meta-pratos, .meta-det-pratos) .mp-tab td:first-child { padding-left: 0; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab tfoot td { font-weight: 700; border-bottom: 0; border-top: 1px solid #d5ddda; }
+:is(#meta-pratos, .meta-det-pratos) .mp-nota { color: #5f6d69; font-size: .75rem; margin-top: 8px; }
+:is(#meta-pratos, .meta-det-pratos) .mp-aviso { background: #fff4d6; color: #7a5300; border-radius: 6px; padding: 6px 8px; font-size: .78rem; margin-bottom: 8px; }
+:is(#meta-pratos, .meta-det-pratos) .mp-vazio { color: #5f6d69; font-style: italic; }
+:is(#meta-pratos, .meta-det-pratos) .mp-meta { background: #eef6f4; font-weight: 600; }
+:is(#meta-pratos, .meta-det-pratos) .mp-tab th { vertical-align: bottom; line-height: 1.2; }
 
 /* Planejamento de Compras (layout de 27/10/2026): lista enxuta, detalhe ao abrir a linha, pedido no rodapé */
-#pg-planejamento { --pl-teal: #0e6b68; --pl-teal-claro: #e6f1ef; --pl-tinta: #18201d; --pl-cinza: #5f6d69; --pl-linha: #e3e9e7;
+#pg-planejamento, #pg-meta-producao { --pl-teal: #0e6b68; --pl-teal-claro: #e6f1ef; --pl-tinta: #18201d; --pl-cinza: #5f6d69; --pl-linha: #e3e9e7;
   --pl-fundo: #f6f8f7; --pl-vermelho: #b42318; --pl-vermelho-claro: #fde7e4; --pl-ambar: #8a5a00; --pl-ambar-claro: #fff1d6; }
 .plan-teste { font-size: .78rem; color: #7a5300; background: #fff6dc; border-radius: 8px; padding: 5px 10px; margin-bottom: 14px; width: fit-content; }
 .plan-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -628,3 +628,30 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .plan-rodape .btn-primary { background: #2fb39c; border-color: #2fb39c; color: #0b2622; font-weight: 700; }
 .plan-rodape .btn-primary:disabled { background: #3a4744; border-color: #3a4744; color: #8a9692; }
 @media (max-width: 768px) { .plan-busca input { min-width: 0; width: 100%; } .plan-filtros > * { flex: 1 1 auto; } .plan-seg.ms-auto { margin-left: 0 !important; } }
+
+/* Meta de produção no layout do Planejamento (27/10/2026) */
+.plan-semana { display: inline-flex; align-items: center; background: #fff; border: 1px solid var(--pl-linha); border-radius: 99px; overflow: hidden; }
+.plan-semana button { border: 0; background: transparent; padding: 4px 10px; color: var(--pl-cinza); }
+.plan-semana button:hover { background: var(--pl-fundo); color: var(--pl-tinta); }
+.plan-semana span { font-size: .82rem; font-weight: 700; padding: 0 4px; white-space: nowrap; }
+.plan-status { font-size: .74rem; font-weight: 700; border-radius: 99px; padding: 3px 10px; white-space: nowrap; }
+.plan-status.rascunho { background: #fff1d6; color: #8a5a00; }
+.plan-status.aprovada { background: #dcf3ec; color: #0e6b68; }
+.plan-uni-st { font-size: .7rem; font-weight: 600; color: #8a9692; }
+.plan-uni.ativo .plan-uni-st { color: var(--pl-cinza); }
+.plan-uni-n.ok { background: #dcf3ec; color: #0e6b68; }
+.meta-num-sub { display: block; font-size: .72rem; color: #8a9692; white-space: nowrap; }
+.meta-num-sub.falta { color: var(--pl-vermelho); font-weight: 700; }
+.plan-tabela .meta-final { font-size: 1rem; }
+.plan-tabela .meta-ajuste { width: 70px; }
+.plan-tabela .meta-dia { min-width: 112px; }
+.meta-dia-sub { font-size: .72rem; color: #8a9692; margin-top: 2px; white-space: nowrap; }
+.meta-dia-sub.alerta { color: var(--pl-vermelho); font-weight: 700; }
+.meta-det-pratos { grid-column: 1 / -1; }
+.meta-det-pratos .mp-tit, .meta-det-pratos .mp-sub { display: none; }
+.plan-rodape .btn-outline-light { border-color: #4a5753; color: #e6efec; }
+.plan-rodape .btn-outline-light:hover { background: #2c3734; color: #fff; }
+.plan-rodape > .d-flex { flex-wrap: nowrap !important; flex: none; }
+.plan-rodape-txt { min-width: 0; }
+.meta-pdv summary { cursor: pointer; list-style: none; }
+.meta-pdv summary::-webkit-details-marker { display: none; }

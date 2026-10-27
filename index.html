@@ -3251,73 +3251,98 @@
 
     <!-- ═══════════ PERDAS (D3) ═══════════ -->
     <section id="pg-meta-producao" class="pagina">
-      <div class="meta-unis mb-3" id="meta-unis"></div>
-
-      <div class="d-flex justify-content-between align-items-end flex-wrap gap-3 mb-3">
+      <div class="plan-topo">
         <div>
-          <div class="meta-eyebrow" id="meta-eyebrow">Meta de Produção</div>
-          <h1 class="mb-1" id="meta-titulo">Meta da Semana</h1>
-          <div class="text-muted small" id="meta-base"></div>
-          <div class="meta-param" id="meta-param">
-            <label class="small text-muted" for="meta-vini">Venda de</label>
-            <input type="date" id="meta-vini" class="form-control form-control-sm" onchange="metaPeriodo()">
-            <label class="small text-muted" for="meta-vfim">a</label>
-            <input type="date" id="meta-vfim" class="form-control form-control-sm" onchange="metaPeriodo()">
-            <span class="small text-muted" id="meta-ndias"></span>
-            <label class="small text-muted ms-2" for="meta-margem">Margem</label>
-            <div class="input-group input-group-sm meta-margem-box">
+          <div class="meta-eyebrow">Meta de produção</div>
+          <h1 class="mb-0" id="meta-titulo">Meta da semana</h1>
+        </div>
+        <div class="plan-unis" id="meta-unis" role="tablist" aria-label="Unidade"></div>
+      </div>
+
+      <div class="plan-barra">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <div class="plan-semana" role="group" aria-label="Semana">
+            <button type="button" onclick="metaMudarSemana(-7)" title="Semana anterior" aria-label="Semana anterior"><i class="bi bi-chevron-left"></i></button>
+            <span id="meta-semana-lbl">—</span>
+            <button type="button" onclick="metaMudarSemana(7)" title="Próxima semana" aria-label="Próxima semana"><i class="bi bi-chevron-right"></i></button>
+          </div>
+          <button type="button" class="plan-param-chip" id="meta-chips" onclick="metaAjustes()" aria-expanded="false" aria-controls="meta-ajustes"></button>
+        </div>
+        <div class="plan-barra-dir">
+          <span class="plan-status" id="meta-status"></span>
+          <button class="btn btn-sm btn-light border" onclick="metaAtualizar()" title="Lê de novo venda, saldo e pedidos (o que você ajustou e não salvou continua)"><i class="bi bi-arrow-clockwise"></i> Atualizar</button>
+          <button class="btn btn-sm btn-light border" onclick="metaComoCalcula()" aria-expanded="false" aria-controls="meta-como" id="meta-como-btn"><i class="bi bi-info-circle"></i> Como calcula</button>
+        </div>
+      </div>
+
+      <div class="plan-painel d-none" id="meta-ajustes">
+        <div class="plan-painel-grade">
+          <div>
+            <div class="plan-painel-rot">Venda usada na conta</div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <input type="date" id="meta-vini" class="form-control form-control-sm w-auto" onchange="metaPeriodo()" aria-label="Venda de">
+              <span class="small text-muted">a</span>
+              <input type="date" id="meta-vfim" class="form-control form-control-sm w-auto" onchange="metaPeriodo()" aria-label="Venda até">
+            </div>
+            <div class="small text-muted mt-1" id="meta-ndias"></div>
+          </div>
+          <div>
+            <label class="plan-painel-rot" for="meta-margem">Margem de segurança</label>
+            <div class="input-group input-group-sm" style="width:120px">
               <input type="number" id="meta-margem" class="form-control" min="0" max="200" step="1" onchange="metaMargem(this.value)">
               <span class="input-group-text">%</span>
             </div>
-            <label class="small text-muted ms-2" for="meta-cobre">Cobrir</label>
+          </div>
+          <div>
+            <label class="plan-painel-rot" for="meta-cobre">A produção cobre</label>
             <select id="meta-cobre" class="form-select form-select-sm" style="width:auto" onchange="metaCobre(this.value)">
               <option value="7">seg a dom (7 dias)</option><option value="8">até a seg seguinte (8 dias)</option>
               <option value="9">até a ter seguinte (9 dias)</option><option value="10">até a qua seguinte (10 dias)</option>
             </select>
-            <a href="#" class="small d-none" id="meta-param-padrao" onclick="event.preventDefault();metaParamPadrao()">voltar ao padrão (4 semanas, 25%, até qua)</a>
           </div>
         </div>
-        <div class="d-flex align-items-center gap-2 flex-wrap">
-          <div class="input-group input-group-sm" style="width:auto">
-            <button class="btn btn-outline-secondary" onclick="metaMudarSemana(-7)" title="Semana anterior"><i class="bi bi-chevron-left"></i></button>
-            <span class="input-group-text" id="meta-semana-lbl">—</span>
-            <button class="btn btn-outline-secondary" onclick="metaMudarSemana(7)" title="Próxima semana"><i class="bi bi-chevron-right"></i></button>
-          </div>
-          <span class="badge" id="meta-status"></span>
-          <button class="btn btn-sm btn-outline-secondary" id="meta-btn-mp" onclick="abrirMpMeta()">MP para comprar</button>
-          <button class="btn btn-sm btn-outline-primary" id="meta-btn-salvar" onclick="salvarMeta(false)">Salvar rascunho</button>
-          <button class="btn btn-sm btn-primary" id="meta-btn-aprovar" onclick="salvarMeta(true)">Aprovar</button>
-          <button class="btn btn-sm btn-outline-danger d-none" id="meta-btn-reabrir" onclick="reabrirMeta()">Reabrir</button>
-        </div>
+        <a href="#" class="small d-none" id="meta-param-padrao" onclick="event.preventDefault();metaParamPadrao()">Voltar ao padrão (4 semanas, 25%, até qua)</a>
       </div>
 
-      <div id="meta-avisos"></div>
-      <div class="row g-3 mb-3" id="meta-kpis"></div>
+      <div class="plan-painel plan-como d-none" id="meta-como"></div>
 
-      <div class="card-grafico p-0 overflow-hidden">
+      <div id="meta-avisos"></div>
+
+      <div class="plan-filtros">
+        <div class="plan-seg" role="group" aria-label="O que mostrar" id="meta-f-ver"></div>
+        <div class="plan-busca"><i class="bi bi-search"></i><input type="search" id="meta-f-busca" class="form-control form-control-sm" placeholder="Buscar SA" oninput="metaBusca(this.value)"></div>
+      </div>
+
+      <div class="plan-lista">
         <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0 meta-tabela">
+          <table class="table align-middle mb-0 plan-tabela">
             <thead>
               <tr>
                 <th>SA</th>
-                <th class="text-end">Tem (agora)</th>
-                <th class="text-end" id="meta-th-fds">Vende qui→dom</th>
-                <th class="text-end">Sobra na segunda</th>
-                <th class="text-end" id="meta-th-sem">Vende seg→qua</th>
-                <th class="text-end">Precisa (+<span id="meta-margem-lbl">25</span>%)</th>
+                <th class="text-end" title="Estoque da unidade agora, mais o que já saiu da origem e ainda não chegou">Tem agora</th>
+                <th class="text-end" id="meta-th-fds">Sobra na segunda</th>
+                <th class="text-end" id="meta-th-sem">Precisa</th>
+                <th class="text-center" title="Soma ou tira da meta: +20, -10">Ajuste</th>
                 <th class="text-end">Meta</th>
-                <th class="text-center">Ajuste</th>
-                <th class="text-end">Meta final</th>
                 <th>Dia de produzir</th>
               </tr>
             </thead>
             <tbody id="meta-tbody">
-              <tr><td colspan="10" class="text-center text-muted py-4">Carregando...</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">Carregando...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
-      <p class="text-muted small mt-2" style="max-width:90ch" id="meta-nota"></p>
+
+      <div class="plan-rodape">
+        <div class="plan-rodape-txt" id="meta-resumo"></div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-light" id="meta-btn-mp" onclick="abrirMpMeta()">MP para comprar</button>
+          <button class="btn btn-outline-light" id="meta-btn-salvar" onclick="salvarMeta(false)">Salvar rascunho</button>
+          <button class="btn btn-primary" id="meta-btn-aprovar" onclick="salvarMeta(true)">Aprovar</button>
+          <button class="btn btn-outline-light d-none" id="meta-btn-reabrir" onclick="reabrirMeta()">Reabrir</button>
+        </div>
+      </div>
 
       <!-- Modal: MP para comprar -->
       <div class="modal fade" id="modal-meta-mp" tabindex="-1">
