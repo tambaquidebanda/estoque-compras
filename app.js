@@ -6649,7 +6649,7 @@ async function _planCarregar() {
   const [unidades, cfgRow, listasRows] = await Promise.all([
     _metaSelect('prod_unidades', '*', q => q.order('ordem')),
     sb.from('inv_configuracoes').select('valor').eq('chave', _PLAN_CFG).maybeSingle(),
-    sb.from('inv_configuracoes').select('chave,valor').in('chave', ['estrutura', 'adicoes', 'mapeamentos']),
+    sb.from('inv_configuracoes').select('chave,valor').in('chave', ['estrutura', 'adicoes', 'mapeamentos', 'excluidos']),
   ]);
   if (!unidades.length) throw new Error('prod_unidades está vazia');
   _planCfg = cfgRow?.data?.valor || {};
@@ -6669,7 +6669,7 @@ async function _planCarregar() {
     _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
   ]);
-  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje, naLista: _planNaLista(listasRows.data) };
+  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
 }
 
 // Produtos que estão em alguma lista de contagem (qualquer unidade, setor ou "+").
@@ -6687,6 +6687,49 @@ function _planNaLista(rows) {
   return new Set(cProdutosFT.filter(p => nomes.has(norm(p.nome))).map(p => p.id));
 }
 
+// Produtos que alguma lista do Centro conta (setores e Estoque da Loja, com os "+"): é o
+// que a tela de Saldo mostra no cartão do Centro. Excluído só sai se não voltou pelo "+".
+function _planListaCentro(rows) {
+  const cfg = Object.fromEntries((rows || []).map(r => [r.chave, r.valor || {}]));
+  const mapa = cfg.mapeamentos || {};
+  const excl = new Set(Array.isArray(cfg.excluidos) ? cfg.excluidos : []);
+  const setores = cfg.estrutura?.['Centro'] || {};
+  const nomes = new Set();
+  const add = n => { if (n) { nomes.add(norm(n)); if (mapa[n]) nomes.add(norm(mapa[n])); } };
+  Object.values(setores).forEach(grupos => Object.values(grupos || {}).forEach(lst => (lst || []).filter(n => !excl.has(n)).forEach(add)));
+  const doCentro = new Set([...Object.keys(setores), 'ESTOQUE DA LOJA']);
+  Object.entries(cfg.adicoes || {}).forEach(([k, lst]) => { if (doCentro.has(k.split('|')[0])) (lst || []).forEach(add); });
+  return new Set(cProdutosFT.filter(p => nomes.has(norm(p.nome))).map(p => p.id));
+}
+
+// Abre a ficha até a MP/MC e separa por quem usa: { mp: [loja, producao] } por 1 unidade.
+// Tudo o que passa por uma SA ou PPP é da Produção; prato, PPC e PPB são da loja.
+// Usado pelo Planejamento e pelo "MP para comprar" da Meta, para cada MP ter um dono só.
+const _PLAN_TIPOS_PRODUCAO = new Set(['SA', 'PPP']);
+function _planFolhas(fichaDe, ingsDe) {
+  const memo = {};
+  const folhas = (pid, stack = new Set()) => {
+    if (memo[pid]) return memo[pid];
+    const f = fichaDe[pid];
+    if (!f || _PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo) || stack.has(pid)) return (memo[pid] = { [pid]: [1, 0] });
+    stack.add(pid);
+    const daProducao = _PLAN_TIPOS_PRODUCAO.has(prodFT(pid)?.tipo);
+    const out = {};
+    (ingsDe[f.id] || []).forEach(([ing, q]) => {
+      const fator = (q || 0) / (f.rend || 1);
+      if (!ing || !(fator > 0)) return;
+      Object.entries(folhas(ing, stack)).forEach(([fo, [lj, pr]]) => {
+        const o = (out[fo] ||= [0, 0]);
+        if (daProducao) o[1] += (lj + pr) * fator;
+        else { o[0] += lj * fator; o[1] += pr * fator; }
+      });
+    });
+    stack.delete(pid);
+    return (memo[pid] = out);
+  };
+  return folhas;
+}
+
 // Tudo o que não depende de margem/dias, por unidade. Fica guardado em _planD.base.
 function _planBase(un) {
   const D = _planD;
@@ -6701,34 +6744,22 @@ function _planBase(un) {
     const f = fichaDe[prato];
     if (f) ingsDe[f.id] = (ingsDe[f.id] || []).filter(([ing]) => !tirar.includes(ing));
   });
-  const memo = {};
-  const folhas = (pid, stack) => {
-    if (memo[pid]) return memo[pid];
-    const f = fichaDe[pid];
-    if (!f || _PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo) || stack.has(pid)) return (memo[pid] = { [pid]: 1 });
-    stack.add(pid);
-    const out = {};
-    (ingsDe[f.id] || []).forEach(([ing, q]) => {
-      const fator = (q || 0) / (f.rend || 1);
-      if (!ing || !(fator > 0)) return;
-      Object.entries(folhas(ing, stack)).forEach(([fo, fq]) => { out[fo] = (out[fo] || 0) + fq * fator; });
-    });
-    stack.delete(pid);
-    return (memo[pid] = out);
-  };
+  const folhas = _planFolhas(fichaDe, ingsDe);
   // Semanas do período (de 7 em 7 a partir do início), para a quebra que a planilha mostra
   const nCal = Math.round((new Date(p.fim + 'T12:00:00') - new Date(p.ini + 'T12:00:00')) / 864e5) + 1;
   const semanas = [];
   for (let d = p.ini; d <= p.fim; d = _isoMais(d, 7)) { const f = _isoMais(d, 6); semanas.push({ ini: d, fim: f > p.fim ? p.fim : f }); }
   const semDe = d => Math.floor((new Date(d + 'T12:00:00') - new Date(p.ini + 'T12:00:00')) / 864e5 / 7);
-  const consumo = {}, consumoSem = {}, dias = new Set();
+  const consumo = {}, consumoSem = {}, consumoLoja = {}, dias = new Set();
   D.vendas.forEach(v => {
     if (v.unidade !== un || v.data < p.ini || v.data > p.fim) return;
     dias.add(v.data);
     const w = semDe(v.data);
-    Object.entries(folhas(v.produto_id, new Set())).forEach(([fo, fq]) => {
-      const q = fq * (Number(v.quantidade) || 0);
+    const qv = Number(v.quantidade) || 0;
+    Object.entries(folhas(v.produto_id)).forEach(([fo, [lj, pr]]) => {
+      const q = (lj + pr) * qv;
       consumo[fo] = (consumo[fo] || 0) + q;
+      consumoLoja[fo] = (consumoLoja[fo] || 0) + lj * qv;
       (consumoSem[fo] ||= semanas.map(() => 0))[w] += q;
     });
   });
@@ -6750,12 +6781,19 @@ function _planBase(un) {
   const configurados = new Set(D.unidades.flatMap(x => [...(x.locais_tem || []), x.local_mp, x.local_producao, x.local_destino]));
   const pref = un === 'Delivery P10' ? 'P10_' : '';
   const aParte = _PLAN_LOCAIS_A_PARTE[un] || [];
-  const tem = {}, temTela = {}, temParte = {}, temDet = {};
+  const tem = {}, temTela = {}, temParte = {}, temDet = {}, temFora = {};
   D.saldos.forEach(s => {
     const l = s.local;
     const daUni = (u.locais_tem || []).includes(l) || (!configurados.has(l) && (pref ? l.startsWith(pref) : !l.startsWith('P10_')));
     const q = Number(s.saldo) || 0;
     if (!daUni || !q) return;
+    // Igual à tela de Saldo (_saldoLocaisDoItem): no Centro, saldo no Estoque da Loja ou num
+    // setor de produto que nenhuma lista do Centro conta é histórico e não entra
+    // (27/10/2026: MP TAMBAQUI DESCAMADO com 768 recebidos na loja até 29/09 e nunca contados).
+    if (un === 'Centro' && !aParte.includes(l) && !D.naListaCentro.has(s.produto_id)) {
+      (temFora[s.produto_id] ||= []).push([l, q]);
+      return;
+    }
     const alvo = aParte.includes(l) ? temParte : temTela;
     alvo[s.produto_id] = (alvo[s.produto_id] || 0) + q;
     (temDet[s.produto_id] ||= []).push([l, q]);
@@ -6767,9 +6805,13 @@ function _planBase(un) {
   // ── linhas ──
   const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
   Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
+  const daMeta = [];
   const linhas = [...ids].map(pid => {
     const pr = prodFT(pid);
     if (!pr || pr.ativo === false || _PLAN_CAT_FORA.has(pr.categoria)) return null;
+    // Só a Produção usa (pela ficha de SA/PPP): quem compra é a Meta de produção (Wagner, 27/10/2026).
+    // Usada também na loja: fica aqui, com o consumo inteiro.
+    if ((consumo[pid] || 0) > 0 && !((consumoLoja[pid] || 0) > 1e-9)) { daMeta.push(pid); return null; }
     const perda = Math.min(Number(pr.perda) || 0, 90) / 100;
     const ficha = consumo[pid] || 0;
     const saiTudo = Math.max(0, saida[pid] || 0);
@@ -6783,10 +6825,10 @@ function _planBase(un) {
     const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
     return {
       ..._planCompraDe(pid, C), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
-  return (D.base[un] = { linhas, nDias, nCal, p, semanas });
+  return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta });
 }
 
 // Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
@@ -6889,6 +6931,8 @@ function _pintarPlan() {
     <dt>Precisa</dt><dd>Consumo por dia × dias que a compra cobre × (1 + ${margem}%). Com 7 dias de venda e 7 de cobertura é a conta da planilha: venda da semana × 1,25.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
     <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam no consumo de hoje. A barra fica vermelha quando não chega aos dias de cobertura e amarela acima de 60 dias (estoque alto ou ficha consumindo pouco). O tracinho marca os dias de cobertura.</dd>
+    <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
+    <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
     <dt>Etiquetas</dt><dd><span class="plan-base plan-base-nada">fora da lista</span> teve saída, mas não está em nenhuma lista de contagem, então não conta.
       <span class="plan-base plan-base-alerta">comprado sem consumo</span> entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores.
       <span class="plan-base plan-base-saida">conferir embalagem</span> compra numa unidade e usa noutra com conversão 1.</dd>
@@ -6897,6 +6941,7 @@ function _pintarPlan() {
   const av = [];
   if (!B.nDias) av.push(`<div class="alert alert-danger py-2 small">Não tem venda gravada de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} para ${esc(u.rotulo)}. O robô "Venda de SA por dia" precisa rodar (no GitHub, Run workflow com dias = 40).</div>`);
   else if (B.nDias < B.nCal - 1) av.push(`<div class="alert alert-warning py-2 small mb-2">O robô gravou a venda de ${B.nDias} dos ${B.nCal} dias do período. A média usa só os dias gravados.</div>`);
+  if (B.daMeta.length) av.push(`<div class="plan-aviso-meta"><i class="bi bi-diagram-3"></i> ${B.daMeta.length} MP que só a Produção usa ficam com a <a href="#" onclick="event.preventDefault();ir('meta-producao', document.querySelector('a[onclick*=meta-producao]'))">Meta de produção</a> (MP para comprar).</div>`);
   document.getElementById('plan-avisos').innerHTML = av.join('');
   // filtros
   const todas = B.linhas.map(l => ({ l, c: _planConta(un, l) }));
@@ -7005,10 +7050,11 @@ function _planDetalhe(un, B, l, c, n1) {
     ? `<div class="plan-sem">${sems.map((w, i) => `<div title="${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(vals[i])} ${unx}">${n1(vals[i])}<b style="height:${vals[i] / mx * 34}px"></b>${_ddmm(w.ini)}</div>`).join('')}</div>`
     : '<div class="vazio">Sem consumo no período.</div>';
   const origem = l.base === 'saida' ? 'Saída do estoque para os setores' : l.base === 'ficha' ? 'Venda aberta pela ficha' : '';
-  const onde = l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), q < 0 ? `<span class="plan-falta">−${n1(-q)} ${unx}</span>` : `${n1(q)} ${unx}`)).join('') +
+  const fora = l.temFora.length ? `<div class="mt-1 text-muted">Não conta: ${l.temFora.map(([loc, q]) => `${esc(_rotuloSemIcone(loc))} ${n1(q)} ${unx}`).join(', ')}. O produto não está em nenhuma lista de contagem do Centro, então esse saldo nunca é conferido (a tela de Saldo também não mostra).</div>` : '';
+  const onde = (l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), q < 0 ? `<span class="plan-falta">−${n1(-q)} ${unx}</span>` : `${n1(q)} ${unx}`)).join('') +
       lin('Conta como estoque', `${n1(l.tem)} ${unx}`, true) +
       (l.temDet.some(([, q]) => q < 0) ? '<div class="mt-1 text-muted">Negativo: saiu por pedido interno mais do que entrou. Quase sempre é compra que chegou e ainda não foi recebida no sistema.</div>' : '')
-    : '<div class="vazio">Nada em estoque nesta unidade.</div>';
+    : '<div class="vazio">Nada em estoque nesta unidade.</div>') + fora;
   const peds = l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '';
   const margem = Math.round(_planMargem(un) * 100);
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
@@ -16727,8 +16773,21 @@ async function _metaCarregar(semana) {
     if (meta?.status !== 'aprovada') _metaRecalc(linhas[u.unidade]);
   });
   _metaManter = null;
+  // MP que a loja também usa (prato, PPC, PPB): o Planejamento compra o consumo inteiro,
+  // a Meta só a que só a Produção usa (_planFolhas, Wagner 27/10/2026). Sem a tabela de
+  // venda por item, tudo fica com a Meta, como antes.
+  const vendaItem = await _metaSelect('prod_venda_item_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim))
+    .catch(e => { console.warn('venda por item (MP da loja):', e.message); return []; });
+  const folhasMp = _planFolhas(fichaDe, ingsDe);
+  const mpLoja = {};
+  unidades.forEach(u => { mpLoja[u.unidade] = new Set(); });
+  vendaItem.forEach(v => {
+    const pu = param[v.unidade];
+    if (!pu || v.data < pu.ini || v.data > pu.fim || !(Number(v.quantidade) > 0)) return;
+    Object.entries(folhasMp(v.produto_id)).forEach(([fo, [lj]]) => { if (lj > 1e-9) mpLoja[v.unidade].add(fo); });
+  });
   const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds, semColCobre,
-              origem, diasOrigem, semOrigem: origemRows === null, pdv };
+              origem, diasOrigem, semOrigem: origemRows === null, pdv, mpLoja };
   _metaSugerirDias(D);
   return D;
 }
@@ -16997,7 +17056,7 @@ function _pintarMeta() {
   document.getElementById('meta-btn-aprovar').innerHTML = `<i class="bi bi-check2-circle"></i> Aprovar meta do ${esc(u.rotulo)}`;
 
   const mp = _metaMp(_metaUn);
-  const nFalta = mp.itens.filter(i => i.falta > 0).length;
+  const nFalta = mp.itens.filter(i => i.falta > 0 && !D.mpLoja?.[_metaUn]?.has(i.pid)).length;
   document.getElementById('meta-btn-mp').innerHTML = `<i class="bi bi-cart"></i> MP para comprar${nFalta ? ` (${nFalta})` : ''}`;
 
   const avisos = [];
@@ -17142,7 +17201,7 @@ async function abrirMpMeta() {
     await carregarCaches();
     const compras = await _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hojeLocal(), -180)).not('produto_id', 'is', null));
-    _metaMpCompra = { un, C: _planCompras(compras, un, hojeLocal()), pedir: {}, marca: {}, grupos: [] };
+    _metaMpCompra = { un, C: _planCompras(compras, un, hojeLocal()), pedir: {}, marca: {}, grupos: [], loja: _metaD.mpLoja?.[un] || new Set() };
   } catch (e) {
     console.error(e);
     _metaMpCompra = null;
@@ -17158,9 +17217,10 @@ function _metaMpLinhas() {
     const l = _planCompraDe(i.pid, M.C);
     const pedido = M.C.pedido[i.pid] || 0;
     const falta = Math.max(0, i.falta - pedido);
-    const auto = _planArred(falta / l.fator, l.unComp);
-    const pedir = M.pedir[i.pid] ?? auto;
-    return { i, l, pedido, falta, auto, pedir, marcado: (M.marca[i.pid] ?? auto > 0) && pedir > 0 };
+    const doPlan = M.loja.has(i.pid);
+    const auto = doPlan ? 0 : _planArred(falta / l.fator, l.unComp);
+    const pedir = doPlan ? 0 : M.pedir[i.pid] ?? auto;
+    return { i, l, pedido, falta, auto, pedir, doPlan, marcado: !doPlan && (M.marca[i.pid] ?? auto > 0) && pedir > 0 };
   });
 }
 
@@ -17173,7 +17233,7 @@ function _pintarMpMeta() {
   const corpo = document.getElementById('meta-mp-corpo');
   if (!linhas.length) { corpo.innerHTML = '<p class="text-muted mb-0">Nenhuma SA com meta, então nenhuma MP.</p>'; return; }
   const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
-  const lin = ({ i, l, pedido, falta, auto, pedir, marcado }) => {
+  const lin = ({ i, l, pedido, falta, auto, pedir, marcado, doPlan }) => {
     const p = prodFT(i.pid);
     const unU = esc(p?.unidade_uso || '');
     const mudou = M.pedir[i.pid] !== undefined;
@@ -17186,10 +17246,11 @@ function _pintarMpMeta() {
       <td class="text-end">${n1(i.noMp)}</td>
       <td class="text-end">${n1(i.naProd)}</td>
       <td class="text-end">${pedido > 0 ? `<span title="Pedidos não recebidos: ${esc((M.C.pedidoDet[i.pid] || []).join(', '))}" style="cursor:help;border-bottom:1px dotted">${n1(pedido)}</span>` : '—'}</td>
-      <td class="text-end fw-bold ${falta > 0 ? 'text-danger' : ''}">${falta > 0 ? n1(falta) : 'ok'}</td>
-      <td style="min-width:110px"><input type="number" class="form-control form-control-sm text-end${mudou ? ' border-warning' : ''}" min="0" step="any"
+      <td class="text-end fw-bold ${falta > 0 && !doPlan ? 'text-danger' : ''}">${falta > 0 ? n1(falta) : 'ok'}</td>
+      <td style="min-width:110px">${doPlan ? '<span class="plan-base plan-base-nada" title="A loja também usa esta MP: o Planejamento de compras compra o consumo inteiro, inclusive o da Produção">compra pelo Planejamento</span>'
+        : `<input type="number" class="form-control form-control-sm text-end${mudou ? ' border-warning' : ''}" min="0" step="any"
            value="${pedir || ''}" placeholder="0" title="${mudou ? `A conta dava ${n1(auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}"
-           onchange="metaMpPedir('${i.pid}', this.value)"><div class="small text-muted text-center">${emb}</div></td>
+           onchange="metaMpPedir('${i.pid}', this.value)"><div class="small text-muted text-center">${emb}</div>`}</td>
       <td class="text-end">${pedir > 0 && l.custo > 0 ? brl(pedir * l.custo) : '—'}</td>
       <td class="small">${esc(l.forn || '—')}</td></tr>`;
   };
@@ -17197,9 +17258,9 @@ function _pintarMpMeta() {
   // Um pedido de compra é de um fornecedor só: a lista vem separada pelo último
   // fornecedor de cada MP, com um botão por grupo. O que não precisa comprar fica no fim.
   const grupos = {};
-  linhas.forEach(x => { const k = x.pedir > 0 || x.marcado ? (x.l.forn || '') : null; (grupos[k] ||= []).push(x); });
+  linhas.forEach(x => { const k = x.doPlan ? 'plan' : x.pedir > 0 || x.marcado ? (x.l.forn || '') : null; (grupos[k] ||= []).push(x); });
   const soma = arr => arr.filter(x => x.marcado).reduce((t, x) => t + x.pedir * x.l.custo, 0);
-  M.grupos = Object.keys(grupos).filter(k => k !== 'null')
+  M.grupos = Object.keys(grupos).filter(k => k !== 'null' && k !== 'plan')
     .sort((a, b) => (!a) - (!b) || soma(grupos[b]) - soma(grupos[a]) || a.localeCompare(b));
   const cabGrupo = (k, gi) => {
     const mk = grupos[k].filter(x => x.marcado);
@@ -17213,7 +17274,9 @@ function _pintarMpMeta() {
   };
   const corpoTab = M.grupos.map((k, gi) => cabGrupo(k, gi) + grupos[k].map(lin).join('')).join('') +
     (grupos.null ? `<tr class="table-light"><td colspan="10"><strong>Não precisa comprar</strong>
-      <span class="small text-muted ms-2">${grupos.null.length} MP já cobertas pelo estoque ou pelo que já foi pedido</span></td></tr>` + grupos.null.map(lin).join('') : '');
+      <span class="small text-muted ms-2">${grupos.null.length} MP já cobertas pelo estoque ou pelo que já foi pedido</span></td></tr>` + grupos.null.map(lin).join('') : '') +
+    (grupos.plan ? `<tr class="table-light"><td colspan="10"><strong>Compra pelo Planejamento</strong>
+      <span class="small text-muted ms-2">${grupos.plan.length} MP que a loja também usa: o Planejamento de compras compra o consumo inteiro, inclusive o da Produção</span></td></tr>` + grupos.plan.map(lin).join('') : '');
   corpo.innerHTML = `
     <p class="small text-muted mb-2">A meta final de cada SA aberta pela ficha até a matéria-prima. Já desconta o que está
       no ${esc(_rotuloSemIcone(u.local_mp))}, na Produção do ${esc(u.rotulo)} e o que já foi pedido e não chegou (pedidos dos últimos ${_PLAN_PEDIDO_DIAS} dias).

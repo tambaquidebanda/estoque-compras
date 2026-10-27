@@ -655,3 +655,5 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .plan-rodape-txt { min-width: 0; }
 .meta-pdv summary { cursor: pointer; list-style: none; }
 .meta-pdv summary::-webkit-details-marker { display: none; }
+.plan-aviso-meta { font-size: .78rem; color: var(--pl-cinza); margin: -2px 0 10px; }
+.plan-aviso-meta a { color: var(--pl-teal); font-weight: 600; }
