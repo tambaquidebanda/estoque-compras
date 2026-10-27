@@ -6595,6 +6595,8 @@ const _PLAN_CFG = 'planejamento_compras';   // inv_configuracoes: margem, dias e
 const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'Delivery P10' };
 // De onde sai o que vai para os setores (base "saída" de quem não está em ficha)
 const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P10': ['ESTOQUE DELIVERY'] };
+// Lugares da unidade que a tela de Saldo mostra em outro cartão: contam no "tem", aparecem à parte
+const _PLAN_LOCAIS_A_PARTE = { 'Centro': ['CENTRAL', 'PRODUCAO'], 'Delivery P10': ['PRODUCAO P10'] };
 const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
 // Categorias que não vêm da venda: ficam fora do Planejamento (Wagner, 26/10/2026)
 const _PLAN_CAT_FORA = new Set(['MC DESCARTÁVEIS/EMBALAGENS', 'MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
@@ -6740,18 +6742,25 @@ function _planBase(un) {
     saida[m.produto_id] = (saida[m.produto_id] || 0) - (Number(m.quantidade) || 0);
     (saidaSem[m.produto_id] ||= semanas.map(() => 0))[semDe(d)] -= Number(m.quantidade) || 0;
   });
-  // ── tem agora: tudo da unidade, mesma regra da meta (_metaCarregar) ──
+  // ── tem agora: tudo da unidade (mesmos lugares da meta, _metaCarregar) ──
+  // Soma com sinal, igual à tela de Saldo: negativo no Estoque da Loja é pedido interno
+  // entregue sem o recebimento lançado, e a compra pendente já entra no "Já pedido"
+  // (27/10/2026: só os positivos davam POLPA GOIABA 40 aqui e 0 no Saldo).
+  // O Central/Produção não aparece no cartão do Centro na tela de Saldo: fica separado.
   const configurados = new Set(D.unidades.flatMap(x => [...(x.locais_tem || []), x.local_mp, x.local_producao, x.local_destino]));
   const pref = un === 'Delivery P10' ? 'P10_' : '';
-  const tem = {}, temDet = {};
+  const aParte = _PLAN_LOCAIS_A_PARTE[un] || [];
+  const tem = {}, temTela = {}, temParte = {}, temDet = {};
   D.saldos.forEach(s => {
     const l = s.local;
     const daUni = (u.locais_tem || []).includes(l) || (!configurados.has(l) && (pref ? l.startsWith(pref) : !l.startsWith('P10_')));
     const q = Number(s.saldo) || 0;
-    if (!daUni || !(q > 0)) return;
-    tem[s.produto_id] = (tem[s.produto_id] || 0) + q;
+    if (!daUni || !q) return;
+    const alvo = aParte.includes(l) ? temParte : temTela;
+    alvo[s.produto_id] = (alvo[s.produto_id] || 0) + q;
     (temDet[s.produto_id] ||= []).push([l, q]);
   });
+  Object.keys(temDet).forEach(pid => { tem[pid] = Math.max(0, (temTela[pid] || 0) + (temParte[pid] || 0)); });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
   const C = _planCompras(D.compras, un, D.hoje, p);
   const { pedido, pedidoDet, comprado } = C;
@@ -6774,7 +6783,7 @@ function _planBase(un) {
     const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
     return {
       ..._planCompraDe(pid, C), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas });
@@ -6976,7 +6985,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
     <td class="plan-col-chk"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
     <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(l.nome)}</div><div class="plan-sub"><span>${sub}</span>${tags.join('')}</div></td>
     <td class="text-end">${porSem > 0 ? n1(porSem) + unx : '<span class="text-muted">—</span>'}</td>
-    <td class="text-end">${n1(l.tem)}${unx}${l.pedido > 0 ? `<span class="plan-caminho">+ ${n1(l.pedido)} a caminho</span>` : ''}</td>
+    <td class="text-end"><span class="${l.temTela < 0 ? 'plan-falta' : ''}">${l.temTela < 0 ? '−' + n1(-l.temTela) : n1(l.temTela)}</span>${unx}${l.temParte ? `<span class="plan-parte" title="Fica no cartão ${un === 'Centro' ? 'Estoque Central' : 'Produção'} da tela de Saldo. Entra na conta.">${l.temParte > 0 ? '+' : '−'} ${n1(Math.abs(l.temParte))} no ${un === 'Centro' ? 'Central' : 'Produção'}</span>` : ''}${l.pedido > 0 ? `<span class="plan-caminho">+ ${n1(l.pedido)} a caminho</span>` : ''}</td>
     <td class="plan-dura">${duraHtml}</td>
     <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
          title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
@@ -6996,7 +7005,10 @@ function _planDetalhe(un, B, l, c, n1) {
     ? `<div class="plan-sem">${sems.map((w, i) => `<div title="${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(vals[i])} ${unx}">${n1(vals[i])}<b style="height:${vals[i] / mx * 34}px"></b>${_ddmm(w.ini)}</div>`).join('')}</div>`
     : '<div class="vazio">Sem consumo no período.</div>';
   const origem = l.base === 'saida' ? 'Saída do estoque para os setores' : l.base === 'ficha' ? 'Venda aberta pela ficha' : '';
-  const onde = l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), `${n1(q)} ${unx}`)).join('') : '<div class="vazio">Nada em estoque nesta unidade.</div>';
+  const onde = l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), q < 0 ? `<span class="plan-falta">−${n1(-q)} ${unx}</span>` : `${n1(q)} ${unx}`)).join('') +
+      lin('Conta como estoque', `${n1(l.tem)} ${unx}`, true) +
+      (l.temDet.some(([, q]) => q < 0) ? '<div class="mt-1 text-muted">Negativo: saiu por pedido interno mais do que entrou. Quase sempre é compra que chegou e ainda não foi recebida no sistema.</div>' : '')
+    : '<div class="vazio">Nada em estoque nesta unidade.</div>';
   const peds = l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '';
   const margem = Math.round(_planMargem(un) * 100);
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
