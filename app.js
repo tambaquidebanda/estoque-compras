@@ -6607,7 +6607,9 @@ let _planCfg = {};                  // { [unidade]: { margem, dias, diasProd: { 
 let _planParam = {};                // período trocado na tela, por unidade (não fica guardado)
 let _planPedir = {};                // { [unidade]: { pid: qtd } } trocado na linha
 let _planMarca = {};                // { [unidade]: { pid: true/false } } marcado/desmarcado à mão
-let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar' };   // ver: comprar | nao | todos
+let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar', grupo: 'cat' };   // ver: comprar | nao | todos; grupo: cat | forn
+let _planAbertos = new Set();       // linhas abertas (detalhe)
+let _planPainel = '';               // '' | 'ajustes' | 'como'
 let _planTocado = new Set();        // linha mexida nesta visita: não some da lista se deixar de faltar
 let _planCfgTimer = null;
 let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
@@ -6621,7 +6623,7 @@ const _planArred = (v, un) => !(v > 0) ? 0 : _planFracao(un) ? Math.ceil(v * 10 
 
 async function carregarPlanejamento() {
   const tb = document.getElementById('plan-tbody');
-  tb.innerHTML = '<tr><td colspan="13" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando o que comprar...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Calculando o que comprar...</td></tr>';
   document.getElementById('plan-btn-pedido').disabled = true;
   const hora = document.getElementById('plan-hora');
   hora.textContent = '';
@@ -6633,7 +6635,7 @@ async function carregarPlanejamento() {
     console.error(e);
     _planD = null;
     const dica = /prod_venda_item_dia/.test(e.message) ? ' Se for a primeira vez, rode o SQL_PLANEJAMENTO_COMPRAS.sql e o robô "Venda de SA por dia" com dias = 40.' : '';
-    tb.innerHTML = `<tr><td colspan="13" class="text-center text-danger py-4">Não consegui montar o planejamento (${esc(e.message)}).${dica}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">Não consegui montar o planejamento (${esc(e.message)}).${dica}</td></tr>`;
     return;
   }
   if (!_planD.unidades.some(u => u.unidade === _planUn)) _planUn = _planD.unidades[0].unidade;
@@ -6848,135 +6850,182 @@ function _pintarPlan() {
   const u = D.unidades.find(x => x.unidade === un);
   const B = _planBase(un);
   const p = B.p;
-  // abas das unidades
+  // abas das unidades: o número é quantos produtos precisam de compra
   document.getElementById('plan-unis').innerHTML = D.unidades.map(x => {
     const n = _planBase(x.unidade).linhas.filter(l => _planConta(x.unidade, l).auto > 0).length;
-    return `<button type="button" class="meta-uni meta-uni-${x.ordem}${x.unidade === un ? ' ativo' : ''}" onclick="planTrocarUnidade('${esc(x.unidade)}')">
-      <span class="meta-uni-nome">${esc(x.rotulo)}</span><span class="meta-uni-sub">${n} para comprar</span></button>`;
+    return `<button type="button" role="tab" aria-selected="${x.unidade === un}" class="plan-uni plan-uni-${x.ordem}${x.unidade === un ? ' ativo' : ''}" onclick="planTrocarUnidade('${esc(x.unidade)}')">
+      ${esc(x.rotulo)}${n ? `<span class="plan-uni-n" title="${n} para comprar">${n}</span>` : ''}</button>`;
   }).join('');
-  const eb = document.getElementById('plan-eyebrow');
-  eb.textContent = `Planejamento de Compras · ${u.rotulo}`;
-  eb.style.color = u.ordem === 2 ? '#8a4513' : '';
   const margem = Math.round(_planMargem(un) * 100);
   const diasP = _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
-  document.getElementById('plan-base').textContent =
-    `Vendido = o que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias) consumiu, aberta pela ficha até a MP. ` +
-    `Precisa = vendido ÷ ${B.nDias} dias × dias a cobrir × (1 + ${margem}%) — com período de 7 dias e cobrir 7, é a conta da planilha (venda × 1,25). ` +
-    `Falta = precisa − o que a unidade tem agora − o que já foi pedido e não chegou. Pedir = falta na embalagem de compra.`;
-  document.getElementById('plan-th-vend').textContent = `Vendido ${_ddmm(p.ini)}–${_ddmm(p.fim)}`;
+  // parâmetros resumidos num botão; o painel de ajuste abre por ele
+  const chips = document.getElementById('plan-chips');
+  chips.innerHTML = `<i class="bi bi-sliders"></i><span>Venda <b>${_ddmm(p.ini)} a ${_ddmm(p.fim)}</b></span><span class="sep"></span>` +
+    `<span>Margem <b>${margem}%</b></span><span class="sep"></span><span>Comprar para <b>${diasP} dias</b></span>`;
+  chips.setAttribute('aria-expanded', String(_planPainel === 'ajustes'));
+  document.getElementById('plan-ajustes').classList.toggle('d-none', _planPainel !== 'ajustes');
   document.getElementById('plan-vini').value = p.ini;
   document.getElementById('plan-vfim').value = p.fim;
-  document.getElementById('plan-ndias').textContent = `(${B.nDias} de ${B.nCal} dias com venda gravada)`;
+  document.getElementById('plan-ndias').textContent = `${B.nDias} de ${B.nCal} dias com venda gravada`;
   document.getElementById('plan-margem').value = margem;
-  document.getElementById('plan-margem-lbl').textContent = margem;
   document.getElementById('plan-dias').value = diasP;
   const padrao = _planPeriodoPadrao();
   const ehPadrao = p.ini === padrao.ini && p.fim === padrao.fim && margem === 25 && diasP === _PLAN_DIAS_PADRAO;
   document.getElementById('plan-param-padrao').classList.toggle('d-none', ehPadrao);
+  const como = document.getElementById('plan-como');
+  como.classList.toggle('d-none', _planPainel !== 'como');
+  document.getElementById('plan-como-btn').setAttribute('aria-expanded', String(_planPainel === 'como'));
+  como.innerHTML = `<dl>
+    <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>).</dd>
+    <dt>Precisa</dt><dd>Consumo por dia × dias que a compra cobre × (1 + ${margem}%). Com 7 dias de venda e 7 de cobertura é a conta da planilha: venda da semana × 1,25.</dd>
+    <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
+    <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam no consumo de hoje. A barra fica vermelha quando não chega aos dias de cobertura e amarela acima de 60 dias (estoque alto ou ficha consumindo pouco). O tracinho marca os dias de cobertura.</dd>
+    <dt>Etiquetas</dt><dd><span class="plan-base plan-base-nada">fora da lista</span> teve saída, mas não está em nenhuma lista de contagem, então não conta.
+      <span class="plan-base plan-base-alerta">comprado sem consumo</span> entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores.
+      <span class="plan-base plan-base-saida">conferir embalagem</span> compra numa unidade e usa noutra com conversão 1.</dd>
+  </dl>`;
   // avisos
   const av = [];
   if (!B.nDias) av.push(`<div class="alert alert-danger py-2 small">Não tem venda gravada de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} para ${esc(u.rotulo)}. O robô "Venda de SA por dia" precisa rodar (no GitHub, Run workflow com dias = 40).</div>`);
-  else if (B.nDias < B.nCal - 1) av.push(`<div class="alert alert-warning py-2 small">O robô gravou a venda de ${B.nDias} dos ${B.nCal} dias do período. A média usa só os dias gravados.</div>`);
+  else if (B.nDias < B.nCal - 1) av.push(`<div class="alert alert-warning py-2 small mb-2">O robô gravou a venda de ${B.nDias} dos ${B.nCal} dias do período. A média usa só os dias gravados.</div>`);
   document.getElementById('plan-avisos').innerHTML = av.join('');
   // filtros
   const todas = B.linhas.map(l => ({ l, c: _planConta(un, l) }));
+  const passaVer = c => _planFiltros.ver === 'todos' || (_planFiltros.ver === 'nao' ? !(c.auto > 0) : c.auto > 0);
   const cats = {};
-  todas.forEach(({ l, c }) => { const k = (cats[l.cat] ||= { n: 0, f: 0 }); k.n++; if (c.auto > 0) k.f++; });
-  const fCat = document.getElementById('plan-f-cat');
-  if (_planFiltros.cat && !cats[_planFiltros.cat]) _planFiltros.cat = '';
-  fCat.innerHTML = `<option value="">Todas as categorias</option>` + Object.keys(cats).sort().map(k =>
-    `<option value="${esc(k)}"${k === _planFiltros.cat ? ' selected' : ''}>${esc(k)}${cats[k].f ? ` · ${cats[k].f} a comprar` : ''}</option>`).join('');
+  todas.forEach(({ l, c }) => { cats[l.cat] ||= 0; if (passaVer(c)) cats[l.cat]++; });
+  if (_planFiltros.cat && cats[_planFiltros.cat] === undefined) _planFiltros.cat = '';
+  const pill = (k, rot, n) => `<button type="button" role="tab" aria-selected="${_planFiltros.cat === k}" class="plan-cat${_planFiltros.cat === k ? ' ativo' : ''}${n ? '' : ' zero'}" onclick="planFiltro('cat', this.dataset.k)" data-k="${esc(k)}">${esc(rot)}<span class="n">${n}</span></button>`;
+  document.getElementById('plan-f-cat').innerHTML = pill('', 'Todas', todas.filter(({ c }) => passaVer(c)).length) +
+    Object.keys(cats).sort().map(k => pill(k, k.replace(/^(MP|MC|MU) /, ''), cats[k])).join('');
   const forns = {};
   todas.forEach(({ l, c }) => { if (!_planFiltros.cat || l.cat === _planFiltros.cat) { const k = l.forn || '—'; forns[k] = (forns[k] || 0) + (c.auto > 0 ? 1 : 0); } });
   if (_planFiltros.forn && forns[_planFiltros.forn] === undefined) _planFiltros.forn = '';
   document.getElementById('plan-f-forn').innerHTML = `<option value="">Todos os fornecedores</option>` +
     Object.keys(forns).sort((a, b) => (a === '—') - (b === '—') || a.localeCompare(b)).map(k =>
       `<option value="${esc(k)}"${k === _planFiltros.forn ? ' selected' : ''}>${k === '—' ? 'Sem compra nos últimos 6 meses' : esc(k)}${forns[k] ? ` · ${forns[k]}` : ''}</option>`).join('');
-  // O que mostrar: o que precisa comprar, o que não precisa (para avaliar) ou tudo
   const naCat = todas.filter(({ l }) => (!_planFiltros.cat || l.cat === _planFiltros.cat) && (!_planFiltros.forn || (l.forn || '—') === _planFiltros.forn));
   const nC = naCat.filter(({ c }) => c.auto > 0).length;
-  document.getElementById('plan-f-ver').innerHTML = [['comprar', 'Precisa comprar', nC], ['nao', 'Não precisa', naCat.length - nC], ['todos', 'Todos', naCat.length]]
-    .map(([k, rot, n]) => `<button type="button" class="btn btn-outline-secondary${_planFiltros.ver === k ? ' active' : ''}" onclick="planFiltro('ver','${k}')">${rot} <span class="badge text-bg-light">${n}</span></button>`).join('');
+  const seg = (k, v, rot, n) => `<button type="button" class="${_planFiltros[k] === v ? 'ativo' : ''}" onclick="planFiltro('${k}','${v}')">${rot}${n === undefined ? '' : `<span class="n">${n}</span>`}</button>`;
+  document.getElementById('plan-f-ver').innerHTML = seg('ver', 'comprar', 'Precisa comprar', nC) + seg('ver', 'nao', 'Não precisa', naCat.length - nC) + seg('ver', 'todos', 'Todos', naCat.length);
+  document.getElementById('plan-f-grupo').innerHTML = seg('grupo', 'cat', 'Por categoria') + seg('grupo', 'forn', 'Por fornecedor');
   _pintarPlanTabela();
 }
 
 function _pintarPlanTabela() {
   const un = _planUn;
+  const B = _planBase(un);
   const vis = _planVisiveis(un);
-  const todas = _planBase(un).linhas.map(l => _planConta(un, l));
+  const nPrecisa = B.linhas.filter(l => _planConta(un, l).auto > 0).length;
   const marc = vis.filter(x => x.c.marcado);
-  const kpi = (rot, val, cor, sub) => `<div class="col-md-3 col-6"><div class="card-kpi"${cor ? ` style="border-color:${cor}"` : ''}>
-    <div class="kpi-label">${rot}</div><div class="kpi-val"${cor ? ` style="color:${cor}"` : ''}>${val}</div>${sub ? `<div class="small text-muted">${sub}</div>` : ''}</div></div>`;
-  document.getElementById('plan-kpis').innerHTML =
-    kpi('Produtos na lista', vis.length, '', `de ${todas.length} da unidade`) +
-    kpi('Precisam comprar', todas.filter(c => c.auto > 0).length, '#b42318', 'na unidade toda') +
-    kpi('Marcados para o pedido', marc.length, '#0e6b68', 'dos que estão na lista') +
-    kpi('Valor marcado', brl(marc.reduce((s, x) => s + x.c.total, 0)), '#0e6b68', 'pelo último custo');
+  const nForn = new Set(marc.map(x => x.l.forn || '—')).size;
+  document.getElementById('plan-resumo').innerHTML = marc.length
+    ? `<span><b>${marc.length}</b> ${marc.length === 1 ? 'item marcado' : 'itens marcados'}</span><span><b>${brl(marc.reduce((s, x) => s + x.c.total, 0))}</b> pelo último custo</span>` +
+      `<span class="apag">${nForn} ${nForn === 1 ? 'fornecedor' : 'fornecedores'} · ${nPrecisa} precisam de compra na unidade</span>`
+    : `<span class="apag">Nenhum item marcado · ${nPrecisa} precisam de compra na unidade</span>`;
   const btn = document.getElementById('plan-btn-pedido');
   btn.disabled = !marc.length;
-  btn.innerHTML = `<i class="bi bi-cart-plus"></i> Gerar pedido${marc.length ? ` com ${marc.length} ${marc.length === 1 ? 'item' : 'itens'}` : ''}`;
+  btn.innerHTML = `<i class="bi bi-cart-plus"></i> Gerar pedido${marc.length ? ` (${marc.length})` : ''}`;
   const mt = document.getElementById('plan-marcar-todos');
   mt.checked = vis.length > 0 && vis.every(x => x.c.marcado || !(x.c.pedir > 0));
   mt.indeterminate = marc.length > 0 && !mt.checked;
   const tb = document.getElementById('plan-tbody');
   if (!vis.length) {
-    tb.innerHTML = `<tr><td colspan="13" class="text-center text-muted py-4">${_planFiltros.ver === 'comprar' ? 'Nada para comprar com estes filtros. Clique em "Não precisa" para ver o resto.' : 'Nenhum produto com estes filtros.'}</td></tr>`;
-  } else {
-    const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
-    const sems = _planBase(un).semanas;
-    const vendTit = l => (l.base === 'saida' ? 'Saída para os setores' : 'Vendido (pela ficha)') + ' por semana:\n' +
-      sems.map((w, i) => `${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(l.vendSem?.[i] || 0)} ${l.un}`).join('\n') +
-      (l.perda > 0 ? `\nPerda do cadastro: ${Math.round(l.perda * 100)}% (entra no Precisa)` : '');
-    const grupos = {};
-    vis.forEach(x => (grupos[x.l.cat] ||= []).push(x));
-    tb.innerHTML = Object.entries(grupos).map(([cat, arr]) => {
-      const mk = arr.filter(x => x.c.marcado);
-      const cab = `<tr class="plan-grupo"><td colspan="13">${esc(cat)}<span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}</span></td></tr>`;
-      return cab + arr.map(({ l, c }) => {
-        const unx = `<span class="plan-un">${esc(l.un)}</span>`;
-        const baseTag = l.base === 'saida' ? '<span class="plan-base plan-base-saida" title="Nenhuma ficha usa este produto: o consumo é a saída do estoque para os setores no período">saída</span>'
-          : l.foraLista ? `<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`
-          : !l.base && l.comprado > 0 ? `<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} de ${_ddmm(_planBase(un).p.ini)} a ${_ddmm(_planBase(un).p.fim)}, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`
-          : !l.base ? '<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>' : '';
-        const dura = l.consDia > 0 ? (l.tem + l.pedido) / l.consDia : null;
-        // Compra numa unidade e usa noutra com conversão 1: a quantidade a pedir sai errada
-        const embTag = l.fator === 1 && norm(l.unComp) !== norm(l.un)
-          ? `<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>` : '';
-        const temTit = l.temDet.length ? l.temDet.map(([loc, q]) => `${_rotuloSemIcone(loc)}: ${n1(q)}`).join('\n') : 'Nada em estoque nesta unidade';
-        const pedTit = l.pedidoDet.length ? 'Pedidos não recebidos: ' + l.pedidoDet.join(', ') : '';
-        const emb = l.fator !== 1 ? `<div class="plan-un text-center">${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}</div>` : `<div class="plan-un text-center">${esc(l.unComp)}</div>`;
-        const mudou = _planPedir[un]?.[l.pid] !== undefined;
-        return `<tr class="${c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok'}">
-          <td class="text-center"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
-          <td><strong>${esc(l.nome)}</strong>${baseTag}${embTag}</td>
-          <td class="text-end">${l.vendido > 0 ? `<span class="plan-dica" title="${esc(vendTit(l))}">${n1(l.vendido)}</span>${unx}` : '—'}</td>
-          <td class="text-center"><input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}"
-               title="${c.proprio ? 'Dias só deste produto (fica guardado). Apague para voltar ao padrão.' : 'Dias de cobertura. Trocar aqui vale só para este produto e fica guardado.'}" onchange="planDiasProd('${l.pid}', this.value)"></td>
-          <td class="text-end">${c.precisa > 0 ? n1(c.precisa) + unx : '—'}</td>
-          <td class="text-end"><span class="plan-dica" title="${esc(temTit)}">${n1(l.tem)}</span>${unx}</td>
-          <td class="text-end">${l.pedido > 0 ? `<span class="plan-dica" title="${esc(pedTit)}">${n1(l.pedido)}</span>${unx}` : '—'}</td>
-          <td class="text-end">${dura === null ? '—' : `<span class="${dura < c.dias ? 'plan-falta' : dura > 60 ? 'plan-muito' : ''}">${dura >= 999 ? '999+' : Math.floor(dura)} d</span>`}</td>
-          <td class="text-end">${c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)}</span>${unx}` : '<span class="text-success">ok</span>'}</td>
-          <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
-               title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)">${emb}</div></td>
-          <td class="text-end">${l.custo > 0 ? brl(l.custo) : '—'}</td>
-          <td class="text-end fw-semibold">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '—'}</td>
-          <td class="small">${esc(l.forn || '—')}</td>
-        </tr>`;
-      }).join('');
-    }).join('');
+    tb.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-5">${_planFiltros.ver === 'comprar' ? 'Nada para comprar com estes filtros. Clique em "Não precisa" para ver o resto.' : 'Nenhum produto com estes filtros.'}</td></tr>`;
+    return;
   }
-  document.getElementById('plan-nota').textContent =
-    'Passe o mouse em "Tem agora" para ver onde está o estoque e em "Já pedido" para ver os pedidos. ' +
-    '"Dura" = quantos dias o estoque mais o já pedido aguenta no consumo atual; acima de 60 dias fica em destaque (estoque alto ou consumo da ficha baixo). ' +
-    '"comprado sem consumo" = entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores. ' +
-    '"saída" = produto que nenhuma ficha usa (limpeza, descartável...): o consumo é o que saiu do estoque para os setores. ' +
-    '"fora da lista" = teve saída, mas não está mais em nenhuma lista de contagem; a saída não conta. ' +
-    'Os dias trocados num produto ficam guardados para a próxima vez; margem e dias de cobertura também.';
+  const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
+  const porForn = _planFiltros.grupo === 'forn';
+  const grupos = {};
+  vis.forEach(x => (grupos[porForn ? (x.l.forn || 'Sem compra nos últimos 6 meses') : x.l.cat] ||= []).push(x));
+  const chaves = Object.keys(grupos).sort((a, b) => porForn ? (a.startsWith('Sem compra') - b.startsWith('Sem compra') || a.localeCompare(b)) : 0);
+  tb.innerHTML = chaves.map(g => {
+    const arr = grupos[g];
+    const mk = arr.filter(x => x.c.marcado);
+    const cab = `<tr class="plan-grupo"><td colspan="7"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}</span></td></tr>`;
+    return cab + arr.map(({ l, c }) => _planLinha(un, B, l, c, n1, porForn)).join('');
+  }).join('');
+}
+
+function _planLinha(un, B, l, c, n1, porForn) {
+  const unx = `<span class="plan-un">${esc(l.un)}</span>`;
+  const tags = [];
+  if (l.base === 'saida') tags.push('<span class="plan-base plan-base-saida" title="Nenhuma ficha usa este produto: o consumo é a saída do estoque para os setores no período">saída</span>');
+  else if (l.foraLista) tags.push(`<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`);
+  else if (!l.base && l.comprado > 0) tags.push(`<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} no período, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`);
+  else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
+  if (l.fator === 1 && norm(l.unComp) !== norm(l.un))
+    tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
+  const sub = porForn ? esc(l.cat) : esc(l.forn || 'sem compra recente');
+  const diasBase = l.base === 'ficha' ? B.nDias : B.nCal;
+  const porSem = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
+  // Dura: barra até o dobro da cobertura (mín. 14 dias), tracinho nos dias de cobertura
+  const dura = l.consDia > 0 ? (l.tem + l.pedido) / l.consDia : null;
+  let duraHtml = '<span class="text-muted small">—</span>';
+  if (dura !== null) {
+    const escala = Math.max(c.dias * 2, 14);
+    const cls = dura < c.dias ? 'falta' : dura > 60 ? 'muito' : 'ok';
+    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 999 ? '999+' : Math.floor(dura)} dias <small>de ${c.dias}${c.proprio ? ' (só deste)' : ''}</small></div>
+      <div class="plan-dura-bar"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${c.dias / escala * 100}%"></i></div></div>`;
+  }
+  const mudou = _planPedir[un]?.[l.pid] !== undefined;
+  const emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
+  const aberta = _planAbertos.has(l.pid);
+  const cls = ['plan-linha', c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok', aberta ? 'plan-aberta' : ''].join(' ');
+  const linha = `<tr class="${cls}" onclick="planAbrir(event, '${l.pid}')">
+    <td class="plan-col-chk"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
+    <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(l.nome)}</div><div class="plan-sub"><span>${sub}</span>${tags.join('')}</div></td>
+    <td class="text-end">${porSem > 0 ? n1(porSem) + unx : '<span class="text-muted">—</span>'}</td>
+    <td class="text-end">${n1(l.tem)}${unx}${l.pedido > 0 ? `<span class="plan-caminho">+ ${n1(l.pedido)} a caminho</span>` : ''}</td>
+    <td class="plan-dura">${duraHtml}</td>
+    <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
+         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
+    <td class="text-end plan-total">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '<span class="text-muted fw-normal">—</span>'}</td>
+  </tr>`;
+  return aberta ? linha + _planDetalhe(un, B, l, c, n1) : linha;
+}
+
+// O que antes eram colunas (venda por semana, onde está, a conta, dias) aparece ao abrir a linha
+function _planDetalhe(un, B, l, c, n1) {
+  const unx = esc(l.un);
+  const lin = (a, b, tot) => `<div class="lin${tot ? ' tot' : ''}"><span>${a}</span><span>${b}</span></div>`;
+  const sems = B.semanas;
+  const vals = sems.map((_, i) => l.vendSem?.[i] || 0);
+  const mx = Math.max(...vals, 0);
+  const semHtml = mx > 0
+    ? `<div class="plan-sem">${sems.map((w, i) => `<div title="${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(vals[i])} ${unx}">${n1(vals[i])}<b style="height:${vals[i] / mx * 34}px"></b>${_ddmm(w.ini)}</div>`).join('')}</div>`
+    : '<div class="vazio">Sem consumo no período.</div>';
+  const origem = l.base === 'saida' ? 'Saída do estoque para os setores' : l.base === 'ficha' ? 'Venda aberta pela ficha' : '';
+  const onde = l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), `${n1(q)} ${unx}`)).join('') : '<div class="vazio">Nada em estoque nesta unidade.</div>';
+  const peds = l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '';
+  const margem = Math.round(_planMargem(un) * 100);
+  return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
+    <div class="plan-det-card"><h6>Consumo por semana</h6>${semHtml}
+      <div class="mt-2 text-muted">${origem}${l.perda > 0 ? ` · perda do cadastro ${Math.round(l.perda * 100)}% (entra na conta)` : ''}</div></div>
+    <div class="plan-det-card"><h6>Onde está</h6>${onde}${peds}</div>
+    <div class="plan-det-card"><h6>A conta</h6>
+      ${lin(`Precisa (${c.dias} dias + ${margem}%)`, `${n1(c.precisa)} ${unx}`)}
+      ${lin('− estoque agora', `${n1(l.tem)} ${unx}`)}
+      ${l.pedido > 0 ? lin('− já pedido', `${n1(l.pedido)} ${unx}`) : ''}
+      ${lin('Falta', c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)} ${unx}</span>` : '<span class="text-success">nada</span>', true)}
+      ${lin(`Pedir em ${esc(l.unComp)}${l.fator !== 1 ? ` de ${n1(l.fator)} ${unx}` : ''}`, `<b>${n1(c.auto)}</b>`)}
+      ${lin('Último custo', l.custo > 0 ? brl(l.custo) : '—')}</div>
+    <div class="plan-det-card"><h6>Comprar para quantos dias</h6>
+      <input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}" onchange="planDiasProd('${l.pid}', this.value)" aria-label="Dias de cobertura de ${esc(l.nome)}"> dias
+      <div class="mt-2 text-muted">${c.proprio ? 'Só deste produto, fica guardado. Apague para voltar ao padrão da unidade.' : 'Padrão da unidade. Trocar aqui vale só para este produto e fica guardado.'}</div>
+      <div class="mt-2 text-muted">Último fornecedor: <b>${esc(l.forn || '—')}</b></div></div>
+  </div></td></tr>`;
 }
 
 function planTrocarUnidade(un) { _planUn = un; _planFiltros.cat = ''; _planFiltros.forn = ''; _planTocado.clear(); _pintarPlan(); }
 function planFiltro(k, v) { _planFiltros[k] = v; if (k === 'cat') _planFiltros.forn = ''; k === 'busca' ? _pintarPlanTabela() : _pintarPlan(); }
+function planAbrir(ev, pid) {
+  if (ev.target.closest('input, button, a, label')) return;
+  _planAbertos.has(pid) ? _planAbertos.delete(pid) : _planAbertos.add(pid);
+  _pintarPlanTabela();
+}
+function planAjustes() { _planPainel = _planPainel === 'ajustes' ? '' : 'ajustes'; _pintarPlan(); }
+function planComoCalcula() { _planPainel = _planPainel === 'como' ? '' : 'como'; _pintarPlan(); }
 function planMarcar(pid, v) { _planTocado.add(pid); (_planMarca[_planUn] ||= {})[pid] = v; _pintarPlanTabela(); }
 function planMarcarTodos(v) {
   const m = (_planMarca[_planUn] ||= {});
