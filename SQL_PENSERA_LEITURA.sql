@@ -123,20 +123,19 @@ COMMIT;
 -- =====================================================================
 -- PASSO 3 - CRIA O USUARIO DO PENSERA
 --
--- ANTES: troque COLE_AQUI_A_SENHA pela senha gerada (so letras e numeros,
--- 32+ caracteres). A senha NAO pode ir para o GitHub: nao salve este
--- arquivo com ela. Mande a senha para o Mario por mensagem particular.
+-- Nao precisa editar nada: o proprio SQL sorteia a senha e mostra no
+-- resultado, numa coluna "senha_do_mario". Copie e mande para o Mario
+-- por mensagem particular. Ela nao fica gravada neste arquivo.
 -- =====================================================================
 BEGIN;
 
+CREATE TEMP TABLE _pensera_senha AS
+SELECT replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '') AS senha;
+
 DO $$
-DECLARE
-  senha constant text := 'COLE_AQUI_A_SENHA';
 BEGIN
-  IF senha = 'COLE_AQUI_A_SENHA' OR length(senha) < 20 THEN
-    RAISE EXCEPTION 'Troque COLE_AQUI_A_SENHA pela senha gerada (20+ caracteres). Nada foi alterado.';
-  END IF;
-  EXECUTE format('CREATE ROLE pensera_leitura LOGIN PASSWORD %L CONNECTION LIMIT 5', senha);
+  EXECUTE format('CREATE ROLE pensera_leitura LOGIN PASSWORD %L CONNECTION LIMIT 5',
+                 (SELECT senha FROM _pensera_senha));
 END $$;
 
 -- Toda conexao dele ja comeca so-leitura, com limite de 2 minutos por consulta
@@ -151,6 +150,9 @@ GRANT SELECT ON ALL TABLES IN SCHEMA pensera TO pensera_leitura;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pensera GRANT SELECT ON TABLES TO pensera_leitura;
 
 COMMIT;
+
+-- a senha sorteada (copie a coluna senha_do_mario)
+SELECT senha AS senha_do_mario FROM _pensera_senha;
 
 
 -- =====================================================================
@@ -194,5 +196,7 @@ SELECT c.relname AS view, has_table_privilege('pensera_leitura', c.oid, 'SELECT'
 -- DROP ROLE pensera_leitura;
 -- (a area e as views podem ficar; para apagar tudo: DROP SCHEMA pensera CASCADE;)
 --
--- TROCAR A SENHA:
--- ALTER ROLE pensera_leitura PASSWORD 'nova_senha';
+-- TROCAR A SENHA (sorteia outra e mostra no resultado):
+-- CREATE TEMP TABLE _nova AS SELECT replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-','') AS senha;
+-- DO $$ BEGIN EXECUTE format('ALTER ROLE pensera_leitura PASSWORD %L', (SELECT senha FROM _nova)); END $$;
+-- SELECT senha AS senha_nova FROM _nova;
