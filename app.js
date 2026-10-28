@@ -999,6 +999,7 @@ async function prepararFormCompra() {
       document.getElementById('c-forn-id').value = pl.fornId || '';
       if (setorSel) setorSel.value = pl.setor || '';
       if (usoSel && pl.unidadeId) usoSel.value = pl.unidadeId;
+      if (pl.entrega) document.getElementById('c-data-entrega').value = pl.entrega;   // próximo dia de entrega do cadastro
       _renderItensPedido();
       toast(`${pl.n} ${pl.n === 1 ? 'item veio' : 'itens vieram'} ${pl.origem === 'Planejamento' ? 'do Planejamento' : 'da ' + pl.origem}. Confira fornecedor, pagamento e entrega e finalize.`, 'ok');
     }
@@ -1970,6 +1971,14 @@ async function renderListaCad(tipo) {
 
   const cols = c.tbl === 'cmp_categorias' ? 'id,nome,plano_conta,plano_conta_id' : 'id,nome';
   const { data } = await sb.from(c.tbl).select(cols).order('nome');
+  if (tipo === 'fornecedores') {
+    await _fornCompraCarregar().catch(e => console.warn('fornecedor_compra:', e.message));
+    c.extra = r => {
+      const v = _fornCompra[r.id] || {};
+      const d = _fornDiasTxt(r.id), n = (v.produtos || []).length;
+      return d || n ? `<small class="text-muted ms-2">${d ? 'entrega ' + esc(d) : ''}${d && n ? ' · ' : ''}${n ? `${n} ${n === 1 ? 'produto' : 'produtos'}` : ''}</small>` : '';
+    };
+  }
   const rows = data || [];
   const el   = document.getElementById(c.el);
 
@@ -1978,6 +1987,10 @@ async function renderListaCad(tipo) {
         <div class="lista-item">
           <span>${esc(r.nome)}${c.extra ? c.extra(r) : ''}</span>
           <div class="d-flex gap-1">
+            ${tipo === 'fornecedores' ? `
+            <button class="btn-del" style="background:#e8f4f8;color:#0d6efd" onclick="abrirFornCompra('${r.id}')" title="Produtos que entrega e dias de entrega">
+              <i class="bi bi-pencil"></i>
+            </button>` : ''}
             ${tipo === 'categorias' ? `
             <button class="btn-del" style="background:#e8f4f8;color:#0d6efd" onclick="editarPlanoCategoria('${r.id}','${esc(r.nome)}','${r.plano_conta_id||''}')" title="Editar plano de contas">
               <i class="bi bi-pencil"></i>
@@ -1988,6 +2001,69 @@ async function renderListaCad(tipo) {
           </div>
         </div>`).join('')
     : '<p class="text-muted small p-2 mb-0">Nenhum item cadastrado.</p>';
+}
+
+// ── Produtos que o fornecedor entrega e dias de entrega (usado pelo Planejamento e pela Meta) ──
+let _fornEd = null;   // { id, nome, dias: Set, produtos: [pid] }
+async function abrirFornCompra(id) {
+  const f = cForn.find(x => x.id === id);
+  if (!f) return;
+  await Promise.all([carregarProdutosFT(), _fornCompraCarregar()]).catch(e => toast('Não consegui ler o cadastro: ' + e.message, 'erro'));
+  const v = _fornCompra[id] || {};
+  _fornEd = { id, nome: f.nome, dias: new Set(v.dias || []), produtos: [...(v.produtos || [])] };
+  document.getElementById('forn-compra-titulo').textContent = f.nome;
+  document.getElementById('forn-compra-lista').innerHTML = cProdutosFT.filter(p => p.ativo !== false && _planEhCompra(p))
+    .map(p => `<option value="${esc(p.nome)}"></option>`).join('');
+  document.getElementById('forn-compra-busca').value = '';
+  _pintarFornCompra();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-forn-compra')).show();
+}
+function _pintarFornCompra() {
+  const E = _fornEd;
+  // segunda primeiro, como a semana da tela
+  document.getElementById('forn-compra-dias').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d =>
+    `<button type="button" class="btn btn-sm ${E.dias.has(d) ? 'btn-primary' : 'btn-outline-secondary'}" aria-pressed="${E.dias.has(d)}" onclick="fornCompraDia(${d})">${_FORN_DIAS[d]}</button>`).join('');
+  const prods = E.produtos.map(pid => ({ pid, nome: prodFT(pid)?.nome || pid })).sort((a, b) => a.nome.localeCompare(b.nome));
+  document.getElementById('forn-compra-n').textContent = prods.length ? `(${prods.length})` : '';
+  document.getElementById('forn-compra-prods').innerHTML = prods.length
+    ? prods.map(p => `<div class="lista-item"><span>${esc(p.nome)}</span><button class="btn-del" onclick="fornCompraTirar('${p.pid}')" title="Tirar"><i class="bi bi-x-lg"></i></button></div>`).join('')
+    : '<p class="text-muted small p-2 mb-0">Nenhum produto. Busque acima ou puxe do histórico de compras.</p>';
+}
+function fornCompraDia(d) { _fornEd.dias.has(d) ? _fornEd.dias.delete(d) : _fornEd.dias.add(d); _pintarFornCompra(); }
+function fornCompraTirar(pid) { _fornEd.produtos = _fornEd.produtos.filter(x => x !== pid); _pintarFornCompra(); }
+function fornCompraAdd() {
+  const el = document.getElementById('forn-compra-busca');
+  const p = cProdutosFT.find(x => norm(x.nome) === norm(el.value.trim()));
+  if (!p) { toast('Escolha um produto da lista.', 'erro'); return; }
+  if (!_fornEd.produtos.includes(p.id)) _fornEd.produtos.push(p.id);
+  el.value = '';
+  _pintarFornCompra();
+}
+// O que foi comprado dele nos últimos 90 dias (qualquer unidade)
+async function fornCompraHistorico() {
+  const E = _fornEd;
+  const { data, error } = await sb.from('cmp_compras').select('produto_id,status_receb')
+    .or(`fornecedor_id.eq.${E.id},fornecedor_nome.eq."${E.nome.replace(/"/g, '')}"`)
+    .gte('data', _isoMais(hojeLocal(), -90)).not('produto_id', 'is', null);
+  if (error) { toast('Não consegui ler as compras: ' + error.message, 'erro'); return; }
+  const novos = [...new Set((data || []).filter(c => !['dispensado', 'cancelado'].includes(c.status_receb)).map(c => c.produto_id))]
+    .filter(pid => prodFT(pid) && !E.produtos.includes(pid));
+  E.produtos.push(...novos);
+  toast(novos.length ? `${novos.length} ${novos.length === 1 ? 'produto entrou' : 'produtos entraram'} pelas compras dos últimos 90 dias.` : 'Nada novo nas compras dos últimos 90 dias.', novos.length ? 'ok' : '');
+  _pintarFornCompra();
+}
+async function salvarFornCompra() {
+  const E = _fornEd;
+  try {
+    await _fornCompraCarregar();   // relê: outra pessoa pode ter mexido em outro fornecedor
+    const v = { dias: [...E.dias].sort(), produtos: E.produtos };
+    if (!v.dias.length && !v.produtos.length) delete _fornCompra[E.id]; else _fornCompra[E.id] = v;
+    const { error } = await sb.from('inv_configuracoes').upsert({ chave: _FORN_CFG, valor: _fornCompra }, { onConflict: 'chave' });
+    if (error) throw error;
+  } catch (e) { toast('Não consegui salvar: ' + e.message, 'erro'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('modal-forn-compra'))?.hide();
+  toast('Fornecedor salvo.', 'ok');
+  renderListaCad('fornecedores');
 }
 
 async function addFornecedor() {
@@ -6598,7 +6674,8 @@ const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P1
 // Lugares da unidade que a tela de Saldo mostra em outro cartão: contam no "tem", aparecem à parte
 const _PLAN_LOCAIS_A_PARTE = { 'Centro': ['CENTRAL', 'PRODUCAO'], 'Delivery P10': ['PRODUCAO P10'] };
 const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
-// Categorias que não vêm da venda: ficam fora do Planejamento (Wagner, 26/10/2026)
+// Categorias que não vêm da venda (Wagner, 26/10/2026): ficam na aba "Pelo uso" (28/10/2026),
+// que conta pela saída do estoque para os setores
 const _PLAN_CAT_FORA = new Set(['MC DESCARTÁVEIS/EMBALAGENS', 'MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
   'MU ESCRITÓRIO', 'MU UNIFORMES', 'MU UTENSÍLIOS', 'Comida Funcionário']);   // nome antigo de REFEIÇÃO FUNCIONÁRIOS
 const _planEhCompra = p => !!p && (_PLAN_TIPOS_COMPRA.has(p.tipo) || /^(MP|MC|MU) /.test(p.categoria || ''));
@@ -6609,6 +6686,8 @@ let _planCfg = {};                  // { [unidade]: { margem, dias, diasProd: { 
 let _planParam = {};                // período trocado na tela, por unidade (não fica guardado)
 let _planPedir = {};                // { [unidade]: { pid: qtd } } trocado na linha
 let _planMarca = {};                // { [unidade]: { pid: true/false } } marcado/desmarcado à mão
+let _planModo = 'venda';            // venda (comida e bebida) | uso (limpeza, embalagem, utensílios...)
+let _planFornTroca = {};            // { [unidade]: { pid: fornecedor_id } } fornecedor trocado na linha (não fica guardado)
 let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar', grupo: 'cat' };   // ver: comprar | nao | todos; grupo: cat | forn
 let _planAbertos = new Set();       // linhas abertas (detalhe)
 let _planPainel = '';               // '' | 'ajustes' | 'como'
@@ -6616,7 +6695,11 @@ let _planTocado = new Set();        // linha mexida nesta visita: não some da l
 let _planCfgTimer = null;
 let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
 
-const _planPeriodoPadrao = () => ({ ini: _isoMais(hojeLocal(), -28), fim: _isoMais(hojeLocal(), -1) });
+// Período da venda: semanas fechadas de segunda a domingo, terminando no último domingo
+// (Wagner, 28/10/2026: antes eram os 28 dias até ontem e a semana mudava com o dia em que se abria a tela)
+const _planUltimoDomingo = (h = hojeLocal()) => _isoMais(h, -(new Date(h + 'T12:00:00').getDay() || 7));
+const _planSemanas = n => { const fim = _planUltimoDomingo(); return { ini: _isoMais(fim, -(7 * n - 1)), fim }; };
+const _planPeriodoPadrao = () => _planSemanas(4);
 const _planUCfg = un => (_planCfg[un] ||= {});
 const _planMargem = un => _planUCfg(un).margem ?? _PLAN_MARGEM_PADRAO;
 const _planDiasDe = (un, pid) => _planUCfg(un).diasProd?.[pid] ?? _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
@@ -6646,8 +6729,9 @@ async function carregarPlanejamento() {
 
 async function _planCarregar() {
   await Promise.all([carregarProdutosFT(), carregarCaches()]);
-  const [unidades, cfgRow, listasRows] = await Promise.all([
+  const [unidades, , cfgRow, listasRows] = await Promise.all([
     _metaSelect('prod_unidades', '*', q => q.order('ordem')),
+    _fornCompraCarregar(),
     sb.from('inv_configuracoes').select('valor').eq('chave', _PLAN_CFG).maybeSingle(),
     sb.from('inv_configuracoes').select('chave,valor').in('chave', ['estrutura', 'adicoes', 'mapeamentos', 'excluidos']),
   ]);
@@ -6808,7 +6892,7 @@ function _planBase(un) {
   const daMeta = [];
   const linhas = [...ids].map(pid => {
     const pr = prodFT(pid);
-    if (!pr || pr.ativo === false || _PLAN_CAT_FORA.has(pr.categoria)) return null;
+    if (!pr || pr.ativo === false) return null;
     // Só a Produção usa (pela ficha de SA/PPP): quem compra é a Meta de produção (Wagner, 27/10/2026).
     // Usada também na loja: fica aqui, com o consumo inteiro.
     if ((consumo[pid] || 0) > 0 && !((consumoLoja[pid] || 0) > 1e-9)) { daMeta.push(pid); return null; }
@@ -6824,20 +6908,23 @@ function _planBase(un) {
     const diasBase = base === 'ficha' ? nDias : nCal;
     const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
     return {
-      ..._planCompraDe(pid, C), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
+      ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
       foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
-  return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta });
+  return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta, C });
 }
 
 // Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
-// (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço e a categoria de compra.
-// Usado pelo Planejamento e pelo "MP para comprar" da Meta de Produção.
+// (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço, o fornecedor mais usado e a
+// categoria de compra. Usado pelo Planejamento e pelo "MP para comprar" da Meta.
 function _planCompras(compras, un, hoje, p) {
   const fin = _PLAN_UNI_FIN[un];
   const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
+  const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
   const pedido = {}, pedidoDet = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
+  const uso = {};        // { pid: { forn: { n: pedidos distintos, ped: Set, fornId, data } } } da unidade
+  const historico = {};  // { pid: { forn: fornId } } quem já vendeu este produto (180 dias, qualquer unidade)
   [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
     const pid = c.produto_id;
     const minha = c.unidade_uso === fin;
@@ -6850,16 +6937,52 @@ function _planCompras(compras, un, hoje, p) {
       comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
     if (minha && !ultimo[pid]) ultimo[pid] = c;
     if (!ultimoOutra[pid]) ultimoOutra[pid] = c;
+    const fn = c.fornecedor_nome || '';
+    if (fn && c.status_receb !== 'dispensado' && c.status_receb !== 'cancelado') {
+      const h = (historico[pid] ||= {});
+      if (!(fn in h)) h[fn] = c.fornecedor_id || null;
+      if (minha && c.data >= limiteUso) {
+        const u = ((uso[pid] ||= {})[fn] ||= { n: 0, ped: new Set(), fornId: c.fornecedor_id || null, data: c.data });
+        if (!u.ped.has(c.pedido_num)) { u.ped.add(c.pedido_num); u.n++; }
+      }
+    }
     const cn = prodFT(pid)?.categoria;
     if (cn && c.categoria) { const v = (catVotos[cn] ||= {}); v[c.categoria] = (v[c.categoria] || 0) + 1; }
   });
   const catDaCategoria = {};
   Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
-  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado };
+  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
+}
+
+// Fornecedor sugerido de um produto (Wagner, 28/10/2026: o último fornecedor errava quando
+// a última compra foi exceção, ex. Coca lata no Comprador Externo porque a Coca estava sem):
+//   1. trocado na tela (troca = id do fornecedor)
+//   2. o cadastro do fornecedor diz que ele entrega o produto (se mais de um, o mais usado)
+//   3. o que mais recebeu pedido nas últimas 4 semanas na unidade; no empate perde o
+//      Comprador Externo (a exceção), depois ganha o mais recente
+//   4. o último que vendeu
+function _planFornDe(pid, C, troca) {
+  const nomeDe = id => cForn.find(f => f.id === id)?.nome || '';
+  if (troca) return { forn: nomeDe(troca), fornId: troca, fornOrigem: 'troca' };
+  const uso = C.uso[pid] || {};
+  const nUso = f => uso[f.nome]?.n || 0;
+  const doCad = Object.entries(_fornCompra).filter(([, v]) => (v.produtos || []).includes(pid))
+    .map(([id]) => cForn.find(f => f.id === id)).filter(Boolean)
+    .sort((a, b) => nUso(b) - nUso(a) || a.nome.localeCompare(b.nome));
+  if (doCad.length) return { forn: doCad[0].nome, fornId: doCad[0].id, fornOrigem: 'cadastro', fornCad: doCad.length };
+  const cand = Object.entries(uso).sort(([fa, a], [fb, b]) =>
+    b.n - a.n || isCompExterna(fa) - isCompExterna(fb) || b.data.localeCompare(a.data));
+  if (cand.length) {
+    const [nome, u] = cand[0];
+    const tot = cand.reduce((s, [, x]) => s + x.n, 0);
+    return { forn: nome, fornId: u.fornId, fornOrigem: 'uso', fornUso: `${u.n} de ${tot} ${tot === 1 ? 'pedido' : 'pedidos'}` };
+  }
+  const ult = C.ultimo[pid] || C.ultimoOutra[pid] || null;
+  return { forn: ult?.fornecedor_nome || '', fornId: ult?.fornecedor_id || null, fornOrigem: ult ? 'ultimo' : '' };
 }
 
 // O que a tela de Pedido de Compra precisa de um produto: embalagem, custo, fornecedor, categoria
-function _planCompraDe(pid, C) {
+function _planCompraDe(pid, C, troca) {
   const pr = prodFT(pid) || {};
   const ult = C.ultimo[pid] || C.ultimoOutra[pid] || null;
   const fator = Number(pr.fator_conversao) || 1;
@@ -6867,9 +6990,35 @@ function _planCompraDe(pid, C) {
     : Number(ult?.custo_unit) > 0 ? Number(ult.custo_unit) : (Number(pr.custo_uso) || 0) * fator;
   return {
     pid, nome: pr.nome || pid, unComp: pr.unidade_comp || pr.unidade_uso || 'UN', fator, custo,
-    forn: ult?.fornecedor_nome || '', fornId: ult?.fornecedor_id || null,
+    ..._planFornDe(pid, C, troca), fornUlt: ult?.fornecedor_nome || '',
     catCompra: ult?.categoria || C.catDaCategoria[pr.categoria] || '', setor: C.ultimo[pid]?.setor || '',
   };
+}
+
+// ── Fornecedor: produtos que entrega e dias de entrega (Cadastros > Fornecedores) ──
+// Fica em inv_configuracoes 'fornecedor_compra' = { [fornecedor_id]: { dias: [0..6], produtos: [pid] } }
+// (0 = domingo). A tabela fornecedores é do financeiro também, por isso não ganhou coluna.
+const _FORN_CFG = 'fornecedor_compra';
+const _PLAN_FORN_USO_DIAS = 28;
+const _FORN_DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+let _fornCompra = {};
+async function _fornCompraCarregar() {
+  const { data, error } = await sb.from('inv_configuracoes').select('valor').eq('chave', _FORN_CFG).maybeSingle();
+  if (error) throw error;
+  _fornCompra = data?.valor || {};
+  return _fornCompra;
+}
+// Dias de entrega por extenso: "Seg e Qui"
+const _fornDiasTxt = id => {
+  const d = [...(_fornCompra[id]?.dias || [])].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  return d.length ? d.map(x => _FORN_DIAS[x]).join(d.length === 2 ? ' e ' : ', ') : '';
+};
+// Próxima entrega a partir de amanhã (o pedido de hoje não chega hoje)
+function _fornProxEntrega(id, hoje = hojeLocal()) {
+  const dias = _fornCompra[id]?.dias || [];
+  if (!dias.length) return null;
+  for (let n = 1; n <= 7; n++) { const d = _isoMais(hoje, n); if (dias.includes(new Date(d + 'T12:00:00').getDay())) return d; }
+  return null;
 }
 
 // Margem, dias e o que foi trocado na linha
@@ -6884,11 +7033,13 @@ function _planConta(un, l) {
   return { dias, precisa, falta, auto, pedir, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio: _planUCfg(un).diasProd?.[l.pid] !== undefined };
 }
 
+// Linhas da aba aberta (Pela venda / Pelo uso)
+const _planLinhas = un => _planBase(un).linhas.filter(l => l.uso === (_planModo === 'uso'));
+
 function _planVisiveis(un) {
-  const B = _planBase(un);
   const f = _planFiltros;
   const q = norm(f.busca || '').trim();
-  return B.linhas.map(l => ({ l, c: _planConta(un, l) })).filter(({ l, c }) =>
+  return _planLinhas(un).map(l => ({ l, c: _planConta(un, l) })).filter(({ l, c }) =>
     (!f.cat || l.cat === f.cat) && (!f.forn || (l.forn || '—') === f.forn) &&
     (!q || norm(l.nome).includes(q)) &&
     (f.ver === 'todos' || (f.ver === 'nao' ? !(c.auto > 0) : (c.auto > 0 || c.marcado || _planTocado.has(l.pid)))));
@@ -6903,10 +7054,14 @@ function _pintarPlan() {
   const p = B.p;
   // abas das unidades: o número é quantos produtos precisam de compra
   document.getElementById('plan-unis').innerHTML = D.unidades.map(x => {
-    const n = _planBase(x.unidade).linhas.filter(l => _planConta(x.unidade, l).auto > 0).length;
+    const n = _planLinhas(x.unidade).filter(l => _planConta(x.unidade, l).auto > 0).length;
     return `<button type="button" role="tab" aria-selected="${x.unidade === un}" class="plan-uni plan-uni-${x.ordem}${x.unidade === un ? ' ativo' : ''}" onclick="planTrocarUnidade('${esc(x.unidade)}')">
       ${esc(x.rotulo)}${n ? `<span class="plan-uni-n" title="${n} para comprar">${n}</span>` : ''}</button>`;
   }).join('');
+  const nModo = uso => B.linhas.filter(l => l.uso === uso && _planConta(un, l).auto > 0).length;
+  const modo = (k, rot, sub, n) => `<button type="button" role="tab" aria-selected="${_planModo === k}" class="plan-modo${_planModo === k ? ' ativo' : ''}" onclick="planModo('${k}')">${rot}${n ? `<span class="plan-uni-n">${n}</span>` : ''}<small>${sub}</small></button>`;
+  document.getElementById('plan-modo').innerHTML = modo('venda', 'Pela venda', 'comida e bebida, pela ficha', nModo(false)) +
+    modo('uso', 'Pelo uso', 'limpeza, embalagem, utensílios, pela saída', nModo(true));
   const margem = Math.round(_planMargem(un) * 100);
   const diasP = _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
   // parâmetros resumidos num botão; o painel de ajuste abre por ele
@@ -6927,11 +7082,13 @@ function _pintarPlan() {
   como.classList.toggle('d-none', _planPainel !== 'como');
   document.getElementById('plan-como-btn').setAttribute('aria-expanded', String(_planPainel === 'como'));
   como.innerHTML = `<dl>
-    <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>).</dd>
+    ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
+    <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>).</dd>
     <dt>Precisa</dt><dd>Consumo por dia × dias que a compra cobre × (1 + ${margem}%). Com 7 dias de venda e 7 de cobertura é a conta da planilha: venda da semana × 1,25.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
     <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam no consumo de hoje. A barra fica vermelha quando não chega aos dias de cobertura e amarela acima de 60 dias (estoque alto ou ficha consumindo pouco). O tracinho marca os dias de cobertura.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
+    <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
     <dt>Etiquetas</dt><dd><span class="plan-base plan-base-nada">fora da lista</span> teve saída, mas não está em nenhuma lista de contagem, então não conta.
       <span class="plan-base plan-base-alerta">comprado sem consumo</span> entrou compra no período, mas nenhuma ficha usa e nada saiu para os setores.
@@ -6941,10 +7098,10 @@ function _pintarPlan() {
   const av = [];
   if (!B.nDias) av.push(`<div class="alert alert-danger py-2 small">Não tem venda gravada de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} para ${esc(u.rotulo)}. O robô "Venda de SA por dia" precisa rodar (no GitHub, Run workflow com dias = 40).</div>`);
   else if (B.nDias < B.nCal - 1) av.push(`<div class="alert alert-warning py-2 small mb-2">O robô gravou a venda de ${B.nDias} dos ${B.nCal} dias do período. A média usa só os dias gravados.</div>`);
-  if (B.daMeta.length) av.push(`<div class="plan-aviso-meta"><i class="bi bi-diagram-3"></i> ${B.daMeta.length} MP que só a Produção usa ficam com a <a href="#" onclick="event.preventDefault();ir('meta-producao', document.querySelector('a[onclick*=meta-producao]'))">Meta de produção</a> (MP para comprar).</div>`);
+  if (B.daMeta.length && _planModo === 'venda') av.push(`<div class="plan-aviso-meta"><i class="bi bi-diagram-3"></i> ${B.daMeta.length} MP que só a Produção usa ficam com a <a href="#" onclick="event.preventDefault();ir('meta-producao', document.querySelector('a[onclick*=meta-producao]'))">Meta de produção</a> (MP para comprar).</div>`);
   document.getElementById('plan-avisos').innerHTML = av.join('');
   // filtros
-  const todas = B.linhas.map(l => ({ l, c: _planConta(un, l) }));
+  const todas = _planLinhas(un).map(l => ({ l, c: _planConta(un, l) }));
   const passaVer = c => _planFiltros.ver === 'todos' || (_planFiltros.ver === 'nao' ? !(c.auto > 0) : c.auto > 0);
   const cats = {};
   todas.forEach(({ l, c }) => { cats[l.cat] ||= 0; if (passaVer(c)) cats[l.cat]++; });
@@ -6970,7 +7127,7 @@ function _pintarPlanTabela() {
   const un = _planUn;
   const B = _planBase(un);
   const vis = _planVisiveis(un);
-  const nPrecisa = B.linhas.filter(l => _planConta(un, l).auto > 0).length;
+  const nPrecisa = _planLinhas(un).filter(l => _planConta(un, l).auto > 0).length;
   const marc = vis.filter(x => x.c.marcado);
   const nForn = new Set(marc.map(x => x.l.forn || '—')).size;
   document.getElementById('plan-resumo').innerHTML = marc.length
@@ -6996,7 +7153,9 @@ function _pintarPlanTabela() {
   tb.innerHTML = chaves.map(g => {
     const arr = grupos[g];
     const mk = arr.filter(x => x.c.marcado);
-    const cab = `<tr class="plan-grupo"><td colspan="7"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}</span></td></tr>`;
+    const fid = porForn ? arr[0].l.fornId : null;
+    const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornProxEntrega(fid) ? `, próxima ${_ddmm(_fornProxEntrega(fid))}` : ''}` : '';
+    const cab = `<tr class="plan-grupo"><td colspan="7"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}${esc(ent)}</span></td></tr>`;
     return cab + arr.map(({ l, c }) => _planLinha(un, B, l, c, n1, porForn)).join('');
   }).join('');
 }
@@ -7010,7 +7169,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
   else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
   if (l.fator === 1 && norm(l.unComp) !== norm(l.un))
     tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
-  const sub = porForn ? esc(l.cat) : esc(l.forn || 'sem compra recente');
+  const sub = porForn ? esc(l.cat) : l.forn ? `${esc(l.forn)}${l.fornOrigem === 'troca' ? ' <i class="bi bi-arrow-left-right" title="Fornecedor trocado nesta tela"></i>' : ''}` : 'sem compra recente';
   const diasBase = l.base === 'ficha' ? B.nDias : B.nCal;
   const porSem = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
   // Dura: barra até o dobro da cobertura (mín. 14 dias), tracinho nos dias de cobertura
@@ -7071,10 +7230,70 @@ function _planDetalhe(un, B, l, c, n1) {
     <div class="plan-det-card"><h6>Comprar para quantos dias</h6>
       <input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}" onchange="planDiasProd('${l.pid}', this.value)" aria-label="Dias de cobertura de ${esc(l.nome)}"> dias
       <div class="mt-2 text-muted">${c.proprio ? 'Só deste produto, fica guardado. Apague para voltar ao padrão da unidade.' : 'Padrão da unidade. Trocar aqui vale só para este produto e fica guardado.'}</div>
-      <div class="mt-2 text-muted">Último fornecedor: <b>${esc(l.forn || '—')}</b></div></div>
+      <h6 class="mt-3">Fornecedor</h6>${_planFornCard(l, B.C, `planFornTrocar('${l.pid}', this.value)`, `planFornGuardar('${l.pid}')`)}</div>
   </div></td></tr>`;
 }
 
+// Escolha do fornecedor (Planejamento e "MP para comprar" da Meta): de onde veio a
+// sugestão, os dias de entrega e um select para trocar
+function _planFornSelect(l, C, aoTrocar) {
+  const auto = _planFornDe(l.pid, C, null);
+  const porNome = n => cForn.find(f => norm(f.nome) === norm(n));
+  const ja = Object.keys(C.historico[l.pid] || {}).map(porNome).filter(Boolean).sort((a, b) => a.nome.localeCompare(b.nome));
+  const jaIds = new Set(ja.map(f => f.id));
+  const op = f => `<option value="${f.id}"${l.fornOrigem === 'troca' && f.id === l.fornId ? ' selected' : ''}>${esc(f.nome)}</option>`;
+  return `<select class="form-select form-select-sm" onchange="${aoTrocar}" aria-label="Fornecedor de ${esc(l.nome)}">
+      <option value="">Automático: ${esc(auto.forn || 'nenhum')}</option>
+      ${ja.length ? `<optgroup label="Já vendeu este produto">${ja.map(op).join('')}</optgroup>` : ''}
+      <optgroup label="Todos">${cForn.filter(f => !jaIds.has(f.id)).map(op).join('')}</optgroup></select>`;
+}
+function _planFornCard(l, C, aoTrocar, aoGuardar) {
+  const origem = {
+    troca: 'Trocado nesta tela (não fica guardado).',
+    cadastro: `Pelo cadastro do fornecedor${l.fornCad > 1 ? ` (${l.fornCad} fornecedores entregam; ficou o mais usado)` : ''}.`,
+    uso: `O que mais recebeu pedido nas últimas 4 semanas (${esc(l.fornUso || '')}).`,
+    ultimo: 'Último que vendeu (nenhum pedido nas últimas 4 semanas).',
+  }[l.fornOrigem] || 'Nunca comprado nos últimos 6 meses.';
+  const dias = l.fornId ? _fornDiasTxt(l.fornId) : '';
+  const prox = l.fornId ? _fornProxEntrega(l.fornId) : null;
+  // o Comprador Externo é a exceção, não vai para o cadastro
+  const noCad = !l.fornId || isCompExterna(l.forn) || (_fornCompra[l.fornId]?.produtos || []).includes(l.pid);
+  return `${_planFornSelect(l, C, aoTrocar)}
+    <div class="mt-2 text-muted">${origem}</div>
+    ${l.fornId && !isCompExterna(l.forn) ? `<div class="mt-1 text-muted">${dias ? `Entrega ${esc(dias)}${prox ? ` · próxima ${_FORN_DIAS[new Date(prox + 'T12:00:00').getDay()].toLowerCase()} ${_ddmm(prox)}` : ''}` : 'Dias de entrega não cadastrados'}</div>` : ''}
+    ${!noCad ? `<button type="button" class="btn btn-link btn-sm p-0 mt-1" onclick="${aoGuardar}">Guardar no cadastro: ${esc(l.forn)} entrega este produto</button>` : ''}`;
+}
+
+function planFornTrocar(pid, fornId) {
+  _planTocado.add(pid);
+  const m = (_planFornTroca[_planUn] ||= {});
+  if (fornId) m[pid] = fornId; else delete m[pid];
+  const B = _planBase(_planUn);
+  const l = B.linhas.find(x => x.pid === pid);
+  if (l) Object.assign(l, _planFornDe(pid, B.C, m[pid]));
+  _pintarPlan();
+}
+async function planFornGuardar(pid) {
+  const B = _planBase(_planUn);
+  const l = B.linhas.find(x => x.pid === pid);
+  if (!l?.fornId) return;
+  if (await _fornGuardarProduto(l.fornId, pid)) { Object.assign(l, _planFornDe(pid, B.C, _planFornTroca[_planUn]?.[pid])); _pintarPlan(); }
+}
+// Põe o produto na lista do fornecedor (relê antes: outra pessoa pode ter mexido no cadastro)
+async function _fornGuardarProduto(fornId, pid) {
+  try {
+    await _fornCompraCarregar();
+    const v = (_fornCompra[fornId] ||= {});
+    v.produtos = [...new Set([...(v.produtos || []), pid])];
+    const { error } = await sb.from('inv_configuracoes').upsert({ chave: _FORN_CFG, valor: _fornCompra }, { onConflict: 'chave' });
+    if (error) throw error;
+  } catch (e) { toast('Não consegui guardar no cadastro do fornecedor: ' + e.message, 'erro'); return false; }
+  const outros = Object.entries(_fornCompra).filter(([id, x]) => id !== fornId && (x.produtos || []).includes(pid))
+    .map(([id]) => cForn.find(f => f.id === id)?.nome).filter(Boolean);
+  toast(`Guardado no cadastro de ${cForn.find(f => f.id === fornId)?.nome || 'fornecedor'}.${outros.length ? ` Também está no cadastro de ${outros.join(', ')}: fica o mais usado.` : ''}`, 'ok');
+  return true;
+}
+function planModo(m) { _planModo = m; _planFiltros.cat = ''; _planFiltros.forn = ''; _planTocado.clear(); _pintarPlan(); }
 function planTrocarUnidade(un) { _planUn = un; _planFiltros.cat = ''; _planFiltros.forn = ''; _planTocado.clear(); _pintarPlan(); }
 function planFiltro(k, v) { _planFiltros[k] = v; if (k === 'cat') _planFiltros.forn = ''; k === 'busca' ? _pintarPlanTabela() : _pintarPlan(); }
 function planAbrir(ev, pid) {
@@ -7132,8 +7351,8 @@ function planPeriodo() {
   _planPedir[_planUn] = {};
   carregarPlanejamento();
 }
-function planPeriodoRapido(n) {
-  _planParam[_planUn] = { ini: _isoMais(hojeLocal(), -n), fim: _isoMais(hojeLocal(), -1) };
+function planPeriodoRapido(semanas) {
+  _planParam[_planUn] = _planSemanas(semanas);
   _planPedir[_planUn] = {};
   carregarPlanejamento();
 }
@@ -7172,7 +7391,7 @@ function _levarAoPedidoCompra(marc, un, origem) {
   }
   const voto = (arr, f) => { const v = {}; arr.forEach(x => { const k = f(x); if (k) v[k] = (v[k] || 0) + 1; }); return Object.keys(v).sort((a, b) => v[b] - v[a]); };
   const forns = voto(marc, x => x.l.forn);
-  if (forns.length > 1 && !confirm(`Os itens marcados foram comprados por último de ${forns.length} fornecedores (${forns.slice(0, 4).join(', ')}${forns.length > 4 ? '...' : ''}).\n\nO pedido de compra é de um fornecedor só: ${forns[0]}. Dá para trocar na tela do pedido.\n\nDica: ${origem === 'Planejamento' ? 'filtre por fornecedor' : 'desmarque os de outro fornecedor'} para fazer um pedido para cada um.\n\nContinuar?`)) return false;
+  if (forns.length > 1 && !confirm(`Os itens marcados são de ${forns.length} fornecedores (${forns.slice(0, 4).join(', ')}${forns.length > 4 ? '...' : ''}).\n\nO pedido de compra é de um fornecedor só: ${forns[0]}. Dá para trocar na tela do pedido.\n\nDica: ${origem === 'Planejamento' ? 'filtre por fornecedor' : 'desmarque os de outro fornecedor'} para fazer um pedido para cada um.\n\nContinuar?`)) return false;
   if (_pedidoItens.length && !confirm(`Já tem um pedido em montagem com ${_pedidoItens.length} item(ns). Trocar por estes ${marc.length}?`)) return false;
   const fornNome = forns[0] || '';
   const fornId = marc.find(x => x.l.forn === fornNome)?.l.fornId || cForn.find(f => norm(f.nome) === norm(fornNome))?.id || null;
@@ -7189,7 +7408,7 @@ function _levarAoPedidoCompra(marc, un, origem) {
     };
   });
   _pedidoEditando = null;
-  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem };
+  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem, entrega: fornId ? _fornProxEntrega(fornId) : null };
   ir('pedido', document.querySelector('.nav-sb a[onclick*="\'pedido\'"]'));
   return true;
 }
@@ -17201,7 +17420,8 @@ async function abrirMpMeta() {
     await carregarCaches();
     const compras = await _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hojeLocal(), -180)).not('produto_id', 'is', null));
-    _metaMpCompra = { un, C: _planCompras(compras, un, hojeLocal()), pedir: {}, marca: {}, grupos: [], loja: _metaD.mpLoja?.[un] || new Set() };
+    await _fornCompraCarregar();
+    _metaMpCompra = { un, C: _planCompras(compras, un, hojeLocal()), pedir: {}, marca: {}, forn: {}, grupos: [], loja: _metaD.mpLoja?.[un] || new Set() };
   } catch (e) {
     console.error(e);
     _metaMpCompra = null;
@@ -17214,7 +17434,7 @@ async function abrirMpMeta() {
 function _metaMpLinhas() {
   const M = _metaMpCompra;
   return _metaMp(M.un).itens.map(i => {
-    const l = _planCompraDe(i.pid, M.C);
+    const l = _planCompraDe(i.pid, M.C, M.forn[i.pid]);
     const pedido = M.C.pedido[i.pid] || 0;
     const falta = Math.max(0, i.falta - pedido);
     const doPlan = M.loja.has(i.pid);
@@ -17252,11 +17472,12 @@ function _pintarMpMeta() {
            value="${pedir || ''}" placeholder="0" title="${mudou ? `A conta dava ${n1(auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}"
            onchange="metaMpPedir('${i.pid}', this.value)"><div class="small text-muted text-center">${emb}</div>`}</td>
       <td class="text-end">${pedir > 0 && l.custo > 0 ? brl(pedir * l.custo) : '—'}</td>
-      <td class="small">${esc(l.forn || '—')}</td></tr>`;
+      <td class="small" style="min-width:190px">${doPlan ? esc(l.forn || '—') : _planFornSelect(l, M.C, `metaMpForn('${i.pid}', this.value)`)}
+        ${!doPlan && l.fornOrigem && l.fornOrigem !== 'troca' ? `<div class="text-muted">${{ cadastro: 'pelo cadastro', uso: 'mais usado em 4 semanas', ultimo: 'último que vendeu' }[l.fornOrigem]}</div>` : ''}</td></tr>`;
   };
   const total = marc.reduce((t, x) => t + x.pedir * x.l.custo, 0);
-  // Um pedido de compra é de um fornecedor só: a lista vem separada pelo último
-  // fornecedor de cada MP, com um botão por grupo. O que não precisa comprar fica no fim.
+  // Um pedido de compra é de um fornecedor só: a lista vem separada pelo fornecedor
+  // de cada MP (_planFornDe, dá para trocar na linha), com um botão por grupo. O que não precisa comprar fica no fim.
   const grupos = {};
   linhas.forEach(x => { const k = x.doPlan ? 'plan' : x.pedir > 0 || x.marcado ? (x.l.forn || '') : null; (grupos[k] ||= []).push(x); });
   const soma = arr => arr.filter(x => x.marcado).reduce((t, x) => t + x.pedir * x.l.custo, 0);
@@ -17267,7 +17488,7 @@ function _pintarMpMeta() {
     return `<tr class="table-light"><td colspan="10"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div><strong>${k ? esc(k) : 'Sem compra anterior'}</strong>
         <span class="small text-muted ms-2">${mk.length ? `${mk.length} ${mk.length === 1 ? 'marcado' : 'marcados'} · ${brl(soma(grupos[k]))}` : 'nada marcado'}</span>
-        ${k ? '' : '<div class="small text-muted">Nenhuma compra nos últimos 180 dias: escolha o fornecedor na tela do pedido.</div>'}</div>
+        ${k ? '' : '<div class="small text-muted">Nenhuma compra nos últimos 180 dias: escolha o fornecedor na coluna Fornecedor.</div>'}</div>
       <button class="btn btn-sm btn-outline-primary" onclick="metaMpGerarPedido(${gi})" ${mk.length ? '' : 'disabled'}>
         <i class="bi bi-cart-plus"></i> Gerar pedido${mk.length ? ` com ${mk.length} ${mk.length === 1 ? 'item' : 'itens'}` : ''}</button>
       </div></td></tr>`;
@@ -17284,14 +17505,19 @@ function _pintarMpMeta() {
     <div class="table-responsive"><table class="table table-sm align-middle mb-0">
       <thead><tr><th></th><th>MP</th><th class="text-end">Precisa</th><th class="text-end">${esc(_rotuloSemIcone(u.local_mp))}</th>
         <th class="text-end">Produção</th><th class="text-end">Já pedido</th><th class="text-end">Falta</th><th class="text-center">Pedir</th>
-        <th class="text-end">Total</th><th>Último fornecedor</th></tr></thead>
+        <th class="text-end">Total</th><th>Fornecedor</th></tr></thead>
       <tbody>${corpoTab}</tbody></table></div>
     <div class="small text-muted mt-3">${marc.length ? `${marc.length} ${marc.length === 1 ? 'item marcado' : 'itens marcados'} em ${M.grupos.filter(k => k && grupos[k].some(x => x.marcado)).length} fornecedores · ${brl(total)} pelo último custo.` : 'Nada marcado.'}
       Um pedido por fornecedor: depois de finalizar um, abra de novo "MP para comprar" e o pedido feito já aparece em "Já pedido".
-      Para comprar de outro fornecedor, troque na tela do pedido.</div>`;
+      Para comprar de outro fornecedor, troque na coluna Fornecedor: a MP muda de grupo.</div>`;
 }
 
 function metaMpMarcar(pid, v) { _metaMpCompra.marca[pid] = v; _pintarMpMeta(); }
+function metaMpForn(pid, fornId) {
+  const M = _metaMpCompra;
+  if (fornId) M.forn[pid] = fornId; else delete M.forn[pid];
+  _pintarMpMeta();
+}
 function metaMpPedir(pid, v) {
   const M = _metaMpCompra;
   if (v === '' || v === null) delete M.pedir[pid];
