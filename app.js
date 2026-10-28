@@ -7178,8 +7178,11 @@ function _planLinha(un, B, l, c, n1, porForn) {
   if (dura !== null) {
     const escala = Math.max(c.dias * 2, 14);
     const cls = dura < c.dias ? 'falta' : dura > 60 ? 'muito' : 'ok';
-    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 999 ? '999+' : Math.floor(dura)} dias <small>de ${c.dias}${c.proprio ? ' (só deste)' : ''}</small></div>
-      <div class="plan-dura-bar"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${c.dias / escala * 100}%"></i></div></div>`;
+    // o tracinho (dias de cobertura) se arrasta com o mouse ou com as setas: vale só para este produto
+    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 999 ? '999+' : Math.floor(dura)} dias <small>de <b>${c.dias}</b>${c.proprio ? ' (só deste)' : ''}</small></div>
+      <div class="plan-dura-bar" role="slider" tabindex="0" aria-label="Dias de cobertura de ${esc(l.nome)}" aria-valuemin="1" aria-valuemax="60" aria-valuenow="${c.dias}"
+        title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}"
+        onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${c.dias / escala * 100}%"></i></div></div>`;
   }
   const mudou = _planPedir[un]?.[l.pid] !== undefined;
   const emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
@@ -7297,7 +7300,7 @@ function planModo(m) { _planModo = m; _planFiltros.cat = ''; _planFiltros.forn =
 function planTrocarUnidade(un) { _planUn = un; _planFiltros.cat = ''; _planFiltros.forn = ''; _planTocado.clear(); _pintarPlan(); }
 function planFiltro(k, v) { _planFiltros[k] = v; if (k === 'cat') _planFiltros.forn = ''; k === 'busca' ? _pintarPlanTabela() : _pintarPlan(); }
 function planAbrir(ev, pid) {
-  if (ev.target.closest('input, button, a, label')) return;
+  if (ev.target.closest('input, button, a, label, select, .plan-dura-bar')) return;
   _planAbertos.has(pid) ? _planAbertos.delete(pid) : _planAbertos.add(pid);
   _pintarPlanTabela();
 }
@@ -7327,6 +7330,38 @@ function planDiasProd(pid, v) {
   delete (_planPedir[_planUn] || {})[pid];
   _planSalvarCfg();
   _pintarPlan();
+}
+// Arrastar o tracinho da coluna Dura: a escala fica parada durante o arraste; ao soltar
+// grava os dias do produto (planDiasProd) e a barra se redesenha com a escala nova
+function planDuraArrastar(ev) {
+  const bar = ev.currentTarget;
+  const escala = Number(bar.dataset.escala) || 14;
+  const txt = bar.parentElement.querySelector('.plan-dura-txt small b');
+  let dias = Number(bar.getAttribute('aria-valuenow'));
+  const mover = e => {
+    const r = bar.getBoundingClientRect();
+    dias = Math.max(1, Math.min(60, Math.round((e.clientX - r.left) / r.width * escala)));
+    bar.querySelector('i').style.left = Math.min(dias / escala, 1) * 100 + '%';
+    if (txt) txt.textContent = dias;
+  };
+  ev.preventDefault();
+  bar.setPointerCapture(ev.pointerId);
+  bar.classList.add('arrastando');
+  mover(ev);
+  bar.onpointermove = mover;
+  bar.onpointerup = bar.onpointercancel = () => {
+    bar.onpointermove = bar.onpointerup = bar.onpointercancel = null;
+    bar.classList.remove('arrastando');
+    planDiasProd(bar.dataset.pid, dias);
+  };
+}
+function planDuraTecla(ev) {
+  const passo = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[ev.key];
+  if (!passo) return;
+  ev.preventDefault();
+  const pid = ev.currentTarget.dataset.pid;
+  planDiasProd(pid, Math.max(1, Math.min(60, Number(ev.currentTarget.getAttribute('aria-valuenow')) + passo)));
+  document.querySelector(`.plan-dura-bar[data-pid="${pid}"]`)?.focus();
 }
 function planDiasPadrao(v) {
   const n = parseInt(v, 10);

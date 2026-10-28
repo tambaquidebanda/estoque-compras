@@ -603,6 +603,10 @@ h1 {
 .plan-dura-bar { position: relative; height: 6px; background: #edf1f0; border-radius: 99px; margin-top: 4px; }
 .plan-dura-bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; }
 .plan-dura-bar i { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--pl-tinta); opacity: .45; border-radius: 1px; }
+/* o tracinho é uma alça: área de toque maior que o desenho */
+.plan-dura-bar[role="slider"] { cursor: ew-resize; touch-action: none; outline-offset: 4px; }
+.plan-dura-bar[role="slider"]::before { content: ""; position: absolute; inset: -8px 0; }
+.plan-dura-bar[role="slider"]:hover i, .plan-dura-bar[role="slider"]:focus-visible i, .plan-dura-bar.arrastando i { width: 4px; margin-left: -1px; top: -5px; bottom: -5px; opacity: .85; background: var(--pl-teal); }
 .plan-dura-falta .plan-dura-txt { color: var(--pl-vermelho); } .plan-dura-falta .plan-dura-bar span { background: #e0796b; }
 .plan-dura-ok .plan-dura-txt { color: var(--pl-teal); }       .plan-dura-ok .plan-dura-bar span { background: #5fb3a6; }
 .plan-dura-muito .plan-dura-txt { color: var(--pl-ambar); }   .plan-dura-muito .plan-dura-bar span { background: #e0b354; }
