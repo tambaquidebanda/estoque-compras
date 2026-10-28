@@ -3374,6 +3374,8 @@ async function selecionarGrupoInv(grupo) {
   } else {
     _addDe(_chaveAdic(_invLocal, _invSetor, grupo));
   }
+  // ordem alfabética (Wagner, 28/10/2026); antes vinha na ordem em que entrou na estrutura
+  _invProds.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
   // Breadcrumb
   document.getElementById('inv-breadcrumb').textContent = `${_invSetor} / ${grupo}`;
@@ -15218,7 +15220,8 @@ async function selecionarGrupoSaldo(grupo) {
 
 function renderSaldo() {
   const busca = norm(document.getElementById('saldo-busca')?.value || '');
-  const filtrado = _saldoList.filter(p => !busca || norm(p.nome).includes(busca));
+  const filtrado = _saldoList.filter(p => !busca || norm(p.nome).includes(busca))
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));      // ordem alfabética (Wagner, 28/10/2026)
 
   document.getElementById('saldo-contador').textContent = `${filtrado.length} produto(s)`;
 
