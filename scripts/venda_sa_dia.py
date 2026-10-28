@@ -67,16 +67,39 @@ ACOMP_ESCOLHIDO = {
 }
 
 
+# Guarnição que o cliente ESCOLHE entre arroz e baião (Wagner, 28/10/2026). A comanda traz,
+# logo depois do prato e a R$ 0, uma linha ARROZ / BAIÃO / MIX ARROZ E BAIÃO com a escolha.
+# Essas linhas são 'ignorar' na pdv_map (a ficha do prato já traz a guarnição, como ARROZ
+# COZIDO, por causa do preço), então o baião escolhido não entrava em nada: o feijão de praia
+# do Planejamento dava 3,3 kg em 4 semanas no Centro, com 150 kg comprados. Medido de 29/09
+# a 26/10 casando cada escolha com o prato de antes: baião 79% no Centro (2.116 de 2.685) e
+# 72% no P10 (875 de 1.222); arroz 16% e 28%; mix 5% no Centro (é meia porção de cada).
+# Aqui, SÓ para prod_venda_item_dia (Planejamento): quando o cliente escolhe baião, o arroz
+# cozido da ficha do prato vira baião do mesmo peso (o mix troca metade). Linha de arroz/baião
+# vendida avulsa (com preço) entra pelo produto dela. A ficha, o custo, a baixa e as SA não
+# mudam. A mesma troca é a solução da baixa (est_ficha_ingredientes.baixa_estoque, pendente).
+PPC_ARROZ = 'f5e99f52-6639-4f05-9ea4-894dfb0c363e'          # PPC ARROZ COZIDO
+PPC_BAIAO = '686ba5e4-0411-4309-869c-ecdbd1203c1d'          # PPC BAIAO DE DOIS
+GUARN_BAIAO = {692, 2577, 629, 3034}                        # BAIAO GRANDE, BAIAO, BAIAO PEQUENO, BAIÃO
+GUARN_MIX = 1726                                            # MIX ARROZ E BAIAO (meia porção de cada)
+GUARN_ARROZ = {28, 2576}                                    # ARROZ GRANDE, ARROZ (ignorar)
+GUARN_MIX_PARTES = ('2bf5942a-8637-4d79-a011-2b7e24c65c98', # ARROZ GRANDE
+                    '6f26dc21-6392-4d8a-9820-30f05f310579') # BAIAO GRANDE
+
+
 def carregar():
     # mapa: icomanda_id -> (produto_id, fator) so dos MAPEADOS; 'ignorar' fica fora
     # do mapa e tambem fora do aviso (bebida, taxa, etc. nao levam SA de proposito).
-    mapa, ignorados = {}, set()
+    mapa, ignorados, guarn = {}, set(), {}
     for m in bx.sb_get_all('pdv_map?select=icomanda_produto_id,produto_id,fator,status'):
+        if m['icomanda_produto_id'] in GUARN_BAIAO | GUARN_ARROZ and m.get('produto_id'):
+            guarn[m['icomanda_produto_id']] = m['produto_id']
         if m.get('status') == 'mapeado' and m.get('produto_id'):
             mapa[m['icomanda_produto_id']] = (m['produto_id'], m.get('fator') or 1)
         elif m.get('status') == 'ignorar':
             ignorados.add(m['icomanda_produto_id'])
     mapa['_ignorados'] = ignorados
+    mapa['_guarn'] = guarn
     fic = {}
     for f in bx.sb_get_all('est_fichas_tecnicas?select=id,produto_id,rendimento&ativo=eq.true'):
         fic[f['produto_id']] = {'ficha_id': f['id'], 'rendimento': f.get('rendimento') or 1}
@@ -116,7 +139,60 @@ def sa_do_dia(data, unidade_pdv, mapa, fic, ings, sas):
                 o = origem.setdefault((folha, pid), [0, 0])     # [pratos vendidos, SA consumida]
                 o[0] += qtd * fator
                 o[1] += fq * qtd * fator
+    for pid, q in guarnicao_do_dia(unidade_pdv, mapa, fic, ings, data).items():
+        itens[pid] = itens.get(pid, 0) + q
     return out, origem, sem_mapa, itens
+
+
+def _arroz_do_prato(pid, fic, ings):
+    """kg de PPC ARROZ COZIDO direto na ficha de 1 unidade do prato (0 se não tem)."""
+    f = fic.get(pid)
+    if not f:
+        return 0
+    return sum(q or 0 for ing, q in ings.get(f['ficha_id'], []) if ing == PPC_ARROZ) / (f['rendimento'] or 1)
+
+
+def guarnicao_do_dia(unidade_pdv, mapa, fic, ings, data):
+    """{ produto_id: qtd } a somar na venda por item do dia: a troca arroz -> baião da
+    escolha do cliente (pode ser negativa no PPC ARROZ COZIDO) e a guarnição avulsa.
+    Lê as comandas do dia (já baixadas por vendas_do_dia, que também confere os caixas)."""
+    dono = bx.caixas_por_unidade()
+    out = {}
+    def soma(pid, q):
+        out[pid] = out.get(pid, 0) + q
+    for cx in (bx.buscar_dia(data).get('caixas') or []):
+        if (cx.get('status_caixa') or '') != 'fechado' or dono.get(cx.get('caixa_id')) != unidade_pdv:
+            continue
+        for cm in (cx.get('comandas') or []):
+            if cm.get('cancelada'):
+                continue
+            prato = None      # último item com preço antes da escolha
+            for it in sorted((i for i in bx.itens_vendidos(cm) if i.get('status') == 'ativo'), key=lambda i: i.get('id') or 0):
+                ip, qtd = it.get('produto_id'), it.get('quantidade') or 0
+                pago = (it.get('valor_unitario') or 0) > 0
+                eh_guarn = ip in GUARN_BAIAO or ip in GUARN_ARROZ or ip == GUARN_MIX
+                if eh_guarn and pago:                      # guarnição vendida avulsa
+                    if ip == GUARN_MIX:
+                        for parte in GUARN_MIX_PARTES:
+                            soma(parte, 0.5 * qtd)
+                    elif mapa['_guarn'].get(ip):
+                        soma(mapa['_guarn'][ip], qtd)
+                    continue
+                if eh_guarn:                               # escolha do cliente, a R$ 0
+                    if ip in GUARN_ARROZ or not prato:
+                        continue                           # arroz: a ficha do prato já conta
+                    parte = 0.5 if ip == GUARN_MIX else 1
+                    m = mapa.get(prato)
+                    arroz = _arroz_do_prato(m[0], fic, ings) * m[1] if m else 0
+                    if arroz > 0:
+                        soma(PPC_ARROZ, -arroz * parte * qtd)
+                        soma(PPC_BAIAO, arroz * parte * qtd)
+                    elif ip in GUARN_BAIAO and mapa['_guarn'].get(ip):
+                        soma(mapa['_guarn'][ip], parte * qtd)   # prato sem arroz na ficha: baião a mais
+                    continue
+                if pago:
+                    prato = ip
+    return out
 
 
 def tem_tabela(tabela, sem):
@@ -162,7 +238,7 @@ def main():
                     bx.sb_insert('prod_venda_sa_origem', orig[j:j + 500])
             if com_itens:
                 vit = [{'data': data, 'unidade': u['unidade'], 'produto_id': pid, 'quantidade': round(q, 4)}
-                       for pid, q in itens.items() if q > 0]
+                       for pid, q in itens.items() if abs(q) > 1e-9]   # PPC ARROZ COZIDO pode ficar negativo (troca pelo baião)
                 bx.sb_delete(f'prod_venda_item_dia?data=eq.{data}&unidade=eq.{urllib.parse.quote(u["unidade"])}')
                 for j in range(0, len(vit), 500):
                     bx.sb_insert('prod_venda_item_dia', vit[j:j + 500])
