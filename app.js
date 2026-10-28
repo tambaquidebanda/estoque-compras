@@ -2010,7 +2010,8 @@ async function abrirFornCompra(id) {
   if (!f) return;
   await Promise.all([carregarProdutosFT(), _fornCompraCarregar()]).catch(e => toast('Não consegui ler o cadastro: ' + e.message, 'erro'));
   const v = _fornCompra[id] || {};
-  _fornEd = { id, nome: f.nome, dias: new Set(v.dias || []), produtos: [...(v.produtos || [])] };
+  _fornEd = { id, nome: f.nome, dias: new Set(v.dias || []), prazo: Number(v.prazo) || 0, produtos: [...(v.produtos || [])] };
+  document.getElementById('forn-compra-prazo').value = _fornEd.prazo || '';
   document.getElementById('forn-compra-titulo').textContent = f.nome;
   document.getElementById('forn-compra-lista').innerHTML = cProdutosFT.filter(p => p.ativo !== false && _planEhCompra(p))
     .map(p => `<option value="${esc(p.nome)}"></option>`).join('');
@@ -2029,6 +2030,7 @@ function _pintarFornCompra() {
     ? prods.map(p => `<div class="lista-item"><span>${esc(p.nome)}</span><button class="btn-del" onclick="fornCompraTirar('${p.pid}')" title="Tirar"><i class="bi bi-x-lg"></i></button></div>`).join('')
     : '<p class="text-muted small p-2 mb-0">Nenhum produto. Busque acima ou puxe do histórico de compras.</p>';
 }
+function fornCompraPrazo(v) { _fornEd.prazo = Math.max(0, Math.min(15, parseInt(v, 10) || 0)); }
 function fornCompraDia(d) { _fornEd.dias.has(d) ? _fornEd.dias.delete(d) : _fornEd.dias.add(d); _pintarFornCompra(); }
 function fornCompraTirar(pid) { _fornEd.produtos = _fornEd.produtos.filter(x => x !== pid); _pintarFornCompra(); }
 function fornCompraAdd() {
@@ -2057,7 +2059,8 @@ async function salvarFornCompra() {
   try {
     await _fornCompraCarregar();   // relê: outra pessoa pode ter mexido em outro fornecedor
     const v = { dias: [...E.dias].sort(), produtos: E.produtos };
-    if (!v.dias.length && !v.produtos.length) delete _fornCompra[E.id]; else _fornCompra[E.id] = v;
+    if (E.prazo > 0) v.prazo = E.prazo;
+    if (!v.dias.length && !v.produtos.length && !v.prazo) delete _fornCompra[E.id]; else _fornCompra[E.id] = v;
     const { error } = await sb.from('inv_configuracoes').upsert({ chave: _FORN_CFG, valor: _fornCompra }, { onConflict: 'chave' });
     if (error) throw error;
   } catch (e) { toast('Não consegui salvar: ' + e.message, 'erro'); return; }
@@ -6743,7 +6746,8 @@ async function _planCarregar() {
   const vFim = Object.values(param).map(x => x.fim).sort().pop();
   const hoje = hojeLocal();
   const locaisSaida = [...new Set(Object.values(_PLAN_LOCAIS_SAIDA).flat())];
-  const [vendas, saldos, fichas, ings, saidas, compras] = await Promise.all([
+  const segunda = _isoMais(hoje, -((new Date(hoje + 'T12:00:00').getDay() + 6) % 7));
+  const [vendas, saldos, fichas, ings, saidas, compras, recebSem] = await Promise.all([
     _metaSelect('prod_venda_item_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
     _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
@@ -6752,8 +6756,9 @@ async function _planCarregar() {
       q => q.eq('tipo', 'pedido_interno_saida').in('local', locaisSaida).gte('data', vIni).lt('data', _isoMais(vFim, 1))),
     _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
+    _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data', q => q.eq('tipo', 'recebimento').gte('data', segunda)),
   ]);
-  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
+  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, recebSem, segunda, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
 }
 
 // Produtos que estão em alguma lista de contagem (qualquer unidade, setor ou "+").
@@ -6834,20 +6839,25 @@ function _planBase(un) {
   const semanas = [];
   for (let d = p.ini; d <= p.fim; d = _isoMais(d, 7)) { const f = _isoMais(d, 6); semanas.push({ ini: d, fim: f > p.fim ? p.fim : f }); }
   const semDe = d => Math.floor((new Date(d + 'T12:00:00') - new Date(p.ini + 'T12:00:00')) / 864e5 / 7);
-  const consumo = {}, consumoSem = {}, consumoLoja = {}, dias = new Set();
+  const consumo = {}, consumoSem = {}, consumoLoja = {}, consumoDow = {}, dias = new Set();
   D.vendas.forEach(v => {
     if (v.unidade !== un || v.data < p.ini || v.data > p.fim) return;
     dias.add(v.data);
     const w = semDe(v.data);
+    const dw = new Date(v.data + 'T12:00:00').getDay();
     const qv = Number(v.quantidade) || 0;
     Object.entries(folhas(v.produto_id)).forEach(([fo, [lj, pr]]) => {
       const q = (lj + pr) * qv;
       consumo[fo] = (consumo[fo] || 0) + q;
       consumoLoja[fo] = (consumoLoja[fo] || 0) + lj * qv;
       (consumoSem[fo] ||= semanas.map(() => 0))[w] += q;
+      (consumoDow[fo] ||= [0, 0, 0, 0, 0, 0, 0])[dw] += q;
     });
   });
   const nDias = dias.size;
+  // Quantos dias gravados de cada dia da semana: a média de sábado divide pelos sábados
+  const nDow = [0, 0, 0, 0, 0, 0, 0];
+  dias.forEach(d => { nDow[new Date(d + 'T12:00:00').getDay()]++; });
   // ── saída do estoque para os setores (quem nenhuma ficha usa) ──
   const saida = {}, saidaSem = {};
   const locSaida = _PLAN_LOCAIS_SAIDA[un] || [];
@@ -6866,9 +6876,10 @@ function _planBase(un) {
   const pref = un === 'Delivery P10' ? 'P10_' : '';
   const aParte = _PLAN_LOCAIS_A_PARTE[un] || [];
   const tem = {}, temTela = {}, temParte = {}, temDet = {}, temFora = {};
+  const daUnidade = l => (u.locais_tem || []).includes(l) || (!configurados.has(l) && (pref ? l.startsWith(pref) : !l.startsWith('P10_')));
   D.saldos.forEach(s => {
     const l = s.local;
-    const daUni = (u.locais_tem || []).includes(l) || (!configurados.has(l) && (pref ? l.startsWith(pref) : !l.startsWith('P10_')));
+    const daUni = daUnidade(l);
     const q = Number(s.saldo) || 0;
     if (!daUni || !q) return;
     // Igual à tela de Saldo (_saldoLocaisDoItem): no Centro, saldo no Estoque da Loja ou num
@@ -6883,6 +6894,14 @@ function _planBase(un) {
     (temDet[s.produto_id] ||= []).push([l, q]);
   });
   Object.keys(temDet).forEach(pid => { tem[pid] = Math.max(0, (temTela[pid] || 0) + (temParte[pid] || 0)); });
+  // O que chegou desde segunda (já está no estoque; aparece no detalhe só para explicar)
+  const chegou = {};
+  (D.recebSem || []).forEach(m => {
+    if (!daUnidade(m.local) || !(Number(m.quantidade) > 0)) return;
+    const d = String(m.data).slice(0, 10);
+    const c = (chegou[m.produto_id] ||= {});
+    c[d] = (c[d] || 0) + Number(m.quantidade);
+  });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
   const C = _planCompras(D.compras, un, D.hoje, p);
   const { pedido, pedidoDet, comprado } = C;
@@ -6907,7 +6926,11 @@ function _planBase(un) {
     const vendSem = base === 'ficha' ? consumoSem[pid] : base === 'saida' ? saidaSem[pid] : null;
     const diasBase = base === 'ficha' ? nDias : nCal;
     const consDia = vendido > 0 && diasBase ? vendido / (1 - perda) / diasBase : 0;
+    // Média de cada dia da semana (só pela ficha: a saída para o setor não tem o dia do uso)
+    const consDow = base === 'ficha' && consumoDow[pid]
+      ? consumoDow[pid].map((q, i) => nDow[i] ? q / (1 - perda) / nDow[i] : consDia) : null;
     return {
+      consDow, chegou: chegou[pid] || {},
       ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
       foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
     };
@@ -6996,8 +7019,10 @@ function _planCompraDe(pid, C, troca) {
 }
 
 // ── Fornecedor: produtos que entrega e dias de entrega (Cadastros > Fornecedores) ──
-// Fica em inv_configuracoes 'fornecedor_compra' = { [fornecedor_id]: { dias: [0..6], produtos: [pid] } }
-// (0 = domingo). A tabela fornecedores é do financeiro também, por isso não ganhou coluna.
+// Fica em inv_configuracoes 'fornecedor_compra' = { [fornecedor_id]: { dias: [0..6], prazo: n, produtos: [pid] } }
+// (0 = domingo). dias = dias fixos de entrega; prazo = sem dia fixo, chega n dias depois do
+// pedido (Ambev: depende dos barris vazios, Wagner 28/10/2026). A tabela fornecedores é do
+// financeiro também, por isso não ganhou coluna.
 const _FORN_CFG = 'fornecedor_compra';
 const _PLAN_FORN_USO_DIAS = 28;
 const _FORN_DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -7008,11 +7033,20 @@ async function _fornCompraCarregar() {
   _fornCompra = data?.valor || {};
   return _fornCompra;
 }
-// Dias de entrega por extenso: "Seg e Qui"
+// Dias de entrega por extenso: "Seg e Qui", ou "1 dia após o pedido"
 const _fornDiasTxt = id => {
   const d = [...(_fornCompra[id]?.dias || [])].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
-  return d.length ? d.map(x => _FORN_DIAS[x]).join(d.length === 2 ? ' e ' : ', ') : '';
+  if (d.length) return d.map(x => _FORN_DIAS[x]).join(d.length === 2 ? ' e ' : ', ');
+  const pz = Number(_fornCompra[id]?.prazo) || 0;
+  return pz > 0 ? `${pz} ${pz === 1 ? 'dia' : 'dias'} após o pedido` : '';
 };
+// Quando chega o pedido feito hoje: próximo dia fixo, ou hoje + prazo. null = sem cadastro
+function _fornChegada(id, hoje = hojeLocal()) {
+  if (!id) return null;
+  if ((_fornCompra[id]?.dias || []).length) return _fornProxEntrega(id, hoje);
+  const pz = Number(_fornCompra[id]?.prazo) || 0;
+  return pz > 0 ? _isoMais(hoje, pz) : null;
+}
 // Próxima entrega a partir de amanhã (o pedido de hoje não chega hoje)
 function _fornProxEntrega(id, hoje = hojeLocal()) {
   const dias = _fornCompra[id]?.dias || [];
@@ -7021,16 +7055,50 @@ function _fornProxEntrega(id, hoje = hojeLocal()) {
   return null;
 }
 
-// Margem, dias e o que foi trocado na linha
+// Consumo previsto de um dia: média daquele dia da semana (sábado vende mais que segunda)
+const _planConsDe = (l, d) => l.consDow ? l.consDow[new Date(d + 'T12:00:00').getDay()] : l.consDia;
+
+// A conta da linha (Wagner, 28/10/2026): o pedido de hoje chega num dia e precisa durar até
+// a entrega seguinte. Antes era média do dia × 7 dias a partir de hoje.
+//   Chega   = próxima entrega fixa do fornecedor, ou hoje + prazo (Cadastros > Fornecedores);
+//             sem cadastro, conta como se chegasse hoje (a conta antiga)
+//   Cobrir  = dias fixos: até a véspera da entrega seguinte; prazo/sem cadastro: os dias de
+//             cobertura (padrão da unidade ou do produto, o tracinho da coluna Dura)
+//   Precisa = consumo de hoje até a véspera da chegada (o estoque tem que aguentar)
+//             + consumo dos dias cobertos × (1 + margem), cada dia pela média do seu dia da semana
 function _planConta(un, l) {
-  const dias = _planDiasDe(un, l.pid);
-  const precisa = l.consDia * dias * (1 + _planMargem(un));
+  const hoje = _planD.hoje;
+  const proprio = _planUCfg(un).diasProd?.[l.pid] !== undefined;
+  const fx = l.fornId ? _fornCompra[l.fornId] : null;
+  const fixos = fx?.dias || [];
+  const chega = _fornChegada(l.fornId, hoje);
+  const nAntes = chega ? Math.round((new Date(chega + 'T12:00:00') - new Date(hoje + 'T12:00:00')) / 864e5) : 0;
+  let dias = _planDiasDe(un, l.pid);
+  let tipo = chega ? (fixos.length ? 'fixo' : 'prazo') : 'sem';
+  if (tipo === 'fixo' && !proprio) {
+    const depois = _fornProxEntrega(l.fornId, chega);
+    if (depois) dias = Math.round((new Date(depois + 'T12:00:00') - new Date(chega + 'T12:00:00')) / 864e5);
+  }
+  const margem = _planMargem(un);
+  let antes = 0, cobre = 0;
+  for (let i = 0; i < nAntes; i++) antes += _planConsDe(l, _isoMais(hoje, i));
+  for (let i = 0; i < dias; i++) cobre += _planConsDe(l, _isoMais(hoje, nAntes + i));
+  const precisa = antes + cobre * (1 + margem);
   const falta = Math.max(0, precisa - l.tem - l.pedido);
   const auto = _planArred(falta / l.fator, l.unComp);
   const troca = _planPedir[un]?.[l.pid];
   const pedir = troca ?? auto;
   const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
-  return { dias, precisa, falta, auto, pedir, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio: _planUCfg(un).diasProd?.[l.pid] !== undefined };
+  // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar
+  let dura = null;
+  if (l.consDia > 0) {
+    let resto = l.tem + l.pedido; dura = 0;
+    while (dura < 120) { const q = _planConsDe(l, _isoMais(hoje, dura)); if (resto < q) { dura += q > 0 ? resto / q : 0; break; } resto -= q; dura++; }
+  }
+  // Acaba antes do pedido de hoje chegar: o estoque não aguenta (o já pedido conta)
+  const naoChega = nAntes > 0 && l.consDia > 0 && l.tem + l.pedido < antes - 1e-9;
+  return { dias, nAntes, chega, tipo, antes, cobre, horiz: nAntes + dias, dura, naoChega,
+    precisa, falta, auto, pedir, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio };
 }
 
 // Linhas da aba aberta (Pela venda / Pelo uso)
@@ -7084,9 +7152,9 @@ function _pintarPlan() {
   como.innerHTML = `<dl>
     ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
-    <dt>Precisa</dt><dd>Consumo por dia × dias que a compra cobre × (1 + ${margem}%). Com 7 dias de venda e 7 de cobertura é a conta da planilha: venda da semana × 1,25.</dd>
+    <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Se o estoque acaba antes de chegar, a linha avisa.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
-    <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam no consumo de hoje. A barra fica vermelha quando não chega aos dias de cobertura e amarela acima de 60 dias (estoque alto ou ficha consumindo pouco). O tracinho marca os dias de cobertura.</dd>
+    <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana. A barra fica vermelha quando não chega até onde a compra cobre e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar os dias só daquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
@@ -7154,7 +7222,7 @@ function _pintarPlanTabela() {
     const arr = grupos[g];
     const mk = arr.filter(x => x.c.marcado);
     const fid = porForn ? arr[0].l.fornId : null;
-    const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornProxEntrega(fid) ? `, próxima ${_ddmm(_fornProxEntrega(fid))}` : ''}` : '';
+    const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornChegada(fid) ? `, próxima ${_ddmm(_fornChegada(fid))}` : ''}` : '';
     const cab = `<tr class="plan-grupo"><td colspan="7"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}${esc(ent)}</span></td></tr>`;
     return cab + arr.map(({ l, c }) => _planLinha(un, B, l, c, n1, porForn)).join('');
   }).join('');
@@ -7167,25 +7235,30 @@ function _planLinha(un, B, l, c, n1, porForn) {
   else if (l.foraLista) tags.push(`<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`);
   else if (!l.base && l.comprado > 0) tags.push(`<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} no período, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`);
   else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
+  if (c.naoChega) tags.push(`<span class="plan-base plan-base-alerta" title="O estoque e o já pedido acabam antes de ${_ddmm(c.chega)}, quando chega o pedido feito hoje. Comprar por fora ou pedir entrega antes.">acaba antes de chegar</span>`);
   if (l.fator === 1 && norm(l.unComp) !== norm(l.un))
     tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
   const sub = porForn ? esc(l.cat) : l.forn ? `${esc(l.forn)}${l.fornOrigem === 'troca' ? ' <i class="bi bi-arrow-left-right" title="Fornecedor trocado nesta tela"></i>' : ''}` : 'sem compra recente';
   const diasBase = l.base === 'ficha' ? B.nDias : B.nCal;
   const porSem = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
   // Dura: barra até o dobro da cobertura (mín. 14 dias), tracinho nos dias de cobertura
-  const dura = l.consDia > 0 ? (l.tem + l.pedido) / l.consDia : null;
+  const dura = c.dura;
   let duraHtml = '<span class="text-muted small">—</span>';
   if (dura !== null) {
-    const escala = Math.max(c.dias * 2, 14);
-    const cls = dura < c.dias ? 'falta' : dura > 60 ? 'muito' : 'ok';
-    // o tracinho (dias de cobertura) se arrasta com o mouse ou com as setas: vale só para este produto
-    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 999 ? '999+' : Math.floor(dura)} dias <small>de <b>${c.dias}</b>${c.proprio ? ' (só deste)' : ''}</small></div>
+    // o tracinho é até onde a compra cobre (dias até chegar + dias de cobertura)
+    const escala = Math.max(c.horiz * 2, 14);
+    const cls = dura < c.horiz ? 'falta' : dura > 60 ? 'muito' : 'ok';
+    // o tracinho se arrasta com o mouse ou com as setas: muda os dias de cobertura só deste produto
+    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 120 ? '120+' : Math.floor(dura)} dias <small>de <b>${c.horiz}</b>${c.proprio ? ' (só deste)' : ''}</small></div>
       <div class="plan-dura-bar" role="slider" tabindex="0" aria-label="Dias de cobertura de ${esc(l.nome)}" aria-valuemin="1" aria-valuemax="60" aria-valuenow="${c.dias}"
-        title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}"
-        onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${c.dias / escala * 100}%"></i></div></div>`;
+        title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}" data-antes="${c.nAntes}"
+        onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${Math.min(c.horiz / escala, 1) * 100}%"></i></div></div>`;
   }
   const mudou = _planPedir[un]?.[l.pid] !== undefined;
-  const emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
+  let emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
+  // chopp: quantos barris (a troca depende dos vazios, quem pede ajusta)
+  const barril = /BARRIL/.test(l.nome) && /^(LT?|LITROS?)$/i.test(l.unComp) ? Number((l.nome.match(/(\d+)\s*(LITROS|L)\b/) || [])[1]) : 0;
+  if (barril > 0 && c.pedir > 0) emb += ` · ≈ ${Math.ceil(c.pedir * l.fator / barril - 1e-9)} barris`;
   const aberta = _planAbertos.has(l.pid);
   const cls = ['plan-linha', c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok', aberta ? 'plan-aberta' : ''].join(' ');
   const linha = `<tr class="${cls}" onclick="planAbrir(event, '${l.pid}')">
@@ -7218,21 +7291,37 @@ function _planDetalhe(un, B, l, c, n1) {
       (l.temDet.some(([, q]) => q < 0) ? '<div class="mt-1 text-muted">Negativo: saiu por pedido interno mais do que entrou. Quase sempre é compra que chegou e ainda não foi recebida no sistema.</div>' : '')
     : '<div class="vazio">Nada em estoque nesta unidade.</div>') + fora;
   const peds = l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '';
+  // o que chegou desde segunda: já está no estoque acima, aparece para explicar
+  const chg = Object.entries(l.chegou || {}).sort();
+  const chegouHtml = chg.length ? `<h6 class="mt-2">Chegou nesta semana</h6>${chg.map(([d, q]) =>
+    `<div>${_FORN_DIAS[new Date(d + 'T12:00:00').getDay()].toLowerCase()} ${_ddmm(d)}: ${n1(q)} ${unx}</div>`).join('')}<div class="text-muted">Já está no estoque acima (o que sobrou dele).</div>` : '';
   const margem = Math.round(_planMargem(un) * 100);
+  const dsem = d => `${_FORN_DIAS[new Date(d + 'T12:00:00').getDay()].toLowerCase()} ${_ddmm(d)}`;
+  const hoje = _planD.hoje;
+  const iniCobre = _isoMais(hoje, c.nAntes), fimCobre = _isoMais(hoje, c.horiz - 1);
+  const faixa = (a, b) => a === b ? dsem(a) : `${dsem(a)} a ${dsem(b)}`;
+  const chegaTxt = { fixo: 'próxima entrega do fornecedor', prazo: `prazo do fornecedor (${_fornCompra[l.fornId]?.prazo} d)`, sem: 'fornecedor sem dias de entrega no cadastro: conta como se chegasse hoje' }[c.tipo];
+  const dowHtml = l.consDow ? `<div class="plan-dow">${[1, 2, 3, 4, 5, 6, 0].map(i => `<span><small>${_FORN_DIAS[i].toLowerCase()}</small>${l.consDow[i] >= 10 ? _metaNum(Math.round(l.consDow[i])) : n1(l.consDow[i])}</span>`).join('')}</div>` : '';
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
     <div class="plan-det-card"><h6>Consumo por semana</h6>${semHtml}
+      ${dowHtml ? `<h6 class="mt-2">Média por dia da semana</h6>${dowHtml}` : ''}
       <div class="mt-2 text-muted">${origem}${l.perda > 0 ? ` · perda do cadastro ${Math.round(l.perda * 100)}% (entra na conta)` : ''}</div></div>
-    <div class="plan-det-card"><h6>Onde está</h6>${onde}${peds}</div>
+    <div class="plan-det-card"><h6>Onde está</h6>${onde}${peds}${chegouHtml}</div>
     <div class="plan-det-card"><h6>A conta</h6>
-      ${lin(`Precisa (${c.dias} dias + ${margem}%)`, `${n1(c.precisa)} ${unx}`)}
+      ${lin('Pedido de hoje chega', c.chega ? `<b>${dsem(c.chega)}</b>` : 'hoje')}
+      <div class="text-muted mb-1">${chegaTxt}</div>
+      ${c.nAntes > 0 ? lin(`Até chegar (${faixa(hoje, _isoMais(hoje, c.nAntes - 1))})`, `${n1(c.antes)} ${unx}`) : ''}
+      ${lin(`Cobrir ${c.dias} ${c.dias === 1 ? 'dia' : 'dias'} (${faixa(iniCobre, fimCobre)}) + ${margem}%`, `${n1(c.cobre * (1 + _planMargem(un)))} ${unx}`)}
+      ${lin('Precisa', `${n1(c.precisa)} ${unx}`, true)}
       ${lin('− estoque agora', `${n1(l.tem)} ${unx}`)}
       ${l.pedido > 0 ? lin('− já pedido', `${n1(l.pedido)} ${unx}`) : ''}
       ${lin('Falta', c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)} ${unx}</span>` : '<span class="text-success">nada</span>', true)}
       ${lin(`Pedir em ${esc(l.unComp)}${l.fator !== 1 ? ` de ${n1(l.fator)} ${unx}` : ''}`, `<b>${n1(c.auto)}</b>`)}
-      ${lin('Último custo', l.custo > 0 ? brl(l.custo) : '—')}</div>
-    <div class="plan-det-card"><h6>Comprar para quantos dias</h6>
+      ${lin('Último custo', l.custo > 0 ? brl(l.custo) : '—')}
+      ${c.naoChega ? `<div class="mt-1 plan-falta">O estoque e o já pedido acabam antes de ${dsem(c.chega)}. O pedido de hoje não chega a tempo.</div>` : ''}</div>
+    <div class="plan-det-card"><h6>Cobrir quantos dias depois que chega</h6>
       <input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}" onchange="planDiasProd('${l.pid}', this.value)" aria-label="Dias de cobertura de ${esc(l.nome)}"> dias
-      <div class="mt-2 text-muted">${c.proprio ? 'Só deste produto, fica guardado. Apague para voltar ao padrão da unidade.' : 'Padrão da unidade. Trocar aqui vale só para este produto e fica guardado.'}</div>
+      <div class="mt-2 text-muted">${c.proprio ? 'Só deste produto, fica guardado. Apague para voltar ao padrão.' : c.tipo === 'fixo' ? 'Até a entrega seguinte do fornecedor. Trocar aqui vale só para este produto e fica guardado.' : 'Padrão da unidade. Trocar aqui vale só para este produto e fica guardado.'}</div>
       <h6 class="mt-3">Fornecedor</h6>${_planFornCard(l, B.C, `planFornTrocar('${l.pid}', this.value)`, `planFornGuardar('${l.pid}')`)}</div>
   </div></td></tr>`;
 }
@@ -7258,7 +7347,7 @@ function _planFornCard(l, C, aoTrocar, aoGuardar) {
     ultimo: 'Último que vendeu (nenhum pedido nas últimas 4 semanas).',
   }[l.fornOrigem] || 'Nunca comprado nos últimos 6 meses.';
   const dias = l.fornId ? _fornDiasTxt(l.fornId) : '';
-  const prox = l.fornId ? _fornProxEntrega(l.fornId) : null;
+  const prox = l.fornId ? _fornChegada(l.fornId) : null;
   // o Comprador Externo é a exceção, não vai para o cadastro
   const noCad = !l.fornId || isCompExterna(l.forn) || (_fornCompra[l.fornId]?.produtos || []).includes(l.pid);
   return `${_planFornSelect(l, C, aoTrocar)}
@@ -7336,13 +7425,14 @@ function planDiasProd(pid, v) {
 function planDuraArrastar(ev) {
   const bar = ev.currentTarget;
   const escala = Number(bar.dataset.escala) || 14;
+  const antes = Number(bar.dataset.antes) || 0;      // dias até o pedido chegar: não mudam
   const txt = bar.parentElement.querySelector('.plan-dura-txt small b');
   let dias = Number(bar.getAttribute('aria-valuenow'));
   const mover = e => {
     const r = bar.getBoundingClientRect();
-    dias = Math.max(1, Math.min(60, Math.round((e.clientX - r.left) / r.width * escala)));
-    bar.querySelector('i').style.left = Math.min(dias / escala, 1) * 100 + '%';
-    if (txt) txt.textContent = dias;
+    dias = Math.max(1, Math.min(60, Math.round((e.clientX - r.left) / r.width * escala) - antes));
+    bar.querySelector('i').style.left = Math.min((antes + dias) / escala, 1) * 100 + '%';
+    if (txt) txt.textContent = antes + dias;
   };
   ev.preventDefault();
   bar.setPointerCapture(ev.pointerId);
@@ -7443,7 +7533,7 @@ function _levarAoPedidoCompra(marc, un, origem) {
     };
   });
   _pedidoEditando = null;
-  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem, entrega: fornId ? _fornProxEntrega(fornId) : null };
+  _pedidoDoPlan = { fornNome, fornId, setor, unidadeId: uni?.id || '', n: marc.length, origem, entrega: _fornChegada(fornId) };
   ir('pedido', document.querySelector('.nav-sb a[onclick*="\'pedido\'"]'));
   return true;
 }

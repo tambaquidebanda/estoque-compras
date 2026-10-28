@@ -622,6 +622,8 @@ h1 {
 .plan-det-card .lin { display: flex; justify-content: space-between; gap: 10px; padding: 1px 0; }
 .plan-det-card .lin.tot { border-top: 1px solid var(--pl-linha); margin-top: 4px; padding-top: 4px; font-weight: 700; }
 .plan-det-card .vazio { color: #8a9692; }
+.plan-dow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; font-variant-numeric: tabular-nums; font-size: .74rem; text-align: center; }
+.plan-dow small { display: block; color: #8a9692; font-size: .66rem; }
 .plan-sem { display: flex; align-items: flex-end; gap: 6px; height: 54px; margin-top: 4px; }
 .plan-sem div { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: .66rem; color: var(--pl-cinza); }
 .plan-sem b { display: block; width: 100%; background: #9fd0c7; border-radius: 3px 3px 0 0; min-height: 2px; }
