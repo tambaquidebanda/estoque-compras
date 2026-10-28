@@ -2006,8 +2006,13 @@ async function renderListaCad(tipo) {
 // ── Produtos que o fornecedor entrega e dias de entrega (usado pelo Planejamento e pela Meta) ──
 let _fornEd = null;   // { id, nome, dias: Set, produtos: [pid] }
 async function abrirFornCompra(id) {
+  // quem entra direto em Cadastros ainda não tem a lista de fornecedores carregada
+  if (!cForn.some(x => x.id === id)) {
+    const { data } = await sb.from('fornecedores').select('id,nome').order('nome');
+    if (data?.length) cForn = data;
+  }
   const f = cForn.find(x => x.id === id);
-  if (!f) return;
+  if (!f) return toast('Não achei esse fornecedor. Atualize a página (F5).', 'erro');
   await Promise.all([carregarProdutosFT(), _fornCompraCarregar()]).catch(e => toast('Não consegui ler o cadastro: ' + e.message, 'erro'));
   const v = _fornCompra[id] || {};
   _fornEd = { id, nome: f.nome, dias: new Set(v.dias || []), prazo: Number(v.prazo) || 0, produtos: [...(v.produtos || [])] };

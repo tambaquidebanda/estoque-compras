@@ -341,7 +341,6 @@ h1 {
 .tab-cad.ativa                { display: block; }
 
 /* ─── CADASTRO LISTS ───────────────────────────────────────── */
-.lista-cad { max-height: 420px; overflow-y: auto; }
 
 .lista-item {
   display: flex;
