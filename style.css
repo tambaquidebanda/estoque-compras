@@ -653,6 +653,10 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .plan-uni-n.ok { background: #dcf3ec; color: #0e6b68; }
 .meta-num-sub { display: block; font-size: .72rem; color: #8a9692; white-space: nowrap; }
 .meta-num-sub.falta { color: var(--pl-vermelho); font-weight: 700; }
+.meta-guia { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #dfe5e3; font-size: .8rem; }
+.meta-guia select { font-size: .8rem; }
+.meta-emb { width: 80px; text-align: right; }
+.meta-guia-res { margin-top: 6px; color: #5d6b67; line-height: 1.35; }
 .plan-tabela .meta-final { font-size: 1rem; }
 .plan-tabela .meta-ajuste { width: 70px; }
 .plan-tabela .meta-dia { min-width: 112px; }

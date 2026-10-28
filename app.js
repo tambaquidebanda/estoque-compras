@@ -9560,6 +9560,7 @@ async function editarPedido(pedido_num) {
 // DETALHE DO PRODUTO
 // ═══════════════════════════════════════════════════════════════
 let _prodAtual = null;
+let _prodEmbAtual = null;   // embalagem de envio para a Produção (_MP_EMB_CFG) do produto aberto
 
 async function abrirProduto(prodId) {
   // Busca diretamente do banco para garantir dados frescos
@@ -9601,6 +9602,13 @@ async function abrirProduto(prodId) {
   document.getElementById('prod-perda').value       = p.perda          || 0;
   document.getElementById('prod-est-min').value     = p.estoque_min    || 0;
   document.getElementById('prod-ativo').checked      = p.ativo !== false;
+  _prodEmbAtual = null;
+  document.getElementById('prod-emb-envio').value = '';
+  sb.from('inv_configuracoes').select('valor').eq('chave', _MP_EMB_CFG).maybeSingle().then(({ data }) => {
+    if (document.getElementById('prod-id').value !== p.id) return;
+    _prodEmbAtual = data?.valor?.[p.id] ?? null;
+    document.getElementById('prod-emb-envio').value = _prodEmbAtual ?? '';
+  });
 
   // Categoria select
   // Grupo do produto — texto livre
@@ -9698,6 +9706,16 @@ async function salvarDadosProduto() {
 
   const { error } = await sb.from('est_produtos').update(dados).eq('id', id);
   if (error) { toast('Erro ao salvar: ' + error.message, 'erro'); return; }
+
+  const embTxt = String(document.getElementById('prod-emb-envio').value || '').trim().replace(',', '.');
+  const emb = embTxt && Number(embTxt) > 0 ? Number(embTxt) : null;
+  if (emb !== (_prodEmbAtual ?? null)) {
+    try {
+      await _cfgAtualizar(_MP_EMB_CFG, v => { if (emb) v[id] = emb; else delete v[id]; });
+      _prodEmbAtual = emb;
+      if (_metaD) _metaD.emb = { ..._metaD.emb, [id]: emb ?? undefined };
+    } catch (e) { toast('Produto salvo, mas a embalagem para a Produção não gravou: ' + e.message, 'erro'); }
+  }
 
   // A unidade gravada em cada linha de ficha e uma copia da unidade de uso do produto, feita
   // na hora em que o ingrediente foi adicionado. Trocar a unidade no cadastro nao mexia nessas
@@ -16773,7 +16791,23 @@ function _metaArred(pid, v) {
 const _metaFracao = pid => ['KG', 'LT', 'L', 'G', 'GR', 'ML'].includes(String(prodFT(pid)?.unidade_uso || '').toUpperCase());
 const _metaNumU = (pid, v) => (v === null || v === undefined || v === '') ? '—' : _metaNum(_metaFracao(pid) ? v : Math.round(v));
 const _rotuloSemIcone = l => _rotuloLocal(l).replace(/^[^\p{L}]+/u, '');
-const _metaFinal = l => l.ajuste === null || l.ajuste === undefined ? l.meta : Math.max(0, l.meta + l.ajuste);
+const _metaBase  = l => l.ajuste === null || l.ajuste === undefined ? l.meta : Math.max(0, l.meta + l.ajuste);
+// + o que a embalagem fechada do ingrediente-guia acrescenta (l.pac, _metaPacotes)
+const _metaFinal = l => _metaBase(l) + (l.pac || 0);
+
+// EMBALAGEM FECHADA (Wagner, 28/10/2026). A MP vai para a Produção em embalagem
+// fechada; o ingrediente-guia da SA (bolinho = trigo) usa o pacote inteiro e a meta
+// sobe junto: pediu 10,3 kg de trigo, vão 11 kg e o bolinho cresce para usar os 11.
+// Os outros ingredientes acompanham pela ficha e fecham na embalagem deles; a sobra
+// fica na Produção e serve os próximos dias, como antes. Se usar o pacote inteiro
+// fizer a SA crescer mais de 20%, a meta não muda e a sobra fica guardada.
+//   guia:       { SA: MP } — escolhido ao abrir a linha da SA na Meta
+//   embalagem:  { MP: tamanho na unidade de uso } — cadastro do produto; sem
+//               preencher vale a regra antiga (_metaQtdEnvio)
+const _META_GUIA_CFG = 'meta_ingrediente_guia';
+const _MP_EMB_CFG    = 'mp_embalagem_envio';
+const _META_PAC_MAX  = 0.20;
+const _metaArredBaixo = (pid, v) => !(v > 0) ? 0 : _metaFracao(pid) ? Math.floor(v * 10 + 1e-9) / 10 : Math.floor(v + 1e-9);
 
 async function carregarMetaProducao() {
   if (!_metaSemana) _metaSemana = _metaSemanaPadrao(hojeLocal());
@@ -16987,7 +17021,7 @@ async function _metaCarregar(semana) {
     _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
-    _metaSelect('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos'])),
+    _metaSelect('inv_configuracoes', 'chave,valor', q => q.in('chave', ['estrutura', 'mapeamentos', _META_GUIA_CFG, _MP_EMB_CFG])),
   ]);
   // Venda dos últimos dias que o robô ainda não gravou: busca no PDV e entra só na conta
   const pdv = await _metaBuscarPdv(unidades, metas, param, vendas, fichas, ings);
@@ -17105,8 +17139,13 @@ async function _metaCarregar(semana) {
     const num = v => v === null || v === undefined ? null : Number(v);
     let arr;
     if (meta?.status === 'aprovada') {
-      arr = Object.values(doMeta).map(i => ({ pid: i.produto_id, vendeu: +i.vendeu, precisa: +i.precisa, tem: +i.tem,
-        fds: num(i.fim_semana), meta: +i.meta, ajuste: num(i.ajuste), dia: i.dia, sug: i.dia_sugerido }));
+      arr = Object.values(doMeta).map(i => {
+        const o = { pid: i.produto_id, vendeu: +i.vendeu, precisa: +i.precisa, tem: +i.tem,
+          fds: num(i.fim_semana), meta: +i.meta, ajuste: num(i.ajuste), dia: i.dia, sug: i.dia_sugerido };
+        const pac = (num(i.meta_final) ?? 0) - _metaBase(o);     // o que a embalagem fechada acrescentou
+        if (pac > 1e-6) o.pac = pac;
+        return o;
+      });
     } else {
       arr = [...universo].map(pid => {
         const md = mediaDia(u.unidade, pid);
@@ -17136,7 +17175,9 @@ async function _metaCarregar(semana) {
     Object.entries(folhasMp(v.produto_id)).forEach(([fo, [lj]]) => { if (lj > 1e-9) mpLoja[v.unidade].add(fo); });
   });
   const D = { semana, unidades, linhas, saldo, fichaDe, ingsDe, diasCom, pedidosMp, semColunaPedido, semColFds, semColCobre,
-              origem, diasOrigem, semOrigem: origemRows === null, pdv, mpLoja };
+              origem, diasOrigem, semOrigem: origemRows === null, pdv, mpLoja,
+              guia: cfg.find(r => r.chave === _META_GUIA_CFG)?.valor || {},
+              emb: cfg.find(r => r.chave === _MP_EMB_CFG)?.valor || {} };
   _metaSugerirDias(D);
   return D;
 }
@@ -17213,6 +17254,8 @@ function _metaSugerirDias(D) {
   Object.values(D.linhas).forEach(L => {
     if (L.meta?.status === 'aprovada') return;
     L.arr.forEach(l => {
+      l.pac = 0;
+      l.pacInfo = null;
       const diaria = l.vendeu / (L.cobre || 7);
       const sobra = Math.max(0, l.tem - (l.fds || 0));
       // a segunda é o dia 3 contando da sexta; a sobra segura até 3 + cobertura
@@ -17251,6 +17294,59 @@ function _metaSugerirDias(D) {
         if (l.mpSexta) itens.forEach(i => { disp[i.pid] -= i.q; });
         else if (!l.dia) { l.sug = _isoMais(D.semana, 3); l.junto = false; l.mpMovida = true; }
       });
+  });
+  _metaPacotes(D);
+}
+
+// Embalagem fechada do ingrediente-guia: dia a dia, na mesma ordem dos pedidos de MP
+// (_criarPedidosMp), o que já está na Produção é gasto primeiro; o que falta vai em
+// embalagem fechada e o que sobra do pacote do GUIA vira mais SA. Se o mesmo guia
+// serve duas SA no dia, a sobra se divide pelo uso de cada uma.
+function _metaPacotes(D) {
+  Object.values(D.linhas).forEach(L => {
+    if (L.meta?.status === 'aprovada') return;
+    const u = L.u, disp = {};
+    Object.entries(D.saldo[u.local_producao] || {}).forEach(([pid, v]) => { if (v > 0) disp[pid] = v; });
+    const gastar = (itens, d) => itens.map(i => {
+      const usa = Math.min(d[i.pid] || 0, i.q);
+      d[i.pid] = (d[i.pid] || 0) - usa;
+      const q = i.q - usa, envio = q > 0.0001 ? _metaQtdEnvio(i.pid, q, D) : 0;
+      d[i.pid] += Math.max(0, envio - q);
+      return { pid: i.pid, q, envio };
+    });
+    const vivas = L.arr.filter(l => _metaFinal(l) > 0);
+    const dias = [...new Set(vivas.map(l => l.dia || l.sug).filter(Boolean))].sort();
+    dias.forEach(dia => {
+      const ls = vivas.filter(l => (l.dia || l.sug) === dia);
+      const grupos = {};          // guia -> [{ l, g }]; g = guia por unidade de SA
+      ls.forEach(l => {
+        const gp = D.guia[l.pid];
+        const r = gp && D.fichaDe[l.pid] ? _metaMp(u.unidade, [l], D).itens.find(i => i.pid === gp) : null;
+        if (r && r.q > 0) (grupos[gp] ||= []).push({ l, g: r.q / _metaFinal(l) });
+      });
+      // Um guia mexe no outro: o dadinho cresce pela farinha de tapioca e gasta mais
+      // queijo, que é o guia do pastel. Refaz cada guia com o que os outros já
+      // acrescentaram até ninguém mudar.
+      const guias = Object.keys(grupos);
+      for (let volta = 0; volta < 8 && guias.length; volta++) {
+        let mudou = false;
+        guias.forEach(gp => {
+          const gr = grupos[gp], antes = gr.map(y => y.l.pac);
+          gr.forEach(y => { y.l.pac = 0; });
+          const x = gastar(_metaMp(u.unidade, ls, D).itens, { ...disp }).find(i => i.pid === gp);
+          const extra = x ? x.envio - x.q : 0;
+          const uso = gr.reduce((t, y) => t + _metaFinal(y.l) * y.g, 0);
+          const cabe = extra > 1e-6 && extra <= uso * _META_PAC_MAX + 1e-9;
+          gr.forEach((y, k) => {
+            y.l.pacInfo = { mp: gp, precisa: x?.q || 0, envio: x?.envio || 0, pct: uso > 0 ? extra / uso : 0, acima: extra > 1e-6 && !cabe };
+            if (cabe) y.l.pac = _metaArredBaixo(y.l.pid, extra * (_metaFinal(y.l) * y.g / uso) / y.g);
+            if (Math.abs(y.l.pac - antes[k]) > 1e-9) mudou = true;
+          });
+        });
+        if (!mudou) break;
+      }
+      gastar(_metaMp(u.unidade, ls, D).itens, disp);   // com a meta nova: o que de fato sobra para os próximos dias
+    });
   });
 }
 
@@ -17391,6 +17487,7 @@ function _pintarMeta() {
     <dt>Sobra na segunda</dt><dd>Tem agora − venda de ${_metaRotFds(D.semana)}. O estoque de agora segura o fim de semana; o que sobra abate da meta. Vermelho = vai faltar antes da segunda: a meta não cobre isso, mande antes.</dd>
     <dt>Precisa</dt><dd>Venda média de cada dia da semana (${_ddmm(L.vIni)} a ${_ddmm(L.vFim)}, pela ficha dos pratos) de ${rotSem} (${L.cobre || 7} dias), + ${pct}%. A produção entra na venda na segunda ${_ddmm(_isoMais(D.semana, 3))}.</dd>
     <dt>Meta</dt><dd>Precisa − sobra na segunda, arredondado para cima. O <b>Ajuste</b> soma ou tira (+20, -10).</dd>
+    <dt>Embalagem fechada</dt><dd>A MP vai para a Produção em embalagem fechada (o tamanho fica no cadastro do produto; vazio = 1 kg ou 1 unidade). Se a SA tem <b>ingrediente-guia</b> (escolhido ao abrir a linha), a meta sobe para usar o pacote inteiro dele: pediu 10,3 kg de trigo, vão 11 kg e o bolinho cresce até usar os 11. Os outros ingredientes acompanham pela ficha. Se isso fizer a SA crescer mais de ${Math.round(_META_PAC_MAX * 100)}%, a meta não muda e a sobra fica guardada na Produção.</dd>
     <dt>Dia</dt><dd>Sugerido pelo sistema: o último dia antes de a sobra acabar, com um de folga. SA que as duas lojas precisam vai no mesmo dia. Quem aprova pode trocar.</dd>
     <dt>Aprovar</dt><dd>${aprovada ? 'A meta aprovada fica congelada com os números do dia da aprovação.' : 'Ao aprovar, os números congelam e saem os pedidos de MP para a Produção.'}</dd>
   </dl>`;
@@ -17497,7 +17594,8 @@ function _pintarMeta() {
       <td class="text-end">${_metaNumU(l.pid, l.precisa)}${unx}<span class="meta-num-sub">vende ${_metaNumU(l.pid, l.vendeu)} + ${pct}%</span></td>
       <td class="text-center"><input type="text" inputmode="decimal" class="form-control form-control-sm meta-ajuste" value="${ajTxt}" placeholder="—"
           ${aprovada ? 'disabled' : ''} onchange="metaAjuste('${l.pid}', this.value)" aria-label="Ajuste de ${esc(prodFT(l.pid)?.nome || '')}"></td>
-      <td class="text-end"><span class="meta-final">${_metaNum(fin)}</span>${unx}${l.ajuste !== null ? `<span class="meta-num-sub">conta dava ${_metaNum(l.meta)}</span>` : ''}</td>
+      <td class="text-end"><span class="meta-final">${_metaNum(fin)}</span>${unx}${l.ajuste !== null ? `<span class="meta-num-sub">conta dava ${_metaNum(l.meta)}</span>` : ''}${l.pac > 0
+        ? `<span class="meta-num-sub">+${_metaNumU(l.pid, l.pac)} fecha ${l.pacInfo ? esc(_metaNomeCurto(l.pacInfo.mp)) : 'a embalagem'}</span>` : ''}</td>
       <td>${fin > 0 ? `<select class="form-select form-select-sm meta-dia" ${aprovada ? 'disabled' : ''} onchange="metaDia('${l.pid}', this.value)" aria-label="Dia de produzir">${opts}</select>
           ${aprovada ? '' : `<div class="meta-dia-sub${semMp ? ' alerta' : ''}">${sub}</div>`}` : '<span class="text-muted small">—</span>'}</td>
     </tr>`;
@@ -17529,9 +17627,78 @@ function _metaDetalhe(D, L, l, sobra, pct, rotSem) {
       ${lin(`Vende ${rotSem} + ${pct}%`, `${_metaNumU(l.pid, l.precisa)} ${un}`)}
       ${sobra > 0 ? lin('− sobra na segunda', `${_metaNumU(l.pid, sobra)} ${un}`) : ''}
       ${lin('Meta', _metaNum(l.meta), true)}
-      ${l.ajuste !== null ? lin('Ajuste', (l.ajuste > 0 ? '+' : '') + _metaNum(l.ajuste)) + lin('Meta final', `<b>${_metaNum(fin)} ${un}</b>`) : ''}</div>
+      ${l.ajuste !== null ? lin('Ajuste', (l.ajuste > 0 ? '+' : '') + _metaNum(l.ajuste)) : ''}
+      ${l.pac > 0 ? lin(`Embalagem fechada${l.pacInfo ? ' de ' + esc(_metaNomeCurto(l.pacInfo.mp)) : ''}`, '+' + _metaNumU(l.pid, l.pac)) : ''}
+      ${l.ajuste !== null || l.pac > 0 ? lin('Meta final', `<b>${_metaNum(fin)} ${un}</b>`) : ''}
+      ${_metaGuiaHtml(D, L, l)}</div>
     <div class="plan-det-card meta-det-pratos"><h6>De quais pratos veio a venda</h6>${_metaPratosHtml(l.pid)}</div>
   </div></td></tr>`;
+}
+
+const _metaNomeCurto = pid => (prodFT(pid)?.nome || '').replace(/^MP\s+/i, '');
+
+// Ingrediente-guia e embalagem, dentro do card "A conta" da SA
+function _metaGuiaHtml(D, L, l) {
+  if (!D.fichaDe[l.pid]) return '';
+  const aprovada = L.meta?.status === 'aprovada';
+  const gp = D.guia[l.pid] || '';
+  const unMp = pid => esc(prodFT(pid)?.unidade_uso || '');
+  const unSa = esc(prodFT(l.pid)?.unidade_uso || '');
+  if (aprovada) return gp ? `<div class="meta-guia"><span class="text-muted">Ingrediente-guia:</span> ${esc(_metaNomeCurto(gp))}</div>` : '';
+  // MP desta SA por unidade produzida (a meta pode estar zero)
+  const mps = _metaMp(L.u.unidade, [{ ...l, meta: 1, ajuste: null, pac: 0 }], D).itens
+    .sort((a, b) => _metaNomeCurto(a.pid).localeCompare(_metaNomeCurto(b.pid)));
+  const opts = `<option value="">nenhum: a meta não muda pela embalagem</option>` + mps.map(i =>
+    `<option value="${i.pid}"${i.pid === gp ? ' selected' : ''}>${esc(_metaNomeCurto(i.pid))}</option>`).join('');
+  let res = '';
+  const pi = l.pacInfo;
+  if (gp && pi) {
+    const de = `Precisa ${_metaNumU(gp, pi.precisa)} ${unMp(gp)}, vão ${_metaNumU(gp, pi.envio)} ${unMp(gp)} fechado`;
+    res = l.pac > 0 ? `${de}: a meta sobe ${_metaNumU(l.pid, l.pac)} ${unSa} para usar o pacote inteiro.`
+      : pi.acima ? `${de}: usar o pacote inteiro faria a SA crescer ${Math.round(pi.pct * 100)}% (acima de ${Math.round(_META_PAC_MAX * 100)}%). A meta não muda e a sobra fica na Produção.`
+      : pi.envio > pi.precisa + 1e-6 ? `${de}: a sobra é pequena demais para mais uma ${unSa}.`
+      : pi.precisa > 1e-6 ? `Precisa ${_metaNumU(gp, pi.precisa)} ${unMp(gp)}: já fecha a embalagem.`
+      : `A Produção já tem o ${esc(_metaNomeCurto(gp))} deste dia.`;
+  } else if (gp && !(_metaFinal(l) > 0)) res = 'Sem meta nesta semana.';
+  const emb = gp ? (D.emb[gp] ?? '') : '';
+  return `<div class="meta-guia">
+    <label class="d-block">Ingrediente-guia
+      <select class="form-select form-select-sm mt-1" onchange="metaGuia('${l.pid}', this.value)" aria-label="Ingrediente-guia de ${esc(prodFT(l.pid)?.nome || '')}">${opts}</select></label>
+    ${gp ? `<label class="d-flex align-items-center gap-2 mt-2">Embalagem
+      <input type="text" inputmode="decimal" class="form-control form-control-sm meta-emb" value="${String(emb).replace('.', ',')}" placeholder="${_metaFracao(gp) && _MP_PESAVEL.test(norm(prodFT(gp)?.categoria || '').toUpperCase()) ? '0,1' : '1'}"
+        onchange="metaEmbalagem('${gp}', this.value)" aria-label="Embalagem de ${esc(_metaNomeCurto(gp))}"> ${unMp(gp)}</label>` : ''}
+    ${res ? `<div class="meta-guia-res">${res}</div>` : ''}
+  </div>`;
+}
+
+// Lê a chave de novo antes de gravar: outra pessoa pode ter mexido em outro item
+async function _cfgAtualizar(chave, mudar) {
+  const { data, error } = await sb.from('inv_configuracoes').select('valor').eq('chave', chave).maybeSingle();
+  if (error) throw error;
+  const v = data?.valor || {};
+  mudar(v);
+  const { error: e2 } = await sb.from('inv_configuracoes').upsert({ chave, valor: v }, { onConflict: 'chave' });
+  if (e2) throw e2;
+  return v;
+}
+async function metaGuia(saPid, mpPid) {
+  const D = _metaD;
+  if (!D) return;
+  try { D.guia = await _cfgAtualizar(_META_GUIA_CFG, v => { if (mpPid) v[saPid] = mpPid; else delete v[saPid]; }); }
+  catch (e) { toast('Não consegui gravar o ingrediente-guia: ' + e.message, 'erro'); }
+  _metaSugerirDias(D);
+  _pintarMeta();
+}
+async function metaEmbalagem(mpPid, txt) {
+  const D = _metaD;
+  if (!D) return;
+  const t = String(txt || '').trim().replace(',', '.');
+  const n = Number(t);
+  if (t && !(n > 0)) { toast('Embalagem: use um número maior que zero, como 1 ou 30.', 'erro'); _pintarMeta(); return; }
+  try { D.emb = await _cfgAtualizar(_MP_EMB_CFG, v => { if (t) v[mpPid] = n; else delete v[mpPid]; }); }
+  catch (e) { toast('Não consegui gravar a embalagem: ' + e.message, 'erro'); }
+  _metaSugerirDias(D);
+  _pintarMeta();
 }
 
 // "MP para comprar": a Falta vira pedido de compra pela mesma tela do Planejamento
@@ -17765,9 +17932,12 @@ const _PROD_UNI_DO_LOCAL = { CENTRAL: 'Estoque Central', 'ESTOQUE DELIVERY': 'De
 // Quanto pedir de cada MP. Regra do Wagner (05/10): MP vai em embalagem fechada, e o
 // que dá para pesar vai no peso pedido. Pesável = proteína, pescado, carne/ave e
 // hortifruti: sobe para 0,1. O resto sobe para a unidade inteira (1,1 kg de trigo
-// vira 2 kg). O cadastro ainda não tem o tamanho da embalagem.
+// vira 2 kg). Desde 28/10 o produto pode ter a embalagem de envio (_MP_EMB_CFG): ovo
+// em bandeja de 30 vai em múltiplos de 30.
 const _MP_PESAVEL = /PROTE|PESCADO|CARNE|AVES|HORTIFRUT/;
-function _metaQtdEnvio(pid, q) {
+function _metaQtdEnvio(pid, q, D = _metaD) {
+  const emb = Number(D?.emb?.[pid]) || 0;
+  if (emb > 0) return Math.round(Math.ceil(q / emb - 1e-9) * emb * 1e4) / 1e4;
   const p = prodFT(pid);
   const pesavel = _MP_PESAVEL.test(norm(p?.categoria || '').toUpperCase()) && _metaFracao(pid);
   return pesavel ? Math.ceil(q * 10 - 1e-9) / 10 : Math.ceil(q - 1e-9);
