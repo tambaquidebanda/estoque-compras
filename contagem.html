@@ -1681,6 +1681,7 @@ async function salvarSaldoContagem() {
   const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const data  = document.getElementById('data-inv').value;
   const agora = new Date().toISOString();
+  const T     = _telaAgora();   // a tela pode mudar enquanto grava
 
   // Coleta contagens
   const itensCont = _grupoProds.map((p, i) => ({
@@ -1693,16 +1694,16 @@ async function salvarSaldoContagem() {
   }));
 
   const est = _estoqueMob();
-  if (!await _conferirContagemFora(itensCont, est.setor, _local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
-  if (!await _conferirUnidadeDaNoite(resp, _local, data)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
+  if (!await _conferirContagemFora(itensCont, est.setor, T.local)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
+  if (!await _conferirUnidadeDaNoite(resp, T.local, data)) { btn.disabled = false; btn.innerHTML = 'Salvar'; return; }
 
   if (!await _garantirSessao()) { btn.disabled = false; btn.textContent = '💾 Salvar Saldo'; return; }
 
   // Registra em est_inventarios para histórico auditável
   const num_inv = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _local, responsavel: resp,
-    setor: est.setor, grupo: _grupo, total_geral: 0,
+    num_inv, data, local: T.local, responsavel: resp,
+    setor: est.setor, grupo: T.grupo, total_geral: 0,
   }]).select().single();
   if (inv) {
     await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
@@ -1712,12 +1713,12 @@ async function salvarSaldoContagem() {
   const saldoRows = itensCont.filter(it => it.produto_id)
     .map(it => ({ produto_id: it.produto_id, local: est.local, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ${est.setor}/${_grupo}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ${est.setor}/${T.grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
   toast(`${num_inv} salvo por ${resp}! ✅`, 'ok');
-  limparCampos();
+  _limparSeMesmaTela(T);
   btn.disabled = false; btn.textContent = '💾 Salvar Saldo';
 }
 
@@ -1857,33 +1858,34 @@ async function salvarSaldoInicialSetorMob() {
   const data = document.getElementById('inp-data')?.value || hojeLocal();
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   const agora = new Date().toISOString();
+  const T     = _telaAgora();   // a tela pode mudar enquanto grava
 
   const itens = _grupoProds.map((p, i) => ({
     produto_id: p.produto_id || null, nome: p.nome,
     estoque: parseFloat(document.getElementById(`est-${i}`)?.value) || 0,
   }));
 
-  if (!await _conferirContagemFora(itens.map(it => ({ ...it, total: it.estoque })), _setor, _local)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
-  if (!await _conferirUnidadeDaNoite(resp, _local, data)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
+  if (!await _conferirContagemFora(itens.map(it => ({ ...it, total: it.estoque })), T.setor, T.local)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
+  if (!await _conferirUnidadeDaNoite(resp, T.local, data)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
   if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
 
   const num_inv   = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _local, responsavel: resp,
-    setor: _setor, grupo: _grupo, total_geral: 0,
+    num_inv, data, local: T.local, responsavel: resp,
+    setor: T.setor, grupo: T.grupo, total_geral: 0,
   }]).select().single();
   if (inv) await sb.from('est_inventario_itens').insert(
     itens.map(it => ({ ...it, inventario_id: inv.id, pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0, total: it.estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 }))
   );
 
   const saldoRows = itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(_local, _setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(T.local, T.setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${_setor}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${T.setor}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
-  toast(`${num_inv} — saldo inicial de ${_setor} salvo! ✅`, 'ok');
+  toast(`${num_inv} — saldo inicial de ${T.setor} salvo! ✅`, 'ok');
   _voltarAoCentro();
   if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
 }
@@ -2056,40 +2058,45 @@ async function enviarPedido() {
     () => toast('Esta contagem já foi enviada. Troque de grupo para fazer outro pedido.', 'err'));
   if (!_solta) return;
   let _ok = false;
-  try { _ok = await _enviarPedido(); } finally { _solta(_ok); }
+  const prods = _grupoProds;
+  // trocou de grupo enquanto gravava: o grupo novo ainda não foi enviado
+  try { _ok = await _enviarPedido(); } finally { _solta(_ok && _grupoProds === prods); }
 }
 
 async function _enviarPedido() {
   if (!_setor || !_grupo) { toast('Selecione setor e grupo.', 'err'); return; }
   const data = document.getElementById('data-inv').value;
   if (!data) { toast('Selecione a data.', 'err'); return; }
-
-  const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _setor).eq('obs', _grupo).eq('local', _local)
-    .eq('data', data).eq('status', 'pendente').limit(1);
-  if (pedAberto?.length) {
-    toast(`${_setor} / ${_grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err'); return;
-  }
-
+  // Tudo da tela é lido AGORA, antes do primeiro await: quem conta pode tocar em
+  // outro grupo enquanto grava (ver _telaAgora)
+  const T = _telaAgora();
   const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  const itensCont = _grupoProds.map((p, i) => {
+  const itensCont = T.prods.map((p, i) => {
     const estoque       = parseQtd(document.getElementById(`est-${i}`)?.value);
     const pedido_padrao = getPadrao(p.nome) ?? 0;
     const pedido        = Math.max(0, pedido_padrao - estoque);
     return { produto_id: p.produto_id||null, nome: p.nome, estoque, pedido_padrao, pedido,
              cozinha_bar:0, outros:0, total:estoque, unidade:'UN', valor_unitario:0, soma_total:0 };
   });
+
+  const { data: pedAberto } = await sb.from('pedidos_internos')
+    .select('num_pedido,status').eq('setor', T.setor).eq('obs', T.grupo).eq('local', T.local)
+    .eq('data', data).eq('status', 'pendente').limit(1);
+  if (pedAberto?.length) {
+    toast(`${T.setor} / ${T.grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err'); return;
+  }
+
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
-  if (!await _conferirContagemFora(itensCont, _setor, _local)) return;
-  if (!await _conferirUnidadeDaNoite(resp, _local, data)) return;
+  if (!await _conferirContagemFora(itensCont, T.setor, T.local)) return;
+  if (!await _conferirUnidadeDaNoite(resp, T.local, data)) return;
 
   // Salvar contagem — antes da primeira gravação, conferir se o login ainda vale
   if (!await _garantirSessao()) return;
   const num_inv = await _proximoNumInv();
 
   const { data: inv, error: eInv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local:_local, responsavel:resp, setor:_setor, grupo:_grupo, total_geral:totalPedido,
+    num_inv, data, local:T.local, responsavel:resp, setor:T.setor, grupo:T.grupo, total_geral:totalPedido,
   }]).select().single();
 
   if (eInv) { toast(_msgErroBanco(eInv),'err'); return; }
@@ -2097,9 +2104,9 @@ async function _enviarPedido() {
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(_local, _setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(T.local, T.setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_setor}/${_grupo}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${T.setor}/${T.grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
@@ -2109,20 +2116,36 @@ async function _enviarPedido() {
 
   if (!itensPed.length) {
     toast(`${num_inv} salvo! Nenhum item a pedir.`, 'ok');
-    limparCampos(); return true;
+    _limparSeMesmaTela(T); return true;
   }
 
   const num_pedido = await _proximoNumPedido();
 
   const { data: ped, error: ePed } = await sb.from('pedidos_internos').insert({
-    num_pedido, data, dia_semana:_feriado?'feriado':_dia,
-    setor:_setor, local:_local, tipo:'normal', status:'pendente', responsavel:resp, obs:_grupo,
+    num_pedido, data, dia_semana:T.dia,
+    setor:T.setor, local:T.local, tipo:'normal', status:'pendente', responsavel:resp, obs:T.grupo,
   }).select().single();
   if (!ePed) await sb.from('pedidos_internos_itens').insert(itensPed.map(it => ({...it, pedido_id:ped.id})));
 
   toast(`${num_inv} salvo + ${num_pedido} enviado (${itensPed.length} item(s))! ✅`, 'ok');
-  limparCampos();
+  _limparSeMesmaTela(T);
   return true;
+}
+
+// A TELA PODE MUDAR ENQUANTO GRAVA (27/10/2026). Gravar leva uns segundos (contagem,
+// saldo, número do pedido) e o celular continua deixando tocar em outro grupo. O código
+// lia setor/grupo/unidade da tela DEPOIS de esperar o banco: o Bar tocou em DESTILADOS
+// enquanto as POLPAS gravavam, e o PED-3802 saiu com as polpas e o nome DESTILADOS (a
+// contagem INV-2864, gravada antes do toque, ficou certa como POLPAS). O pedido falso
+// ainda barrou o DESTILADOS de verdade ("aguardando liberação") até ser cancelado.
+// Por isso cada gravação lê a tela uma vez, no toque, e só usa essa foto.
+function _telaAgora() {
+  return { setor: _setor, grupo: _grupo, local: _local, dia: _feriado ? 'feriado' : _dia, prods: _grupoProds };
+}
+// Zera os campos só se a tela ainda é a que gravou; senão apagaria o que a pessoa já
+// começou a digitar no grupo novo.
+function _limparSeMesmaTela(T) {
+  if (_grupoProds === T.prods) limparCampos(); else _voltarAoCentro();
 }
 
 function limparCampos() {

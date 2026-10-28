@@ -3817,6 +3817,7 @@ async function salvarInventario() {
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
   const resp = (document.getElementById('inv-resp').value || '').trim();
+  const T    = _invTelaAgora();   // a tela pode mudar enquanto grava
 
   const itens = _invProds.map((p, i) => {
     const estoque      = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
@@ -3843,8 +3844,8 @@ async function salvarInventario() {
   const num_inv = await _proximoNumInv();
 
   const { data: inv, error } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _invLocal, responsavel: resp,
-    setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido
+    num_inv, data, local: T.local, responsavel: resp,
+    setor: T.setor, grupo: T.grupo, total_geral: totalPedido
   }]).select().single();
 
   if (error) { toast(_msgErroBanco(error), 'erro'); return; }
@@ -3855,12 +3856,7 @@ async function salvarInventario() {
   toast(`${num_inv} salvo! Total pedido: ${totalPedido}`, 'ok');
   carregarHistoricoInv();
 
-  // Limpa os campos de estoque
-  _invProds.forEach((_, i) => {
-    const el = document.getElementById(`inv-est-${i}`);
-    if (el) el.value = '0';
-    calcPedidoInv(i);
-  });
+  _limparCamposEstoque(T);
 }
 
 function _preencherModalDivergencias() {
@@ -4400,7 +4396,9 @@ async function enviarPedidoInterno() {
     () => toast('Esta contagem já foi enviada. Troque de grupo para fazer outro pedido.', 'warn'));
   if (!_solta) return;
   let _ok = false;
-  try { _ok = await _enviarPedidoInterno(); } finally { _solta(_ok); }
+  const prods = _invProds;
+  // trocou de grupo enquanto gravava: o grupo novo ainda não foi enviado
+  try { _ok = await _enviarPedidoInterno(); } finally { _solta(_ok && _invProds === prods); }
 }
 
 
@@ -4443,43 +4441,45 @@ async function _enviarPedidoInterno() {
   const data = document.getElementById('inv-data').value;
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
-
-  const { data: pedAberto } = await sb.from('pedidos_internos')
-    .select('num_pedido,status').eq('setor', _invSetor).eq('obs', _invGrupo).eq('local', _invLocal)
-    .eq('data', data).eq('status', 'pendente').limit(1);
-  if (pedAberto?.length) {
-    toast(`${_invSetor} / ${_invGrupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro'); return;
-  }
-
+  // Tudo da tela é lido AGORA, antes do primeiro await (ver _invTelaAgora)
+  const T = _invTelaAgora();
   const resp = (document.getElementById('inv-resp').value || '').trim();
-
-  // ─── 1. Salvar contagem ───
-  const itensCont = _invProds.map((p, i) => {
+  const itensCont = T.prods.map((p, i) => {
     const estoque       = parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0;
     const pedido_padrao = _getPadrao(p.nome) ?? 0;
     const pedido        = Math.max(0, pedido_padrao - estoque);
     return { produto_id: p.produto_id || null, nome: p.nome, estoque, pedido_padrao, pedido,
              cozinha_bar: 0, outros: 0, total: estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 };
   });
+
+  const { data: pedAberto } = await sb.from('pedidos_internos')
+    .select('num_pedido,status').eq('setor', T.setor).eq('obs', T.grupo).eq('local', T.local)
+    .eq('data', data).eq('status', 'pendente').limit(1);
+  if (pedAberto?.length) {
+    toast(`${T.setor} / ${T.grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'erro'); return;
+  }
+
+
+  // ─── 1. Salvar contagem ───
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
-  if (!await _conferirContagemFora(itensCont, _invSetor, _invLocal)) return;
+  if (!await _conferirContagemFora(itensCont, T.setor, T.local)) return;
   if (!await _garantirSessao()) return;
 
   const num_inv   = await _proximoNumInv();
 
   const { data: inv, error: eInv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _invLocal, responsavel: resp,
-    setor: _invSetor, grupo: _invGrupo, total_geral: totalPedido,
+    num_inv, data, local: T.local, responsavel: resp,
+    setor: T.setor, grupo: T.grupo, total_geral: totalPedido,
   }]).select().single();
   if (eInv) { toast(_msgErroBanco(eInv), 'erro'); return; }
   await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Atualiza o saldo do setor (est_saldo_local) + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(_invLocal, _invSetor), saldo: it.estoque * _fatorDe(it.produto_id) }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(T.local, T.setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${_invSetor}/${_invGrupo}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Contagem ${num_inv} · ${T.setor}/${T.grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo setor:', eSaldo); toast('Contagem salva, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
@@ -4490,17 +4490,17 @@ async function _enviarPedidoInterno() {
   if (!itensPed.length) {
     toast(`${num_inv} salvo! Todos os produtos estão no padrão — nenhum pedido gerado.`, 'ok');
     carregarHistoricoInv();
-    _limparCamposEstoque();
+    _limparCamposEstoque(T);
     return true;
   }
 
   const numPed = await _proximoNumPedido();
   const { data: ped, error: ePed } = await sb.from('pedidos_internos').insert({
     num_pedido: numPed, data,
-    dia_semana: _invFeriado ? 'feriado' : _invDia,
-    setor: _invSetor, local: _invLocal,
+    dia_semana: T.dia,
+    setor: T.setor, local: T.local,
     tipo: 'normal', status: 'pendente',
-    responsavel: resp, obs: _invGrupo,
+    responsavel: resp, obs: T.grupo,
   }).select().single();
   if (ePed) { toast(`${num_inv} salvo, mas erro no pedido: ` + ePed.message, 'warn'); return; }
 
@@ -4508,7 +4508,7 @@ async function _enviarPedidoInterno() {
 
   toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅`, 'ok');
   carregarHistoricoInv();
-  _limparCamposEstoque();
+  _limparCamposEstoque(T);
   return true;
 }
 
@@ -4521,6 +4521,7 @@ async function salvarSaldoContagemDesktop() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
 
   const agora = new Date().toISOString();
+  const T     = _invTelaAgora();   // a tela pode mudar enquanto grava
   const itensCont = _invProds.map((p, i) => ({
     produto_id: p.produto_id || null, nome: p.nome,
     estoque: parseFloat(document.getElementById(`inv-est-${i}`)?.value) || 0,
@@ -4529,29 +4530,29 @@ async function salvarSaldoContagemDesktop() {
     unidade: p.unidade || 'UN', valor_unitario: 0, soma_total: 0,
   }));
 
-  if (!await _conferirContagemFora(itensCont, 'ESTOQUE DA LOJA', _invLocal)) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; } return; }
+  if (!await _conferirContagemFora(itensCont, 'ESTOQUE DA LOJA', T.local)) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; } return; }
   if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; } return; }
 
   // Registra em est_inventarios para histórico
   const num_inv   = await _proximoNumInv();
   const { data: inv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: _invLocal, responsavel: resp,
-    setor: 'ESTOQUE DA LOJA', grupo: _invGrupo, total_geral: 0,
+    num_inv, data, local: T.local, responsavel: resp,
+    setor: 'ESTOQUE DA LOJA', grupo: T.grupo, total_geral: 0,
   }]).select().single();
   if (inv) await sb.from('est_inventario_itens').insert(itensCont.map(it => ({ ...it, inventario_id: inv.id })));
 
   // Atualiza saldo absoluto + registra a contagem no livro-razão (delta)
   const saldoRows = itensCont.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(_invLocal, 'ESTOQUE DA LOJA'), saldo: it.estoque }));
+    .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(T.local, 'ESTOQUE DA LOJA'), saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${_invGrupo}`, responsavel: resp, data });
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${T.grupo}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
   toast(`${num_inv} salvo! ✅`, 'ok');
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Salvar Saldo'; }
   carregarHistoricoInv();
-  _limparCamposEstoque();
+  _limparCamposEstoque(T);
 }
 
 async function salvarSaldoInicialSetor() {
@@ -4597,7 +4598,16 @@ async function salvarSaldoInicialSetor() {
   _limparCamposEstoque();
 }
 
-function _limparCamposEstoque() {
+// A TELA PODE MUDAR ENQUANTO GRAVA (27/10/2026): gravar leva uns segundos e dá para tocar
+// em outro grupo no meio. Lendo setor/grupo da tela depois de esperar o banco, o celular do
+// Bar mandou o PED-3802 com as polpas e o nome DESTILADOS. Mesma regra em contagem.html
+// (_telaAgora): cada gravação lê a tela uma vez, no toque.
+function _invTelaAgora() {
+  return { setor: _invSetor, grupo: _invGrupo, local: _invLocal, dia: _invFeriado ? 'feriado' : _invDia, prods: _invProds };
+}
+// Só zera se a tela ainda é a que gravou: senão apagaria o que já foi digitado no grupo novo
+function _limparCamposEstoque(T) {
+  if (T && _invProds !== T.prods) return;
   _invProds.forEach((_, i) => {
     const el = document.getElementById(`inv-est-${i}`);
     if (el) el.value = '0';
