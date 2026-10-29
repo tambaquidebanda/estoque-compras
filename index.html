@@ -2054,7 +2054,15 @@
       <div class="plan-modos" id="plan-modo" role="tablist" aria-label="Base da conta"></div>
 
       <div class="plan-barra">
-        <button type="button" class="plan-param-chip" id="plan-chips" onclick="planAjustes()" aria-expanded="false" aria-controls="plan-ajustes"></button>
+        <div class="plan-barra-esq">
+          <button type="button" class="plan-param-chip" id="plan-chips" onclick="planAjustes()" aria-expanded="false" aria-controls="plan-ajustes"></button>
+          <div class="plan-chega" id="plan-chega-box" title="Quando vai chegar o pedido que você está montando agora. Vale para todos os produtos desta unidade, só hoje.">
+            <i class="bi bi-truck"></i><label for="plan-chega">Chega</label>
+            <input type="date" id="plan-chega" onchange="planChega(this.value)">
+            <span id="plan-chega-txt"></span>
+            <button type="button" id="plan-chega-x" class="d-none" onclick="planChega('')" title="Voltar ao dia de entrega de cada fornecedor" aria-label="Voltar ao cadastro do fornecedor">×</button>
+          </div>
+        </div>
         <div class="plan-barra-dir">
           <span class="plan-hora" id="plan-hora" title="Saldo, venda e pedidos são lidos na hora do cálculo. Clique em Atualizar para ler de novo."></span>
           <button class="btn btn-sm btn-light border" onclick="carregarPlanejamento()" title="Busca de novo venda, saldo e pedidos"><i class="bi bi-arrow-clockwise"></i> Atualizar</button>

@@ -7263,6 +7263,23 @@ function _fornProxEntrega(id, hoje = hojeLocal()) {
   return null;
 }
 
+// Dia que o pedido chega, escolhido na barra (Wagner, 29/10/2026): "sexta analiso as bebidas
+// para o pedido chegar na terça" — abate a venda de hoje até a véspera e cobre os dias da
+// unidade (ou do produto) a partir dele. Passa por cima do cadastro do fornecedor em todas
+// as linhas da unidade e vale só no dia em que foi escolhido: no dia seguinte volta ao cadastro.
+const _planChegaEsc = un => {
+  const x = _planUCfg(un).chega, hoje = _planD?.hoje;
+  return x && x.em === hoje && x.dia > hoje ? x.dia : null;
+};
+function planChega(v) {
+  const c = _planUCfg(_planUn);
+  if (v && v > _planD.hoje) c.chega = { dia: v, em: _planD.hoje };
+  else { delete c.chega; if (v) toast('Escolha um dia depois de hoje.', 'erro'); }
+  _planPedir[_planUn] = {};
+  _planSalvarCfg();
+  _pintarPlan();
+}
+
 // "seg 03/11" — a coluna Dura fala em dia, não em quantidade de dias
 const _planDiaTxt = iso => `${_FORN_DIAS[new Date(iso + 'T12:00:00').getDay()].toLowerCase()} ${_ddmm(iso)}`;
 
@@ -7282,10 +7299,11 @@ function _planConta(un, l) {
   const proprio = _planUCfg(un).diasProd?.[l.pid] !== undefined;
   const fx = l.fornId ? _fornCompra[l.fornId] : null;
   const fixos = fx?.dias || [];
-  const chega = _fornChegada(l.fornId, hoje);
+  const escolhido = _planChegaEsc(un);               // dia escolhido na barra passa por cima do cadastro
+  const chega = escolhido || _fornChegada(l.fornId, hoje);
   const nAntes = chega ? Math.round((new Date(chega + 'T12:00:00') - new Date(hoje + 'T12:00:00')) / 864e5) : 0;
   let dias = _planDiasDe(un, l.pid);
-  let tipo = chega ? (fixos.length ? 'fixo' : 'prazo') : 'sem';
+  let tipo = escolhido ? 'escolhido' : chega ? (fixos.length ? 'fixo' : 'prazo') : 'sem';
   if (tipo === 'fixo' && !proprio) {
     const depois = _fornProxEntrega(l.fornId, chega);
     if (depois) dias = Math.round((new Date(depois + 'T12:00:00') - new Date(chega + 'T12:00:00')) / 864e5);
@@ -7371,6 +7389,14 @@ function _pintarPlan() {
   chips.innerHTML = `<i class="bi bi-sliders"></i><span>Venda <b>${_ddmm(p.ini)} a ${_ddmm(p.fim)}</b></span><span class="sep"></span>` +
     `<span>Margem <b>${margem}%</b></span><span class="sep"></span><span>Comprar para <b>${diasP} dias</b></span>`;
   chips.setAttribute('aria-expanded', String(_planPainel === 'ajustes'));
+  const chegaEsc = _planChegaEsc(un), inpChega = document.getElementById('plan-chega');
+  inpChega.value = chegaEsc || '';
+  inpChega.min = _isoMais(_planD.hoje, 1);
+  document.getElementById('plan-chega-box').classList.toggle('ativo', !!chegaEsc);
+  document.getElementById('plan-chega-x').classList.toggle('d-none', !chegaEsc);
+  const ultAbate = chegaEsc && _isoMais(chegaEsc, -1);
+  document.getElementById('plan-chega-txt').textContent = !chegaEsc ? 'pelo cadastro do fornecedor'
+    : `abate ${_planDiaTxt(_planD.hoje)}${ultAbate > _planD.hoje ? ' a ' + _planDiaTxt(ultAbate) : ''} · cobre ${diasP} dias`;
   document.getElementById('plan-ajustes').classList.toggle('d-none', _planPainel !== 'ajustes');
   document.getElementById('plan-vini').value = p.ini;
   document.getElementById('plan-vfim').value = p.fim;
@@ -7386,7 +7412,7 @@ function _pintarPlan() {
   como.innerHTML = `<dl>
     ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
-    <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Se o estoque acaba antes de chegar, a linha avisa.</dd>
+    <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Escolhendo o dia em "Chega" no topo, ele vale para todos os produtos da unidade, só naquele dia: abate a venda até a véspera e cobre ${diasP} dias (ou os dias do produto) a partir dele. Se o estoque acaba antes de chegar, a linha avisa.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
     <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana, com a margem a partir do dia que o pedido chega ("até seg 03/11" = segunda é o último dia inteiro). Ao lado, até que dia a compra de hoje precisa cobrir; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje e já com a margem (em vermelho, quanto falta — o mesmo "Falta" da conta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
@@ -7542,7 +7568,7 @@ function _planDetalhe(un, B, l, c, n1) {
   const hoje = _planD.hoje;
   const iniCobre = _isoMais(hoje, c.nAntes), fimCobre = _isoMais(hoje, c.horiz - 1);
   const faixa = (a, b) => a === b ? dsem(a) : `${dsem(a)} a ${dsem(b)}`;
-  const chegaTxt = { fixo: 'próxima entrega do fornecedor', prazo: `prazo do fornecedor (${_fornCompra[l.fornId]?.prazo} d)`, sem: 'fornecedor sem dias de entrega no cadastro: conta como se chegasse hoje' }[c.tipo];
+  const chegaTxt = { escolhido: 'dia escolhido no topo da tela (só hoje)', fixo: 'próxima entrega do fornecedor', prazo: `prazo do fornecedor (${_fornCompra[l.fornId]?.prazo} d)`, sem: 'fornecedor sem dias de entrega no cadastro: conta como se chegasse hoje' }[c.tipo];
   const dowHtml = l.consDow ? `<div class="plan-dow">${[1, 2, 3, 4, 5, 6, 0].map(i => `<span><small>${_FORN_DIAS[i].toLowerCase()}</small>${l.consDow[i] >= 10 ? _metaNum(Math.round(l.consDow[i])) : n1(l.consDow[i])}</span>`).join('')}</div>` : '';
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
     <div class="plan-det-card"><h6>Consumo por semana</h6>${semHtml}
