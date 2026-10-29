@@ -594,6 +594,7 @@ h1 {
 .plan-base-saida { background: var(--pl-ambar-claro); color: var(--pl-ambar); }
 .plan-base-nada { background: #eceff1; color: var(--pl-cinza); }
 .plan-base-alerta { background: var(--pl-vermelho-claro); color: var(--pl-vermelho); }
+.plan-base-margem { background: var(--pl-teal-claro); color: var(--pl-teal); }
 .plan-parte { display: block; font-size: .72rem; color: #7c3aed; white-space: nowrap; }
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
 .saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }

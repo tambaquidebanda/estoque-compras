@@ -7465,6 +7465,10 @@ function _planLinha(un, B, l, c, n1, porForn) {
   else if (!l.base && l.comprado > 0) tags.push(`<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} no período, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`);
   else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
   if (c.naoChega) tags.push(`<span class="plan-base plan-base-alerta" title="O estoque e o já pedido acabam antes de ${_ddmm(c.chega)}, quando chega o pedido feito hoje. Comprar por fora ou pedir entrega antes.">acaba antes de chegar</span>`);
+  // Estoque + já pedido cobrem até o "precisa até" sem a margem: o pedido é só a segurança
+  // (Wagner, 29/10/2026 — decidir a olho se faz ou não)
+  if (c.auto > 0 && c.sobra >= 0)
+    tags.push(`<span class="plan-base plan-base-margem" title="Sem a margem de ${Math.round(_planMargem(un) * 100)}%, o estoque e o já pedido cobrem até ${_planDiaTxt(_isoMais(_planD.hoje, c.horiz - 1))} e ainda sobram ${n1(c.sobra)} ${esc(l.un)}. O pedido sugerido é só a margem de segurança.">só pela margem</span>`);
   if (l.fator === 1 && norm(l.unComp) !== norm(l.un))
     tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
   const sub = porForn ? esc(l.cat) : l.forn ? `${esc(l.forn)}${l.fornOrigem === 'troca' ? ' <i class="bi bi-arrow-left-right" title="Fornecedor trocado nesta tela"></i>' : ''}` : 'sem compra recente';
