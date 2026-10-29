@@ -7299,11 +7299,14 @@ function _planConta(un, l) {
   const sobra = l.tem + l.pedido - precisa;
   const sobraSem = l.tem + l.pedido - antes - cobre;
   const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
-  // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar
+  // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar.
+  // Com a margem a partir do dia que o pedido chega — a mesma conta do Precisa, para a data,
+  // a barra, a cor e o "faltam" dizerem a mesma coisa (Wagner, 29/10/2026)
+  const fm = 1 + _planMargem(un);
   let dura = null;
   if (l.consDia > 0) {
     let resto = l.tem + l.pedido; dura = 0;
-    while (dura < 120) { const q = _planConsDe(l, _isoMais(hoje, dura)); if (resto < q) { dura += q > 0 ? resto / q : 0; break; } resto -= q; dura++; }
+    while (dura < 120) { const q = _planConsDe(l, _isoMais(hoje, dura)) * (dura >= nAntes ? fm : 1); if (resto < q) { dura += q > 0 ? resto / q : 0; break; } resto -= q; dura++; }
   }
   // Acaba antes do pedido de hoje chegar: o estoque não aguenta (o já pedido conta)
   const naoChega = nAntes > 0 && l.consDia > 0 && l.tem + l.pedido < antes - 1e-9;
@@ -7385,7 +7388,7 @@ function _pintarPlan() {
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Se o estoque acaba antes de chegar, a linha avisa.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
-    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana ("até seg 03/11" = segunda é o último dia inteiro). Ao lado, até que dia a compra de hoje precisa cobrir; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje e já com a margem (em vermelho, quanto falta — o mesmo "Falta" da conta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
+    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana, com a margem a partir do dia que o pedido chega ("até seg 03/11" = segunda é o último dia inteiro). Ao lado, até que dia a compra de hoje precisa cobrir; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje e já com a margem (em vermelho, quanto falta — o mesmo "Falta" da conta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
