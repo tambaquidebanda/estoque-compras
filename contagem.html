@@ -1748,6 +1748,9 @@ async function selecionarGrupo(grupo) {
     toast(`${_setor} / ${grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err');
     return;
   }
+  _pedidoSemConfirmar(_setor, grupo, _local).then(p => {   // aviso cedo; quem trava é o envio
+    if (p && _grupo === grupo) toast(`${p.num_pedido} foi liberado e ainda não foi confirmado — confirme antes de enviar.`, 'err');
+  });
 
   _liberarTela('pedido-interno');   // outro grupo = outro pedido
   _grupo = grupo;
@@ -2085,6 +2088,8 @@ async function _enviarPedido() {
   if (pedAberto?.length) {
     toast(`${T.setor} / ${T.grupo} — ${pedAberto[0].num_pedido} ainda aguardando liberação.`, 'err'); return;
   }
+  const semConf = await _pedidoSemConfirmar(T.setor, T.grupo, T.local);
+  if (semConf) { await _avisarSemConfirmar(semConf); return; }
 
   const totalPedido = itensCont.reduce((s, it) => s + it.pedido, 0);
 
@@ -2639,13 +2644,22 @@ async function confirmarLiberacao() {
     if (!_pedNoEscopo(pedL)) { toast(_msgForaEscopo('liberar os'), 'err'); return; }
     if (!await _conferirQtdPedido(conf, pedL?.setor, 'liberar')) return;
   }
-  await Promise.all(ids.map(id => {
-    const qtd = parseQtd(document.getElementById(`lib-${id}`)?.value);
-    return sb.from('pedidos_internos_itens').update({qtd_liberada:qtd}).eq('id',id);
-  }));
-  await sb.from('pedidos_internos').update({status:'liberado',liberado_em:new Date().toISOString(),
-    ...await _campoQuem('liberado_por', _quemCom(quem))}).eq('id',_pedLiberarId);
+  const pedidoId = _pedLiberarId;
+  const qtds = Object.fromEntries(ids.map(id => [id, parseQtd(document.getElementById(`lib-${id}`)?.value)]));
+  await Promise.all(ids.map(id => sb.from('pedidos_internos_itens').update({qtd_liberada:qtds[id]}).eq('id',id)));
+  // Reserva: só um toque encontra 'pendente' — a baixa na liberação não pode sair duas vezes
+  const { data: lib, error: eLib } = await sb.from('pedidos_internos').update({status:'liberado',liberado_em:new Date().toISOString(),
+    ...await _campoQuem('liberado_por', _quemCom(quem))}).eq('id',pedidoId).eq('status','pendente')
+    .select('id,num_pedido,setor,local,tipo');
+  if (eLib) { toast(_msgErroBanco(eLib),'err'); return; }
   fecharModal('modal-liberar');
+  if (!lib?.length) {
+    toast('Este pedido já tinha sido liberado ou cancelado. Nada foi lançado de novo.','err');
+    carregarPedidosEstoque();
+    return;
+  }
+  const { data: itsLib } = await sb.from('pedidos_internos_itens').select('id,produto_id').in('id', ids);
+  await _baixarNaLiberacao(lib[0], (itsLib||[]).map(it => ({ ...it, qtd: qtds[it.id] })), _quemCom(quem));
   toast('Pedido liberado! ✅','ok');
   carregarPedidosEstoque();
 }
@@ -2755,8 +2769,8 @@ async function _confirmacaoAtrasada(pedidoId) {
   const pids = [...new Set((its || []).map(i => i.produto_id).filter(Boolean))];
   if (!pids.length) return null;
   const { data: cont } = await sb.from('est_movimentacoes').select('id')
-    .eq('local', _origemPedidoInterno(ped.local)).in('tipo', ['ajuste', 'contagem']).in('produto_id', pids)
-    .gt('criado_em', ped.liberado_em).limit(1);
+    .eq('local', _origemPedidoInterno(ped.local)).in('tipo', ['ajuste', 'contagem']).is('ref_tabela', null)
+    .in('produto_id', pids).gt('criado_em', ped.liberado_em).limit(1);
   return cont?.length ? `foi liberado em ${quando} e o estoque já foi contado depois disso` : null;
 }
 
@@ -2772,6 +2786,149 @@ async function _encerrarPedidoAtrasado(pedidoId, motivo) {
   toast(data?.length ? 'Pedido encerrado, sem mexer no saldo.' : 'Este pedido já não estava liberado. Nada foi lançado.', data?.length ? 'ok' : 'err');
   carregarMeusPedidos();
 }
+
+// ════════════════════════════════════════════════════════════════
+// BAIXA NA LIBERAÇÃO (Wagner, 29/10/2026)
+// A mercadoria sai da prateleira quando o estoque LIBERA, então é aí que o ESTOQUE_LOJA
+// (ou o ESTOQUE DELIVERY, no P10) baixa. Até aqui baixava só quando o setor confirmava, e
+// desde 3da37fb (22/10) a loja não conta mais: pedido sem confirmação, ou encerrado por
+// atraso, deixava a mercadoria para sempre no saldo. Rastro: PED-3791 (cozinha, liberado
+// 28/10) foi encerrado em 29/10 e a loja ficou com 30 kg de arroz, 14 de óleo e 6 de leite.
+//   liberar   → sai da origem o liberado; o setor mostra "a caminho" (tela de Saldo)
+//   confirmar → entra no setor o que chegou; a diferença liberado × chegou volta (ou sai)
+//               da origem. Confirmar tarde não estraga mais nada: não há "encerrar".
+//               Se o setor CONTOU depois da liberação, a contagem já tem a mercadoria e
+//               a entrada não soma de novo; idem a origem para a diferença.
+//   novo pedido do mesmo setor/grupo → só depois de confirmar o anterior (emergência passa)
+// Marca da regra nova: a saída da liberação leva ref_id = id do ITEM. Pedido liberado antes
+// não tem a marca e segue a regra antiga (baixa na confirmação, encerra se atrasado).
+// Mesmo bloco em app.js e contagem.html (o "a caminho" da tela de Saldo fica só no app.js).
+// ════════════════════════════════════════════════════════════════
+const _REF_PED_ITEM    = 'pedidos_internos_itens';
+const _BAIXA_LIB_DESDE = '2026-10-29T00:00:00Z';   // nenhum pedido antes disso tem a marca
+
+async function _baixarNaLiberacao(ped, itens, quem) {
+  if (!ped || ped.tipo === 'transferencia') return;      // transferência tem fluxo próprio
+  const origem = _origemPedidoInterno(ped.local);
+  for (const it of itens) {
+    const q = Number(it.qtd) || 0;
+    if (!it.produto_id || !(q > 0)) continue;
+    await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida',
+      quantidade: -q * _fatorDe(it.produto_id), origem: 'pedido_interno', ref_tabela: _REF_PED_ITEM, ref_id: it.id,
+      responsavel: quem || null, data: hojeLocal(),
+      motivo: `Pedido interno → ${ped.setor || ''} (${ped.num_pedido} liberado)` });
+  }
+}
+
+// ids de item que já baixaram na liberação. Lotes de 100: .in() grande estoura a URL.
+async function _itensBaixadosNaLib(itemIds) {
+  const out = new Set();
+  for (let i = 0; i < itemIds.length; i += 100) {
+    const { data, error } = await sb.from('est_movimentacoes').select('ref_id')
+      .eq('ref_tabela', _REF_PED_ITEM).eq('tipo', 'pedido_interno_saida').in('ref_id', itemIds.slice(i, i + 100));
+    if (error) throw error;
+    (data || []).forEach(r => out.add(r.ref_id));
+  }
+  return out;
+}
+
+// Produtos contados (ou ajustados à mão) neste lugar depois de `desde`. Contagem que bateu
+// com o saldo não deixa linha no razão — por isso o setor também olha est_inventarios.
+async function _contouDepois(local, pids, desde, ped) {
+  const out = new Set();
+  if (!local || !pids.length || !desde) return out;
+  const { data, error } = await sb.from('est_movimentacoes').select('produto_id')
+    .eq('local', local).in('tipo', ['contagem', 'ajuste']).is('ref_tabela', null)
+    .in('produto_id', pids).gt('criado_em', desde);
+  if (error) throw error;
+  (data || []).forEach(r => out.add(r.produto_id));
+  if (ped?.setor) {
+    const { data: invs, error: e2 } = await sb.from('est_inventarios').select('id')
+      .eq('setor', ped.setor).eq('local', ped.local).gt('criado_em', desde);
+    if (e2) throw e2;
+    if (invs?.length) {
+      const { data: its, error: e3 } = await sb.from('est_inventario_itens').select('produto_id')
+        .in('inventario_id', invs.map(i => i.id)).in('produto_id', pids);
+      if (e3) throw e3;
+      (its || []).forEach(r => out.add(r.produto_id));
+    }
+  }
+  return out;
+}
+
+// Movimentos da confirmação de um pedido da regra nova, ou null se é da regra antiga.
+// itens: [{ id, produto_id, qtd_liberada, qtdRec }] na unidade contável do pedido.
+async function _planoConfirmacao(pedidoId, itens) {
+  const { data: ped, error } = await sb.from('pedidos_internos')
+    .select('num_pedido,setor,local,tipo,liberado_em').eq('id', pedidoId).single();
+  if (error) throw error;
+  if (!ped?.liberado_em || ped.tipo === 'transferencia') return null;
+  const baixados = await _itensBaixadosNaLib(itens.map(it => it.id));
+  if (!baixados.size && itens.some(it => Number(it.qtd_liberada) > 0)) return null;
+
+  const origem  = _origemPedidoInterno(ped.local);
+  const destino = ped.setor ? _localDoSetor(ped.local, ped.setor) : null;
+  const pids = [...new Set(itens.map(it => it.produto_id).filter(Boolean))];
+  const [origemContou, destinoContou] = await Promise.all([
+    _contouDepois(origem, pids, ped.liberado_em, null),
+    destino ? _contouDepois(destino, pids, ped.liberado_em, ped) : new Set(),
+  ]);
+  const fmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const movs = [], data = hojeLocal();
+  for (const it of itens) {
+    if (!it.produto_id) continue;
+    const f   = _fatorDe(it.produto_id);
+    const lib = baixados.has(it.id) ? (Number(it.qtd_liberada) || 0) : 0;   // o que de fato saiu na liberação
+    const rec = Number(it.qtdRec) || 0;
+    const dif = (lib - rec) * f;                     // + volta para a origem, − sai mais
+    if (Math.abs(dif) > 1e-9 && !origemContou.has(it.produto_id))
+      movs.push({ produto_id: it.produto_id, local: origem, tipo: 'ajuste', quantidade: dif,
+        origem: 'pedido_interno', ref_tabela: _REF_PED_ITEM, ref_id: it.id, data,
+        motivo: `Diferença na confirmação ${ped.num_pedido}: liberado ${fmt(lib)}, chegou ${fmt(rec)}` });
+    if (destino && rec > 0 && !destinoContou.has(it.produto_id))
+      movs.push({ produto_id: it.produto_id, local: destino, tipo: 'pedido_interno_entrada', quantidade: rec * f,
+        origem: 'pedido_interno', ref_tabela: _REF_PED_ITEM, ref_id: it.id, data,
+        motivo: 'Pedido interno (entrada no setor)' });
+  }
+  return movs;
+}
+
+// Pedido da regra nova liberado e ainda não confirmado que segura o próximo pedido deste
+// setor/grupo: o do mesmo grupo, ou uma emergência do setor (a emergência em si nunca é
+// barrada). Só a regra nova trava — os liberados antigos nunca confirmados travariam todos.
+// Falha de leitura NÃO trava: barrar a contagem da noite é o dano maior.
+async function _pedidoSemConfirmar(setor, grupo, local) {
+  try {
+    const { data: peds, error } = await sb.from('pedidos_internos').select('id,num_pedido,tipo,obs,liberado_em')
+      .eq('setor', setor).eq('local', local).eq('status', 'liberado').neq('tipo', 'transferencia')
+      .gte('liberado_em', _BAIXA_LIB_DESDE).order('liberado_em');
+    if (error) throw error;
+    const cand = (peds || []).filter(p => p.tipo === 'emergencia' || p.obs === grupo);
+    if (!cand.length) return null;
+    const { data: its, error: e2 } = await sb.from('pedidos_internos_itens').select('id,pedido_id')
+      .in('pedido_id', cand.map(p => p.id));
+    if (e2) throw e2;
+    const baix = await _itensBaixadosNaLib((its || []).map(i => i.id));
+    const comBaixa = new Set((its || []).filter(i => baix.has(i.id)).map(i => i.pedido_id));
+    return cand.find(p => comBaixa.has(p.id)) || null;
+  } catch (e) {
+    console.error('_pedidoSemConfirmar falhou (segue sem travar):', e);
+    return null;
+  }
+}
+
+// Janela da trava: diz qual pedido falta confirmar e abre a confirmação dele ali mesmo.
+async function _avisarSemConfirmar(p) {
+  const quando = p.liberado_em ? _horaManaus(p.liberado_em) : '';
+  const k = await _janelaTrava({
+    titulo: `${esc(p.num_pedido)} ainda não foi confirmado`,
+    html: `<div>${p.tipo === 'emergencia' ? 'A emergência' : 'O pedido anterior'} <b>${esc(p.num_pedido)}</b> foi liberado${quando ? ' em ' + quando : ''} e ninguém confirmou o recebimento.</div>
+      <div style="margin-top:.5rem">Confirme o que chegou (se não chegou nada, confirme zero). Depois envie este pedido de novo — a contagem continua na tela.</div>`,
+    botoes: [{ k: null, txt: 'Agora não', cor: 'cinza' }, { k: 'ok', txt: 'Confirmar agora', cor: 'azul' }],
+  });
+  if (k === 'ok') abrirReceberPedido(p.id);
+}
+
 
 async function _confirmarRecebimento() {
   if (!_pedReceberId) return;
@@ -2791,8 +2948,19 @@ async function _confirmarRecebimento() {
       anterior: it.qtd_liberada ?? it.qtd_pedida })), setor, 'confirmar o recebimento')) return;
   }
 
-  const atraso = await _confirmacaoAtrasada(pedidoId);
-  if (atraso) { await _encerrarPedidoAtrasado(pedidoId, atraso); return; }
+  // Pedido liberado com baixa na liberação: a conta toda sai ANTES da reserva — se a
+  // leitura falhar, nada foi gravado e a pessoa tenta de novo
+  let plano;
+  {
+    const { data: itsP, error: eP } = await sb.from('pedidos_internos_itens').select('id,produto_id,qtd_liberada').in('id', ids);
+    if (eP) { toast(_msgErroBanco(eP),'err'); return; }
+    try { plano = await _planoConfirmacao(pedidoId, (itsP||[]).map(it => ({ ...it, qtdRec: qtds[it.id] }))); }
+    catch (e) { toast(_msgErroBanco(e),'err'); return; }
+  }
+  if (!plano) {                                   // regra antiga (liberado antes de 29/10/2026)
+    const atraso = await _confirmacaoAtrasada(pedidoId);
+    if (atraso) { await _encerrarPedidoAtrasado(pedidoId, atraso); return; }
+  }
 
   const { data: reservado, error: eRes } = await sb.from('pedidos_internos')
     .update({status:'recebido',recebido_em:new Date().toISOString(), ...await _campoQuem('recebido_por', _quemCom(quem))})
@@ -2812,7 +2980,15 @@ async function _confirmarRecebimento() {
     return { ...it, qtd };
   }));
 
-  // Movimentar saldo (livro-razão): saída do estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), entrada no setor
+  if (plano) {
+    for (const m of plano) await movimentar({ ...m, responsavel: _quemCom(quem) || null });
+    fecharModal('modal-receber');
+    toast('Recebimento confirmado! ✅','ok');
+    carregarMeusPedidos();
+    return;
+  }
+
+  // Regra antiga — saída do estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), entrada no setor
   await Promise.all(itens.filter(it => it.produto_id && it.qtd).map(async it => {
     await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -it.qtd, origem: 'pedido_interno', motivo: `Pedido interno${setor ? ' → ' + setor : ''}` });
     if (setor) await movimentar({ produto_id: it.produto_id, local: destino, tipo: 'pedido_interno_entrada', quantidade: +it.qtd, origem: 'pedido_interno', motivo: 'Pedido interno (entrada no setor)' });

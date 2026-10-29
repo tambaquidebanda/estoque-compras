@@ -596,6 +596,7 @@ h1 {
 .plan-base-alerta { background: var(--pl-vermelho-claro); color: var(--pl-vermelho); }
 .plan-parte { display: block; font-size: .72rem; color: #7c3aed; white-space: nowrap; }
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
+.saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }
 .plan-dura { min-width: 130px; }
 .plan-dura-txt { font-size: .78rem; font-weight: 700; white-space: nowrap; }
 .plan-dura-txt small { font-weight: 500; color: #8a9692; }
