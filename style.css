@@ -602,6 +602,7 @@ h1 {
 .plan-dura-txt small { font-weight: 500; color: #8a9692; }
 .plan-dura-bar { position: relative; height: 6px; background: #edf1f0; border-radius: 99px; margin-top: 4px; }
 .plan-dura-bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; }
+.plan-dura-sobra { font-size: .72rem; color: #5f6d69; margin-top: 3px; white-space: nowrap; }
 .plan-dura-bar i { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--pl-tinta); opacity: .45; border-radius: 1px; }
 /* o tracinho é uma alça: área de toque maior que o desenho */
 .plan-dura-bar[role="slider"] { cursor: ew-resize; touch-action: none; outline-offset: 4px; }
