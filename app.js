@@ -7263,6 +7263,9 @@ function _fornProxEntrega(id, hoje = hojeLocal()) {
   return null;
 }
 
+// "seg 03/11" — a coluna Dura fala em dia, não em quantidade de dias
+const _planDiaTxt = iso => `${_FORN_DIAS[new Date(iso + 'T12:00:00').getDay()].toLowerCase()} ${_ddmm(iso)}`;
+
 // Consumo previsto de um dia: média daquele dia da semana (sábado vende mais que segunda)
 const _planConsDe = (l, d) => l.consDow ? l.consDow[new Date(d + 'T12:00:00').getDay()] : l.consDia;
 
@@ -7362,7 +7365,7 @@ function _pintarPlan() {
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Se o estoque acaba antes de chegar, a linha avisa.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
-    <dt>Dura</dt><dd>Quantos dias o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana. A barra fica vermelha quando não chega até onde a compra cobre e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar os dias só daquele produto.</dd>
+    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana ("até seg 03/11" = segunda é o último dia inteiro). Embaixo, até que dia a compra de hoje precisa cobrir. A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
@@ -7456,8 +7459,11 @@ function _planLinha(un, B, l, c, n1, porForn) {
     // o tracinho é até onde a compra cobre (dias até chegar + dias de cobertura)
     const escala = Math.max(c.horiz * 2, 14);
     const cls = dura < c.horiz ? 'falta' : dura > 60 ? 'muito' : 'ok';
+    // Em data, não em dias (Wagner, 29/10/2026): "até seg 03/11" se compara direto com o dia
+    // do próximo pedido ao fornecedor. Até = último dia inteiro que o estoque aguenta.
+    const durTxt = dura >= 120 ? 'passa de 4 meses' : dura < 1 ? 'acaba hoje' : `até ${_planDiaTxt(_isoMais(_planD.hoje, Math.floor(dura) - 1))}`;
     // o tracinho se arrasta com o mouse ou com as setas: muda os dias de cobertura só deste produto
-    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt">${dura >= 120 ? '120+' : Math.floor(dura)} dias <small>de <b>${c.horiz}</b>${c.proprio ? ' (só deste)' : ''}</small></div>
+    duraHtml = `<div class="plan-dura-${cls}"><div class="plan-dura-txt" title="${dura >= 120 ? '120+' : Math.floor(dura)} dias">${durTxt} <small>precisa até <b>${_planDiaTxt(_isoMais(_planD.hoje, c.horiz - 1))}</b>${c.proprio ? ' (só deste)' : ''}</small></div>
       <div class="plan-dura-bar" role="slider" tabindex="0" aria-label="Dias de cobertura de ${esc(l.nome)}" aria-valuemin="1" aria-valuemax="60" aria-valuenow="${c.dias}"
         title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}" data-antes="${c.nAntes}"
         onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${Math.min(c.horiz / escala, 1) * 100}%"></i></div></div>`;
@@ -7640,7 +7646,7 @@ function planDuraArrastar(ev) {
     const r = bar.getBoundingClientRect();
     dias = Math.max(1, Math.min(60, Math.round((e.clientX - r.left) / r.width * escala) - antes));
     bar.querySelector('i').style.left = Math.min((antes + dias) / escala, 1) * 100 + '%';
-    if (txt) txt.textContent = antes + dias;
+    if (txt) txt.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias - 1));
   };
   ev.preventDefault();
   bar.setPointerCapture(ev.pointerId);
