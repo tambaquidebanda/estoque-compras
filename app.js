@@ -7293,8 +7293,9 @@ function _planConta(un, l) {
   const { antes, cobre, precisa, falta, auto } = _planCobertura(un, l, nAntes, dias);
   const troca = _planPedir[un]?.[l.pid];
   const pedir = troca ?? auto;
-  // O que sobra no fim do último dia coberto, já com o pedido de hoje (negativo = falta)
-  const sobra = l.tem + l.pedido + pedir * l.fator - antes - cobre;
+  // O que sobra no fim do último dia coberto SEM o pedido de hoje — estoque + já pedido, igual à
+  // data de cima (Wagner, 29/10/2026). Negativo = o que falta
+  const sobra = l.tem + l.pedido - antes - cobre;
   const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
   // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar
   let dura = null;
@@ -7322,11 +7323,11 @@ function _planCobertura(un, l, nAntes, dias) {
 
 // Linha embaixo da barra da Dura: quanto sobra no "precisa até" (Wagner, 29/10/2026 — as duas
 // datas sozinhas não diziam se a compra fecha a conta)
-function _planSobraTxt(sobra, pedir, un) {
+function _planSobraTxt(sobra, un) {
   const q = Math.abs(sobra) < 0.05 ? 0 : sobra;
   const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
   const txt = q >= 0 ? `sobram ${n1(q)} ${esc(un)}` : `faltam ${n1(-q)} ${esc(un)}`;
-  return `<span class="${q < 0 ? 'plan-falta' : ''}">${pedir > 0 ? 'com o pedido, ' : ''}${txt}</span>`;
+  return `<span class="${q < 0 ? 'plan-falta' : ''}">${txt}</span>`;
 }
 
 // Linhas da aba aberta (Pela venda / Pelo uso)
@@ -7382,7 +7383,7 @@ function _pintarPlan() {
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Se o estoque acaba antes de chegar, a linha avisa.</dd>
     <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
-    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana ("até seg 03/11" = segunda é o último dia inteiro). Ao lado, até que dia a compra de hoje precisa cobrir; embaixo da barra, quanto sobra no fim desse dia com o pedido da coluna Pedir (em vermelho, quanto falta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
+    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana ("até seg 03/11" = segunda é o último dia inteiro). Ao lado, até que dia a compra de hoje precisa cobrir; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje (em vermelho, quanto falta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
@@ -7484,7 +7485,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
       <div class="plan-dura-bar" role="slider" tabindex="0" aria-label="Dias de cobertura de ${esc(l.nome)}" aria-valuemin="1" aria-valuemax="60" aria-valuenow="${c.dias}"
         title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}" data-antes="${c.nAntes}"
         onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${Math.min(c.horiz / escala, 1) * 100}%"></i></div>
-      <div class="plan-dura-sobra">${_planSobraTxt(c.sobra, c.pedir, l.un)}</div></div>`;
+      <div class="plan-dura-sobra">${_planSobraTxt(c.sobra, l.un)}</div></div>`;
   }
   const mudou = _planPedir[un]?.[l.pid] !== undefined;
   let emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
@@ -7667,9 +7668,9 @@ function planDuraArrastar(ev) {
     dias = Math.max(1, Math.min(60, Math.round((e.clientX - r.left) / r.width * escala) - antes));
     bar.querySelector('i').style.left = Math.min((antes + dias) / escala, 1) * 100 + '%';
     if (txt) txt.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias - 1));
-    if (sob && l) {                                  // soltar apaga a quantidade digitada: vale a sugerida
+    if (sob && l) {
       const k = _planCobertura(_planUn, l, antes, dias);
-      sob.innerHTML = _planSobraTxt(l.tem + l.pedido + k.auto * l.fator - k.antes - k.cobre, k.auto, l.un);
+      sob.innerHTML = _planSobraTxt(l.tem + l.pedido - k.antes - k.cobre, l.un);
     }
   };
   ev.preventDefault();
