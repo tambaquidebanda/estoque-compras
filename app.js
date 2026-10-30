@@ -17398,14 +17398,17 @@ async function _metaCarregar(semana) {
     });
   });
   // Pedido de setor liberado e não confirmado (29/10): saiu da loja, ainda não entrou no
-  // setor — continua dentro da unidade
+  // setor — continua dentro da unidade. Fica separado do "a caminho" (que é só o que vem
+  // do Central) e aparece como "N → Cozinha (PED-x, falta confirmar)" — Wagner, 30/10
+  const noSetor = {};                        // noSetor[unidade][pid] = [{ q, local, num }]
   try {
     (await _pedidosACaminho(null)).forEach(c => {
       if (prodFT(c.produto_id)?.tipo !== 'SA') return;
       const u = unidades.find(x => lugaresDe[x.unidade].includes(c.local));
       if (!u) return;
-      const m = (caminho[u.unidade] ||= {});
-      m[c.produto_id] = (m[c.produto_id] || 0) + c.q;
+      const l = ((noSetor[u.unidade] ||= {})[c.produto_id] ||= []);
+      const j = l.find(x => x.local === c.local && x.num === c.num);
+      if (j) j.q += c.q; else l.push({ q: c.q, local: c.local, num: c.num });
     });
   } catch (e) { console.error('meta: pedidos de setor a caminho (segue sem):', e); }
   const fichaDe = {}, ingsDe = {};
@@ -17447,9 +17450,10 @@ async function _metaCarregar(semana) {
         const md = mediaDia(u.unidade, pid);
         const onde = lugaresDe[u.unidade].map(l => [l, Math.max(0, saldo[l]?.[pid] || 0)]).filter(x => x[1] > 0);
         const aCaminho = caminho[u.unidade]?.[pid] || 0;
-        const tem = onde.reduce((t, x) => t + x[1], 0) + aCaminho;
+        const semConf = noSetor[u.unidade]?.[pid] || [];
+        const tem = onde.reduce((t, x) => t + x[1], 0) + aCaminho + semConf.reduce((t, x) => t + x.q, 0);
         const s = manter[pid] || doMeta[pid];
-        return { pid, md, tem, onde, aCaminho, ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
+        return { pid, md, tem, onde, aCaminho, semConf, ajuste: s ? num(s.ajuste) : null, dia: s?.dia || null, sug: null };
       });
     }
     linhas[u.unidade] = { u, meta, margem, cobre, vIni: lIni, vFim: lFim, arr, diasFds: _metaDiasFds(semana),
@@ -17745,7 +17749,7 @@ function _pintarMeta() {
   const L = D.linhas[_metaUn], u = L.u;
   const aprovada = L.meta?.status === 'aprovada';
   const pct = Math.round(L.margem * 100);
-  const rotLocais = (u.locais_tem || []).map(_rotuloSemIcone).join(' + ') + ' + setores + a caminho';
+  const rotLocais = (u.locais_tem || []).map(_rotuloSemIcone).join(' + ') + ' + setores + a caminho do Central';
   const rotSem = _META_COBRE_ROT[L.cobre || 7];
 
   // abas das unidades: quantas SA para produzir e se a meta já foi aprovada
@@ -17883,7 +17887,8 @@ function _pintarMeta() {
     const tag = sobra !== null && sobra < 0 ? `<span class="plan-base plan-base-alerta">acaba antes da segunda</span>` : '';
     const tr = `<tr class="plan-linha${fin > 0 ? '' : ' plan-ok'}${aberta ? ' plan-aberta' : ''}" onclick="metaAbrir(event, '${l.pid}')">
       <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(prodFT(l.pid)?.nome || l.pid)}</div>${tag ? `<div class="plan-sub">${tag}</div>` : ''}</td>
-      <td class="text-end">${_metaNumU(l.pid, l.tem)}${unx}${l.aCaminho ? `<span class="plan-caminho">${_metaNumU(l.pid, l.aCaminho)} a caminho</span>` : ''}</td>
+      <td class="text-end">${_metaNumU(l.pid, l.tem)}${unx}${l.aCaminho ? `<span class="plan-caminho">${_metaNumU(l.pid, l.aCaminho)} a caminho</span>` : ''}${(l.semConf || []).map(c =>
+        `<span class="meta-num-sub" title="O estoque da loja já liberou; entra no setor quando ele confirmar o recebimento">${_metaNumU(l.pid, c.q)} → ${esc(_rotuloSemIcone(c.local))} (${esc(c.num)}, falta confirmar)</span>`).join('')}</td>
       <td class="text-end">${sobra === null ? '<span class="text-muted">—</span>'
         : sobra < 0 ? `<span class="plan-falta">0</span>${unx}<span class="meta-num-sub falta">falta ${_metaNum(_metaArred(l.pid, -sobra))}</span>`
         : `${_metaNumU(l.pid, sobra)}${unx}`}${temFds ? `<span class="meta-num-sub">vende ${_metaNumU(l.pid, l.fds)} ${_metaRotFds(D.semana)}</span>` : ''}</td>
@@ -17915,7 +17920,8 @@ function _metaDetalhe(D, L, l, sobra, pct, rotSem) {
   const fin = _metaFinal(l);
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade" style="padding-left:16px">
     <div class="plan-det-card"><h6>Venda média por dia</h6>${semHtml}<div class="mt-2 text-muted">${_ddmm(L.vIni)} a ${_ddmm(L.vFim)}, pela ficha dos pratos</div></div>
-    <div class="plan-det-card"><h6>Onde está</h6>${onde}${l.aCaminho ? lin('a caminho', `${_metaNumU(l.pid, l.aCaminho)} ${un}`) : ''}</div>
+    <div class="plan-det-card"><h6>Onde está</h6>${onde}${l.aCaminho ? lin('a caminho do Central', `${_metaNumU(l.pid, l.aCaminho)} ${un}`) : ''}${(l.semConf || []).map(c =>
+      lin(`${esc(_rotuloSemIcone(c.local))} (${esc(c.num)}, falta confirmar)`, `${_metaNumU(l.pid, c.q)} ${un}`)).join('')}</div>
     <div class="plan-det-card"><h6>A conta</h6>
       ${lin('Tem agora', `${_metaNumU(l.pid, l.tem)} ${un}`)}
       ${l.fds !== null && l.fds !== undefined ? lin(`− vende ${_metaRotFds(D.semana)}`, `${_metaNumU(l.pid, l.fds)} ${un}`) : ''}
