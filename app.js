@@ -5577,7 +5577,14 @@ async function _confirmarRecebimentoInv() {
     sb.from('pedidos_internos_itens').update({ qtd_recebida: qtds[id] }).eq('id', id)));
 
   if (plano) {
-    for (const m of plano) await movimentar({ ...m, responsavel: _nomeUsuario() || null });
+    let semBaixa = 0;
+    for (const m of plano) {
+      const mov = { ...m, responsavel: _nomeUsuario() || null };
+      if (!m.unica) { await movimentar(mov); continue; }
+      delete mov.unica;
+      if (await _baixaUnica(mov) === 'erro') semBaixa++;
+    }
+    if (semBaixa) toast(`Recebido, mas a saída de ${semBaixa} item(ns) não gravou no estoque de origem — confira o saldo.`, 'warn');
   } else {
     // Movimentar saldo: diminui o estoque de origem (ESTOQUE_LOJA, ou ESTOQUE DELIVERY no P10), aumenta setor.
     // O pedido e digitado na unidade CONTAVEL (garrafa, saco); o saldo e em unidade
@@ -5622,11 +5629,36 @@ async function _baixarNaLiberacao(ped, itens, quem) {
   for (const it of itens) {
     const q = Number(it.qtd) || 0;
     if (!it.produto_id || !(q > 0)) continue;
-    await movimentar({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida',
+    await _baixaUnica({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida',
       quantidade: -q * _fatorDe(it.produto_id), origem: 'pedido_interno', ref_tabela: _REF_PED_ITEM, ref_id: it.id,
       responsavel: quem || null, data: hojeLocal(),
       motivo: `Pedido interno → ${ped.setor || ''} (${ped.num_pedido} liberado)` });
   }
+}
+
+// MARCA ÚNICA DA BAIXA (03/11/2026). PED-3973: o aparelho que liberou parou depois do 10º
+// item; 18 s depois a cozinha confirmou e a confirmação cobrou da loja os 36 itens sem
+// marca ("liberado 0"); às 23:45 o aparelho voltou e baixou de novo 19 deles (291,5 un.).
+// Agora a liberação e a confirmação gravam a MESMA marca (saída com ref = item) e só uma
+// vale: quem chega depois encontra a marca e não mexe no saldo. O índice único
+// est_mov_baixa_liberacao_unica (SQL_FIX_DOBRO_PED3973.sql) fecha a corrida no banco —
+// por isso aqui o razão vai ANTES do saldo, ao contrário de movimentar().
+// Devolve 'gravou', 'ja_tinha' ou 'erro' (nada gravado).
+async function _baixaUnica(mov) {
+  const { data: ja } = await sb.from('est_movimentacoes').select('id')
+    .eq('ref_tabela', _REF_PED_ITEM).eq('tipo', 'pedido_interno_saida').eq('ref_id', mov.ref_id).limit(1);
+  if (ja?.length) return 'ja_tinha';
+  const linha = {};
+  ['produto_id', 'local', 'tipo', 'quantidade', 'custo_unit', 'unidade_id', 'motivo', 'origem', 'ref_tabela', 'ref_id', 'responsavel', 'data']
+    .forEach(k => { if (mov[k] !== undefined && mov[k] !== null && mov[k] !== '') linha[k] = mov[k]; });
+  const { error } = await sb.from('est_movimentacoes').insert(linha);
+  if (error) {
+    if (error.code === '23505') return 'ja_tinha';      // o outro lado gravou no mesmo instante
+    console.error('_baixaUnica: marca não gravou, saldo intacto:', mov.ref_id, error.message);
+    return 'erro';
+  }
+  await _movSaldo(mov.produto_id, mov.local, Number(mov.quantidade));
+  return 'gravou';
 }
 
 // ids de item que já baixaram na liberação. Lotes de 100: .in() grande estoura a URL.
@@ -5673,7 +5705,9 @@ async function _planoConfirmacao(pedidoId, itens) {
   if (error) throw error;
   if (!ped?.liberado_em || ped.tipo === 'transferencia') return null;
   const baixados = await _itensBaixadosNaLib(itens.map(it => it.id));
-  if (!baixados.size && itens.some(it => Number(it.qtd_liberada) > 0)) return null;
+  // Regra antiga = liberado antes da baixa na liberação existir. Pela DATA, não pela falta
+  // de marca: liberação que parou antes do 1º item não pode cair na regra antiga.
+  if (!baixados.size && ped.liberado_em < _BAIXA_LIB_DESDE && itens.some(it => Number(it.qtd_liberada) > 0)) return null;
 
   const origem  = _origemPedidoInterno(ped.local);
   const destino = ped.setor ? _localDaContagem(ped.local, ped.setor) : null;
@@ -5687,8 +5721,16 @@ async function _planoConfirmacao(pedidoId, itens) {
   for (const it of itens) {
     if (!it.produto_id) continue;
     const f   = _fatorDe(it.produto_id);
-    const lib = baixados.has(it.id) ? (Number(it.qtd_liberada) || 0) : 0;   // o que de fato saiu na liberação
+    const lib = Number(it.qtd_liberada) || 0;
     const rec = Number(it.qtdRec) || 0;
+    // Item sem a marca: a liberação não terminou (aparelho parou no meio). A confirmação grava
+    // a baixa do liberado no lugar dela, com a marca única — se a liberação voltar depois,
+    // encontra a marca e não baixa de novo. Antes isto virava "liberado 0" e a liberação
+    // atrasada baixava outra vez (PED-3973). Origem que contou depois já não tem a mercadoria.
+    if (!baixados.has(it.id) && lib > 0 && !origemContou.has(it.produto_id))
+      movs.push({ produto_id: it.produto_id, local: origem, tipo: 'pedido_interno_saida', quantidade: -lib * f,
+        origem: 'pedido_interno', ref_tabela: _REF_PED_ITEM, ref_id: it.id, data, unica: true,
+        motivo: `Pedido interno → ${ped.setor || ''} (${ped.num_pedido} liberado; baixa gravada na confirmação)` });
     const dif = (lib - rec) * f;                     // + volta para a origem, − sai mais
     if (Math.abs(dif) > 1e-9 && !origemContou.has(it.produto_id))
       movs.push({ produto_id: it.produto_id, local: origem, tipo: 'ajuste', quantidade: dif,
