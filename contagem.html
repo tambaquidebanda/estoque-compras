@@ -2845,8 +2845,8 @@ async function _baixarNaLiberacao(ped, itens, quem) {
 // marca ("liberado 0"); às 23:45 o aparelho voltou e baixou de novo 19 deles (291,5 un.).
 // Agora a liberação e a confirmação gravam a MESMA marca (saída com ref = item) e só uma
 // vale: quem chega depois encontra a marca e não mexe no saldo. O índice único
-// est_mov_baixa_liberacao_unica (SQL_FIX_DOBRO_PED3973.sql) fecha a corrida no banco —
-// por isso aqui o razão vai ANTES do saldo, ao contrário de movimentar().
+// uq_est_mov_ref (ref_tabela, ref_id, local, tipo — SQL_F3_EST_MOVIMENTACOES.sql) fecha a
+// corrida no banco — por isso aqui o razão vai ANTES do saldo, ao contrário de movimentar().
 // Devolve 'gravou', 'ja_tinha' ou 'erro' (nada gravado).
 async function _baixaUnica(mov) {
   const { data: ja } = await sb.from('est_movimentacoes').select('id')

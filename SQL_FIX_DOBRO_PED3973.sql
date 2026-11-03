@@ -6,7 +6,9 @@
 -- As 23:45 o aparelho voltou e baixou de novo 19 deles. 291,5 unidades a mais.
 --
 -- Este SQL devolve ao ESTOQUE_LOJA a cobranca da confirmacao desses 19 itens, com uma
--- linha de 'ajuste' no razao (mesmo ref do item) e o saldo somado. A baixa da liberacao
+-- linha de 'ajuste' no razao e o saldo somado. ref_tabela = 'estorno_pedidos_internos_itens'
+-- (ref_id = item): o indice uq_est_mov_ref ja tem um 'ajuste' do mesmo item na loja (a
+-- cobranca da confirmacao) e recusaria um segundo com ref_tabela 'pedidos_internos_itens'. A baixa da liberacao
 -- (23:45) fica: ela e a marca de "saiu na liberacao" que o resto do sistema usa.
 --
 -- Pode rodar mais de uma vez: o item que ja tem o estorno nao entra de novo.
@@ -53,7 +55,7 @@ WHERE a.ref_id IN (SELECT id FROM itens)
 INSERT INTO est_movimentacoes (produto_id, local, tipo, quantidade, motivo, origem, ref_tabela, ref_id, responsavel, data)
 SELECT produto_id, 'ESTOQUE_LOJA', 'ajuste', devolver,
        'Estorno da baixa em dobro PED-3973 (liberação parou no meio e voltou depois da confirmação)',
-       'pedido_interno', 'pedidos_internos_itens', ref_id, 'SQL 03/11/2026', '2026-11-03'
+       'pedido_interno', 'estorno_pedidos_internos_itens', ref_id, 'SQL 03/11/2026', '2026-11-03'
 FROM _dobro_3973;
 
 UPDATE est_saldo_local s
@@ -66,9 +68,6 @@ SELECT COUNT(*) AS itens, SUM(devolver) AS unidades FROM _dobro_3973;
 
 COMMIT;
 
--- 3) TRAVA NO BANCO — uma baixa de liberacao por item de pedido, nunca duas.
--- O codigo novo (liberacao e confirmacao) grava essa marca e, se ela ja existe, nao mexe
--- no saldo. Conferido em 03/11: nenhum item tem marca repetida (1.089 marcas).
-CREATE UNIQUE INDEX IF NOT EXISTS est_mov_baixa_liberacao_unica
-  ON est_movimentacoes (ref_id)
-  WHERE tipo = 'pedido_interno_saida' AND ref_tabela = 'pedidos_internos_itens';
+-- 3) TRAVA NO BANCO: nao precisa criar. O indice uq_est_mov_ref (ref_tabela, ref_id, local,
+-- tipo), de SQL_F3_EST_MOVIMENTACOES.sql, ja aceita uma so baixa de liberacao por item; o
+-- codigo novo (_baixaUnica) trata o erro 23505 dele como "ja baixou".
