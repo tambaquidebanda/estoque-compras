@@ -8016,6 +8016,9 @@ async function renderPendentes() {
     return;
   }
 
+  // Pedido com itens conferidos e não confirmados aparece marcado — foi o que faltou no #02004
+  const _conf = await _confCarregar(lista.flatMap(g => g.itens.map(it => it.id)));
+
   // Verifica estado de integração de cada pedido consultando as fontes diretas
   const numeros = lista.map(g => g.pedido_num);
   const [resLancamentos, resRascunhos] = await Promise.all([
@@ -8045,7 +8048,9 @@ async function renderPendentes() {
         ${g.setor ? `<br><span class="badge" style="background:#6f42c1;font-size:.7rem">${esc(g.setor)}</span>` : ''}
       </td>
       <td>${esc(g.comp||'—')}</td>
-      <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span></td>
+      <td class="text-center"><span class="badge bg-secondary">${g.itens.length} item(s)</span>${(() => {
+        const n = g.itens.filter(it => _conf[String(it.id)]).length;
+        return n ? `<br><span class="badge bg-success mt-1" title="Itens conferidos e salvos; o recebimento só vale depois de confirmar">🟢 ${n}/${g.itens.length} conferidos</span>` : ''; })()}</td>
       <td class="text-center"><strong>${brl(g.total)}</strong></td>
       <td class="text-center">${badgeFin}</td>
       <td class="text-center">
@@ -8178,6 +8183,7 @@ async function abrirModalReceber(pedido_num) {
       <td class="text-center">
         <button type="button" class="btn-check-receber" id="inc-rec-${x.id}"
           onclick="togIncluirReceb('${x.id}')">✓</button>
+        <div class="small mt-1" id="cs-rec-${x.id}" style="font-size:.68rem;line-height:1.15;min-width:70px"></div>
       </td>
       <td class="text-center">
         <div class="form-check form-switch d-flex justify-content-center">
@@ -8202,6 +8208,14 @@ async function abrirModalReceber(pedido_num) {
   const _sel = document.getElementById('receb-local');
   if (_sel) { _sel.value = _localRecebDoPedido(_recebItensAbertos[0]?.setor); _pintarLocalReceb(true); }
   new bootstrap.Modal(document.getElementById('modal-receber')).show();
+
+  // Conferência já salva deste pedido (aqui ou no celular) volta marcada e travada
+  _confSubirPendentes().catch(() => {});
+  const conf = await _confCarregar(itens.map(i => i.id));
+  if (document.getElementById('receb-pedido-num-hidden').value !== pedido_num) return;
+  itens.forEach(it => { const l = conf[String(it.id)]; if (l) _confAplicarDesk(it, l); });
+  _confBannerDesk();
+  calcTotalReceb();
 }
 
 // Fora da loja a caixa muda de cor e diz para onde vai — ninguem confirma um
@@ -8238,11 +8252,183 @@ function _pintarLocalReceb(doPedido = false) {
   }
 }
 
-function togIncluirReceb(id) {
+async function togIncluirReceb(id) {
   const btn = document.getElementById(`inc-rec-${id}`);
   btn.classList.toggle('checked');
   calcTotalReceb();
+  // Marcar = conferido: grava na hora e trava a linha. Desmarcar = desfazer.
+  const it = (_recebItensAbertos || []).find(x => String(x.id) === String(id));
+  const pedido_num = document.getElementById('receb-pedido-num-hidden').value;
+  if (!it || !pedido_num) return;
+  if (btn.classList.contains('checked')) {
+    const linha = _confLinhaDesk(it, pedido_num);
+    _confTravarDesk(id, true); _confStatusDesk(id, 'salvando'); _confBannerDesk();
+    const ok = await _confGuardar(linha);
+    if (!document.getElementById(`inc-rec-${id}`)?.classList.contains('checked')) return;   // desfeito enquanto salvava
+    _confStatusDesk(id, ok ? 'ok' : 'aparelho', linha);
+  } else {
+    _confTravarDesk(id, false); _confStatusDesk(id, '');
+    await _confGuardar({ compra_id: it.id, pedido_num, _apagar: true });
+  }
+  _confBannerDesk();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFERÊNCIA SALVA ITEM A ITEM (03/11/2026)
+// #02004: a nota foi conferida na sexta 30/10 e nada ficou gravado — o recebimento só vai
+// ao banco no botão final; se a internet cai ali, a conferência some sem aviso e o pedido
+// continua pendente. Agora cada item marcado no ✓ já grava a conferência (quantidade,
+// preço, desconto, bonificado, divergência) em cmp_recebimento_conferencia, sem mexer em
+// estoque nem financeiro: o item fica verde e travado, e desmarcar desfaz. Ao reabrir o
+// pedido (aqui ou no outro aparelho) a conferência volta, e a lista mostra "N/M conferidos"
+// até alguém confirmar o recebimento. Sem internet, o item fica guardado no aparelho e
+// sobe sozinho quando a conexão voltar. Mesmo bloco em app.js e recebimento.html.
+// ═══════════════════════════════════════════════════════════════════
+const _CONF_TAB = 'cmp_recebimento_conferencia';
+const _CONF_LS  = 'confReceb:pendentes';   // {compra_id: linha a enviar | {..., _apagar: true}}
+const _CONF_COLS = ['compra_id', 'pedido_num', 'qtd_recebida', 'valor_unitario', 'desconto',
+  'bonificado', 'divergencia', 'obs', 'conferido_por', 'conferido_em'];
+
+function _confPendLer() { try { return JSON.parse(localStorage.getItem(_CONF_LS) || '{}') || {}; } catch (e) { return {}; } }
+function _confPendGravar(p) { try { localStorage.setItem(_CONF_LS, JSON.stringify(p)); } catch (e) {} }
+
+async function _confEnviar(l) {                    // true = o banco aceitou
+  try {
+    let r;
+    if (l._apagar) r = await sb.from(_CONF_TAB).delete().eq('compra_id', l.compra_id);
+    else {
+      const linha = {};
+      _CONF_COLS.forEach(k => { if (l[k] !== undefined) linha[k] = l[k]; });
+      r = await sb.from(_CONF_TAB).upsert(linha, { onConflict: 'compra_id' });
+    }
+    if (r.error) { console.error('conferência não subiu:', r.error.message); return false; }
+    return true;
+  } catch (e) { console.error('conferência não subiu:', e); return false; }
+}
+
+// Guarda no aparelho ANTES de tentar o banco; só tira do aparelho quando o banco aceitou
+// esta mesma versão (marcar e desmarcar rápido não pode apagar a versão nova).
+async function _confGuardar(l) {
+  const linha = { ...l, _v: Date.now() + Math.random() };
+  const p = _confPendLer(); p[linha.compra_id] = linha; _confPendGravar(p);
+  const ok = await _confEnviar(linha);
+  if (ok) { const q = _confPendLer(); if (q[linha.compra_id]?._v === linha._v) { delete q[linha.compra_id]; _confPendGravar(q); } }
+  return ok;
+}
+
+let _confSubindo = false;
+async function _confSubirPendentes() {             // volta da internet: sobe o que ficou no aparelho
+  if (_confSubindo) return 0;
+  _confSubindo = true;
+  let n = 0;
+  try {
+    for (const l of Object.values(_confPendLer())) {
+      if (!(await _confEnviar(l))) continue;
+      const q = _confPendLer();
+      if (q[l.compra_id]?._v === l._v) { delete q[l.compra_id]; _confPendGravar(q); }
+      n++;
+    }
+  } finally { _confSubindo = false; }
+  return n;
+}
+
+// {compra_id: linha} dos itens pedidos — o banco mais o que ainda está só no aparelho
+async function _confCarregar(compraIds) {
+  const out = {}, ids = compraIds.map(String);
+  for (let i = 0; i < ids.length; i += 100) {      // .in() grande estoura a URL
+    const { data, error } = await sb.from(_CONF_TAB).select('*').in('compra_id', ids.slice(i, i + 100));
+    if (error) { console.error('conferência não carregou:', error.message); break; }
+    (data || []).forEach(r => { out[r.compra_id] = r; });
+  }
+  const p = _confPendLer();
+  ids.forEach(id => {
+    const l = p[id];
+    if (!l) return;
+    if (l._apagar) delete out[id]; else out[id] = { ...l, _soAparelho: true };
+  });
+  return out;
+}
+
+async function _confLimpar(compraIds) {            // depois do recebimento confirmado
+  const ids = compraIds.map(String);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error } = await sb.from(_CONF_TAB).delete().in('compra_id', ids.slice(i, i + 100));
+    if (error) console.error('conferência não foi limpa:', error.message);
+  }
+  const p = _confPendLer(); ids.forEach(id => delete p[id]); _confPendGravar(p);
+}
+
+function _confHora(iso) {
+  try { return new Date(iso).toLocaleTimeString('pt-BR', { timeZone: 'America/Manaus', hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return ''; }
+}
+
+// ── adaptação da conferência à tela do computador ──
+const _CONF_CAMPOS_DESK = ['qtd-rec', 'vlr-rec', 'dsc-rec', 'bon-rec', 'div-rec', 'obs-rec'];
+function _confTravarDesk(id, travar) {
+  _CONF_CAMPOS_DESK.forEach(c => { const el = document.getElementById(`${c}-${id}`); if (el) el.disabled = travar; });
+  const row = document.getElementById(`row-rec-${id}`);
+  if (row) row.classList.toggle('table-success', travar);
+}
+function _confStatusDesk(id, estado, l) {
+  const el = document.getElementById(`cs-rec-${id}`);
+  if (!el) return;
+  el.dataset.estado = estado || '';
+  el.className = 'small mt-1 ' + ({ ok: 'text-success fw-semibold', salvando: 'text-muted', aparelho: 'text-warning fw-semibold' }[estado] || '');
+  el.textContent = estado === 'ok'       ? `salvo ${_confHora(l.conferido_em)}${l.conferido_por ? ' · ' + l.conferido_por : ''}`
+                 : estado === 'salvando' ? 'salvando…'
+                 : estado === 'aparelho' ? 'sem internet: só neste computador'
+                 : '';
+  el.title = estado === 'ok' ? 'Conferência salva. Clique no ✓ para desfazer.' : '';
+}
+function _confLinhaDesk(it, pedido_num) {
+  const id = String(it.id);
+  return {
+    compra_id: it.id, pedido_num,
+    qtd_recebida:   parseFloat(document.getElementById(`qtd-rec-${id}`)?.value) || 0,
+    valor_unitario: parseFloat(document.getElementById(`vlr-rec-${id}`)?.value) || 0,
+    desconto:       parseFloat(document.getElementById(`dsc-rec-${id}`)?.value) || 0,
+    bonificado:     !!document.getElementById(`bon-rec-${id}`)?.checked,
+    divergencia:    !!document.getElementById(`div-rec-${id}`)?.checked,
+    obs:            document.getElementById(`obs-rec-${id}`)?.value || '',
+    conferido_por:  _nomeUsuario() || null,
+    conferido_em:   new Date().toISOString(),
+  };
+}
+function _confAplicarDesk(it, l) {
+  const id = String(it.id);
+  const set = (c, v) => { const el = document.getElementById(`${c}-${id}`); if (el && v != null) el.value = v; };
+  set('qtd-rec', l.qtd_recebida); set('vlr-rec', l.valor_unitario); set('dsc-rec', Number(l.desconto) || 0);
+  const bn = document.getElementById(`bon-rec-${id}`); if (bn) bn.checked = !!l.bonificado;
+  recalcReceb(id, it.quantidade || 0);
+  const dv = document.getElementById(`div-rec-${id}`); if (dv) { dv.checked = !!l.divergencia; marcarDiverg(id); }
+  set('obs-rec', l.obs || '');
+  document.getElementById(`inc-rec-${id}`)?.classList.add('checked');
+  _confTravarDesk(id, true);
+  _confStatusDesk(id, l._soAparelho ? 'aparelho' : 'ok', l);
+}
+function _confBannerDesk() {
+  const tb = document.getElementById('tb-modal-receber');
+  if (!tb) return;
+  let el = document.getElementById('receb-conf-banner');
+  if (!el) { el = document.createElement('div'); el.id = 'receb-conf-banner'; tb.closest('.table-responsive')?.before(el); }
+  const itens = _recebItensAbertos || [];
+  const ok = itens.filter(it => document.getElementById(`inc-rec-${it.id}`)?.classList.contains('checked')).length;
+  const soAqui = itens.filter(it => document.getElementById(`cs-rec-${it.id}`)?.dataset.estado === 'aparelho').length;
+  if (!ok) { el.className = 'd-none'; return; }
+  el.className = 'alert py-2 small mb-2 ' + (soAqui ? 'alert-warning' : 'alert-success');
+  el.innerHTML = `<b>${ok} de ${itens.length} ${itens.length === 1 ? 'item conferido' : 'itens conferidos'}</b> e salvos.` +
+    (soAqui ? ` ${soAqui} ainda só neste computador (sem internet).` : '') +
+    ` O recebimento <b>só vale</b> depois de clicar em <b>Confirmar Recebimento</b>.`;
+}
+window.addEventListener('online', async () => {
+  if (!(await _confSubirPendentes())) return;
+  const num = document.getElementById('receb-pedido-num-hidden')?.value;
+  if (!num || !(_recebItensAbertos || []).length) return;
+  const conf = await _confCarregar(_recebItensAbertos.map(i => i.id));
+  _recebItensAbertos.forEach(it => { const l = conf[String(it.id)]; if (l && !l._soAparelho) _confStatusDesk(String(it.id), 'ok', l); });
+  _confBannerDesk();
+});
 
 function recalcReceb(id, qtdPedida) {
   const qtdRec  = parseFloat(document.getElementById(`qtd-rec-${id}`)?.value) || 0;
@@ -8602,6 +8788,8 @@ async function confirmarRecebimento() {
     }
   }
 
+  // Recebido: a conferência destes itens já não precisa ficar guardada
+  _confLimpar(incluidos.map(x => x.id)).catch(e => console.error('limpar conferência:', e));
   bootstrap.Modal.getInstance(document.getElementById('modal-receber')).hide();
   const _ajustouFinanc = _financAjustado ? ` 💰 Financeiro ajustado para ${brl(totalAcumulado)}.` : '';
   toast(`✅ Recebimento confirmado! ${brl(totalRecebido)} — Venc. ${vencimento.split('-').reverse().join('/')}${temDiverg ? ' ⚠️ Com divergências.' : ''}${_ajustouFinanc}`, 'ok');

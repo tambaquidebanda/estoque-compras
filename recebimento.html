@@ -111,6 +111,16 @@
       transition: opacity .2s;
     }
     .item-card.diverg   { border-color: var(--warn); }
+    .item-card.conferido { border-color: #22c55e; background: #12301f; }
+    .item-card.conferido input:disabled { opacity: .75; }
+    .conf-status { font-size: .72rem; margin-top: .3rem; font-weight: 600; }
+    .conf-status.ok   { color: #4ade80; }
+    .conf-status.esp  { color: var(--txt2); }
+    .conf-status.aviso { color: var(--warn); }
+    .conf-banner { border-radius: 10px; padding: .6rem .75rem; margin-bottom: .6rem; font-size: .8rem; line-height: 1.35; }
+    .conf-banner.ok    { background: #12301f; border: 1px solid #22c55e; color: #bbf7d0; }
+    .conf-banner.aviso { background: #3a2a10; border: 1px solid var(--warn); color: #fde68a; }
+    .pc-conf { font-size: .74rem; font-weight: 700; color: #4ade80; margin-top: .35rem; }
     .item-card.excluido { opacity: .4; }
 
     /* Header do card */
@@ -870,6 +880,8 @@ async function carregarPedidosPendentes() {
     grupos[it.pedido_num].itens.push(it);
     grupos[it.pedido_num].total += (it.quantidade || 0) * (it.custo_unit || 0);
   });
+  // Pedido com itens conferidos e não confirmados aparece marcado — foi o que faltou no #02004
+  const _conf = await _confCarregar(data.map(it => it.id));
 
   cont.innerHTML = Object.values(grupos).map(g => {
     const dataBR   = (g.data || '').split('-').reverse().join('/');
@@ -894,6 +906,8 @@ async function carregarPedidosPendentes() {
         ${entregaBR ? `<span>🚚 ${entregaBR}</span>` : ''}
         <span>📦 ${g.itens.length} item(ns)</span>
       </div>
+      ${(() => { const n = g.itens.filter(it => _conf[String(it.id)]).length;
+        return n ? `<div class="pc-conf">🟢 ${n}/${g.itens.length} conferidos — falta Confirmar Recebimento</div>` : ''; })()}
       ${btnFinalizar}
     </div>`;
   }).join('');
@@ -964,6 +978,7 @@ async function abrirPedido(pedido_num) {
           <div class="item-nome">${esc(it.produto)}${dispBadge}</div>
           <div class="item-cat">${esc(it.categoria || '')}</div>
           ${_multiUni ? _badgeUni(it.unidade_uso) : ''}
+          <div class="conf-status" id="cs-${sid}"></div>
         </div>
         <div class="item-header-right">
           <div id="tot-${sid}" class="item-total">${brl(total)}</div>
@@ -1035,19 +1050,198 @@ async function abrirPedido(pedido_num) {
 
   // Todos os itens começam marcados por padrão; calcula total inicial
   setTimeout(atualizarTotalGeral, 50);
+
+  // Conferência já salva deste pedido (aqui ou em outro aparelho) volta marcada e travada
+  _confSubirPendentes().catch(() => {});
+  const conf = await _confCarregar(itens.map(i => i.id));
+  if (_pedidoAtual?.pedido_num !== pedido_num) return;   // saiu do pedido enquanto carregava
+  itens.forEach(it => { const l = conf[String(it.id)]; if (l) _confAplicarMob(it, l); });
+  _confBannerMob();
+  atualizarTotalGeral();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFERÊNCIA SALVA ITEM A ITEM (03/11/2026)
+// #02004: a nota foi conferida na sexta 30/10 e nada ficou gravado — o recebimento só vai
+// ao banco no botão final; se a internet cai ali, a conferência some sem aviso e o pedido
+// continua pendente. Agora cada item marcado no ✓ já grava a conferência (quantidade,
+// preço, desconto, bonificado, divergência) em cmp_recebimento_conferencia, sem mexer em
+// estoque nem financeiro: o item fica verde e travado, e desmarcar desfaz. Ao reabrir o
+// pedido (aqui ou no outro aparelho) a conferência volta, e a lista mostra "N/M conferidos"
+// até alguém confirmar o recebimento. Sem internet, o item fica guardado no aparelho e
+// sobe sozinho quando a conexão voltar. Mesmo bloco em app.js e recebimento.html.
+// ═══════════════════════════════════════════════════════════════════
+const _CONF_TAB = 'cmp_recebimento_conferencia';
+const _CONF_LS  = 'confReceb:pendentes';   // {compra_id: linha a enviar | {..., _apagar: true}}
+const _CONF_COLS = ['compra_id', 'pedido_num', 'qtd_recebida', 'valor_unitario', 'desconto',
+  'bonificado', 'divergencia', 'obs', 'conferido_por', 'conferido_em'];
+
+function _confPendLer() { try { return JSON.parse(localStorage.getItem(_CONF_LS) || '{}') || {}; } catch (e) { return {}; } }
+function _confPendGravar(p) { try { localStorage.setItem(_CONF_LS, JSON.stringify(p)); } catch (e) {} }
+
+async function _confEnviar(l) {                    // true = o banco aceitou
+  try {
+    let r;
+    if (l._apagar) r = await sb.from(_CONF_TAB).delete().eq('compra_id', l.compra_id);
+    else {
+      const linha = {};
+      _CONF_COLS.forEach(k => { if (l[k] !== undefined) linha[k] = l[k]; });
+      r = await sb.from(_CONF_TAB).upsert(linha, { onConflict: 'compra_id' });
+    }
+    if (r.error) { console.error('conferência não subiu:', r.error.message); return false; }
+    return true;
+  } catch (e) { console.error('conferência não subiu:', e); return false; }
+}
+
+// Guarda no aparelho ANTES de tentar o banco; só tira do aparelho quando o banco aceitou
+// esta mesma versão (marcar e desmarcar rápido não pode apagar a versão nova).
+async function _confGuardar(l) {
+  const linha = { ...l, _v: Date.now() + Math.random() };
+  const p = _confPendLer(); p[linha.compra_id] = linha; _confPendGravar(p);
+  const ok = await _confEnviar(linha);
+  if (ok) { const q = _confPendLer(); if (q[linha.compra_id]?._v === linha._v) { delete q[linha.compra_id]; _confPendGravar(q); } }
+  return ok;
+}
+
+let _confSubindo = false;
+async function _confSubirPendentes() {             // volta da internet: sobe o que ficou no aparelho
+  if (_confSubindo) return 0;
+  _confSubindo = true;
+  let n = 0;
+  try {
+    for (const l of Object.values(_confPendLer())) {
+      if (!(await _confEnviar(l))) continue;
+      const q = _confPendLer();
+      if (q[l.compra_id]?._v === l._v) { delete q[l.compra_id]; _confPendGravar(q); }
+      n++;
+    }
+  } finally { _confSubindo = false; }
+  return n;
+}
+
+// {compra_id: linha} dos itens pedidos — o banco mais o que ainda está só no aparelho
+async function _confCarregar(compraIds) {
+  const out = {}, ids = compraIds.map(String);
+  for (let i = 0; i < ids.length; i += 100) {      // .in() grande estoura a URL
+    const { data, error } = await sb.from(_CONF_TAB).select('*').in('compra_id', ids.slice(i, i + 100));
+    if (error) { console.error('conferência não carregou:', error.message); break; }
+    (data || []).forEach(r => { out[r.compra_id] = r; });
+  }
+  const p = _confPendLer();
+  ids.forEach(id => {
+    const l = p[id];
+    if (!l) return;
+    if (l._apagar) delete out[id]; else out[id] = { ...l, _soAparelho: true };
+  });
+  return out;
+}
+
+async function _confLimpar(compraIds) {            // depois do recebimento confirmado
+  const ids = compraIds.map(String);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error } = await sb.from(_CONF_TAB).delete().in('compra_id', ids.slice(i, i + 100));
+    if (error) console.error('conferência não foi limpa:', error.message);
+  }
+  const p = _confPendLer(); ids.forEach(id => delete p[id]); _confPendGravar(p);
+}
+
+function _confHora(iso) {
+  try { return new Date(iso).toLocaleTimeString('pt-BR', { timeZone: 'America/Manaus', hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return ''; }
+}
+
+// ── adaptação da conferência à tela do celular ──
+const _CONF_CAMPOS_MOB = ['qr', 'pu', 'dc', 'bn', 'dt', 'ob'];
+function _confTravarMob(id, travar) {
+  _CONF_CAMPOS_MOB.forEach(c => { const el = document.getElementById(`${c}-${id}`); if (el) el.disabled = travar; });
+  document.getElementById(`ic-${id}`)?.classList.toggle('conferido', travar);
+}
+function _confStatusMob(id, estado, l) {
+  const el = document.getElementById(`cs-${id}`);
+  if (!el) return;
+  const quem = l?.conferido_por ? ` por ${esc(l.conferido_por)}` : '';
+  el.className = 'conf-status ' + ({ ok: 'ok', salvando: 'esp', aparelho: 'aviso' }[estado] || '');
+  el.innerHTML = estado === 'ok'       ? `✓ Conferido${quem} às ${_confHora(l.conferido_em)} · toque no ✓ para desfazer`
+               : estado === 'salvando' ? '⏳ Salvando a conferência…'
+               : estado === 'aparelho' ? '⚠️ Sem internet: guardado só neste aparelho, sobe quando a conexão voltar'
+               : '';
+}
+function _confLinhaMob(it) {
+  const id = String(it.id);
+  return {
+    compra_id: it.id, pedido_num: _pedidoAtual.pedido_num,
+    qtd_recebida:   parseFloat(document.getElementById(`qr-${id}`)?.value) || 0,
+    valor_unitario: parseMoeda(`pu-${id}`),
+    desconto:       parseMoeda(`dc-${id}`),
+    bonificado:     !!document.getElementById(`bn-${id}`)?.checked,
+    divergencia:    !!document.getElementById(`dt-${id}`)?.checked,
+    obs:            document.getElementById(`ob-${id}`)?.value || '',
+    conferido_por:  (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim() || null,
+    conferido_em:   new Date().toISOString(),
+  };
+}
+function _confAplicarMob(it, l) {
+  const id = String(it.id);
+  const qr = document.getElementById(`qr-${id}`), pu = document.getElementById(`pu-${id}`);
+  if (qr && l.qtd_recebida != null) qr.value = l.qtd_recebida;
+  if (pu && l.valor_unitario != null) pu.value = Number(l.valor_unitario).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  setMoeda(`dc-${id}`, Number(l.desconto) || 0);
+  const bn = document.getElementById(`bn-${id}`); if (bn) bn.checked = !!l.bonificado;
+  atualizarTotal(id, it.quantidade || 0);
+  const dt = document.getElementById(`dt-${id}`); if (dt) { dt.checked = !!l.divergencia; togObs(id); }
+  const ob = document.getElementById(`ob-${id}`); if (ob) ob.value = l.obs || '';
+  const chk = document.getElementById(`inc-${id}`); if (chk) chk.checked = true;
+  const tot = document.getElementById(`tot-${id}`); if (tot) tot.style.color = 'var(--verde)';
+  _confTravarMob(id, true);
+  _confStatusMob(id, l._soAparelho ? 'aparelho' : 'ok', l);
+}
+function _confBannerMob() {
+  const cont = document.getElementById('rec-itens');
+  if (!cont || !_pedidoAtual) return;
+  let el = document.getElementById('conf-banner');
+  if (!el) { el = document.createElement('div'); el.id = 'conf-banner'; cont.prepend(el); }
+  const tot = _pedidoAtual.itens.length;
+  const ok  = _pedidoAtual.itens.filter(it => document.getElementById(`inc-${it.id}`)?.checked).length;
+  const soAqui = _pedidoAtual.itens.filter(it => document.getElementById(`cs-${it.id}`)?.classList.contains('aviso')).length;
+  if (!ok) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.className = 'conf-banner ' + (soAqui ? 'aviso' : 'ok');
+  el.innerHTML = `<b>${ok} de ${tot} ${tot === 1 ? 'item conferido' : 'itens conferidos'}</b> e salvos.` +
+    (soAqui ? ` ${soAqui} ainda só neste aparelho (sem internet).` : '') +
+    ` O recebimento <b>só vale</b> depois de tocar em <b>Confirmar Recebimento</b>.`;
+}
+window.addEventListener('online', async () => {
+  if (!(await _confSubirPendentes()) || !_pedidoAtual) return;
+  const conf = await _confCarregar(_pedidoAtual.itens.map(i => i.id));
+  _pedidoAtual.itens.forEach(it => { const l = conf[String(it.id)]; if (l && !l._soAparelho) _confStatusMob(String(it.id), 'ok', l); });
+  _confBannerMob();
+});
 
 function voltarLista() {
   _pedidoAtual = null;
   irParaLista();
 }
 
-function togIncluir(id) {
+async function togIncluir(id) {
   const chk   = document.getElementById(`inc-${id}`);
   const totEl = document.getElementById(`tot-${id}`);
   if (!totEl) return;
   totEl.style.color = chk?.checked ? 'var(--verde)' : 'var(--txt2)';
   atualizarTotalGeral();
+  // Marcar = conferido: grava na hora e trava o item. Desmarcar = desfazer.
+  const it = _pedidoAtual?.itens.find(x => String(x.id) === String(id));
+  if (!it) return;
+  if (chk?.checked) {
+    const linha = _confLinhaMob(it);
+    _confTravarMob(id, true); _confStatusMob(id, 'salvando'); _confBannerMob();
+    const ok = await _confGuardar(linha);
+    if (!document.getElementById(`inc-${id}`)?.checked) return;   // desfeito enquanto salvava
+    _confStatusMob(id, ok ? 'ok' : 'aparelho', linha);
+  } else {
+    _confTravarMob(id, false); _confStatusMob(id, '');
+    await _confGuardar({ compra_id: it.id, pedido_num: _pedidoAtual.pedido_num, _apagar: true });
+  }
+  _confBannerMob();
 }
 
 function atualizarTotal(id, qtdPedida) {
@@ -1486,6 +1680,8 @@ async function confirmarRecebimento() {
   Object.entries(_porLocal).forEach(([l, its]) => _recebimentoAtualizaSaldo(its, l));
   const _noP10 = (_porLocal[LOCAL_ESTOQUE_P10] || []).filter(it => it.qtd_recebida).length;
 
+  // Recebido: a conferência destes itens já não precisa ficar guardada
+  _confLimpar(itensIncluidos.map(it => it.id)).catch(e => console.error('limpar conferência:', e));
   toast(`✅ Recebimento confirmado!${temDiverg ? ' ⚠️ Com divergências.' : ''}${_noP10 ? ` 🛵 ${_noP10} ${_noP10 === 1 ? 'item' : 'itens'} no Estoque Delivery.` : ''}`, 'ok');
   setTimeout(() => {
     btn.disabled = false; btn.innerHTML = '✅ Confirmar Recebimento';
