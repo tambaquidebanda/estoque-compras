@@ -3153,6 +3153,7 @@ function atualizarBtnsDia() {
 
 function mudarLocalInv(local) {
   _invLocal = local;
+  _elLiberado = false;   // trocou de unidade: a contagem do Estoque da Loja pede a senha de novo
   _aplicarEstruturaLocal(local);
   _renderizarSetoresBtns();
   _invSetor = null; _invGrupo = null; _invProds = [];
@@ -3270,6 +3271,7 @@ async function carregarInventario() {
 
 async function selecionarSetorInv(setor) {
   if (setor === _ESPELHO_SETOR_P10) _aplicarEspelhoDelivery();
+  if (setor !== _invSetor) _elLiberado = false;   // trocou de setor: a contagem do Estoque da Loja pede a senha de novo
   _invSetor = setor;
   _invGrupo = null;
   _invSoLista = null;
@@ -3401,7 +3403,8 @@ function _pintarSoLista() {
   if (aviso) {
     aviso.classList.toggle('d-none', !_invSoLista && !fechada);
     aviso.innerHTML = fechada
-      ? `<i class="bi bi-lock-fill"></i> ${esc(_MSG_EL_FECHADO)} A lista continua aqui só para ajustar os itens (+, excluir). O saldo fica em Saldo &amp; Inventário.`
+      ? `<i class="bi bi-lock-fill"></i> ${esc(_MSG_EL_FECHADO)} Sem ela, a lista fica aqui só para ajustar os itens (+, excluir).
+         <button type="button" class="btn btn-sm btn-warning py-0 px-2 ms-1" onclick="liberarContagemEstoqueLoja()"><i class="bi bi-unlock-fill"></i> Liberar contagem</button>`
       : _invSoLista
       ? `<i class="bi bi-hourglass-split"></i> <strong>${esc(_invSoLista)}</strong> aguardando liberação. Dá para ajustar a lista (+, excluir, padrões); a contagem e o envio ficam desligados até ele ser liberado.`
       : '';
@@ -4550,7 +4553,8 @@ async function salvarSaldoContagemDesktop() {
   const saldoRows = itensCont.filter(it => it.produto_id)
     .map(it => ({ produto_id: it.produto_id, local: _localDaContagem(T.local, 'ESTOQUE DA LOJA'), saldo: it.estoque }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${T.grupo}`, responsavel: resp, data });
+    const comSenha = _LOCAIS_SEM_CONTAGEM.includes(_localDaContagem(T.local, 'ESTOQUE DA LOJA')) ? ' · liberado com senha' : '';
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ESTOQUE DA LOJA/${T.grupo}${comSenha}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'warn'); }
   }
 
@@ -4562,7 +4566,7 @@ async function salvarSaldoContagemDesktop() {
 
 async function salvarSaldoInicialSetor() {
   if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
-  if (_contagemFechada(_invLocal, _invSetor)) { toast(_MSG_EL_FECHADO, 'erro'); return; }
+  if (_LOCAIS_SEM_CONTAGEM.includes(_localDaContagem(_invLocal, _invSetor))) { toast('O saldo inicial do Estoque da Loja não pode ser lançado: use a contagem com a senha de liberação.', 'erro'); return; }
   if (!confirm(`Salvar saldo inicial de ${_invSetor} / ${_invGrupo}?\nIsso define o estoque de partida do setor.`)) return;
   const data = document.getElementById('inv-data').value;
   const resp = (document.getElementById('inv-resp').value || '').trim();
@@ -5349,9 +5353,30 @@ async function _conferirContagemFora(itens, setor, local) {
 // (SA BATATA 100g: 438 entraram desde 19/10, 10 sairam por pedido, a contagem de 22/10
 // tirou 305). Central e Estoque Delivery seguem contando: ainda nao tem o recebimento
 // da producao. O ajuste manual no Estoque da Loja continua so com a senha de liberacao.
+// 03/11/2026 (Wagner): a contagem volta, mas so com a senha de liberacao — no celular
+// ao tocar no botao, aqui pelo botao "Liberar contagem" no aviso. Vale ate trocar de
+// setor ou de unidade; a contagem grava "liberado com senha" no motivo. O saldo
+// inicial do Estoque da Loja continua fechado.
 const _LOCAIS_SEM_CONTAGEM = ['ESTOQUE_LOJA'];
-const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro não é mais contado: o saldo entra pelo recebimento e pelas transferências do Central e sai pelos pedidos dos setores.';
-const _contagemFechada = (unidade, setor) => _LOCAIS_SEM_CONTAGEM.includes(_localDaContagem(unidade, setor));
+const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro só é contado com a senha de liberação.';
+let _elLiberado = false;   // contagem do Estoque da Loja liberada com a senha nesta visita
+const _localFechado = local => _LOCAIS_SEM_CONTAGEM.includes(local) && !_elLiberado;
+const _contagemFechada = (unidade, setor) => _localFechado(_localDaContagem(unidade, setor));
+
+async function liberarContagemEstoqueLoja() {
+  const k = await _janelaTrava({
+    titulo: '🔐 Contar o Estoque da Loja',
+    html: `A contagem <b>troca o saldo do sistema pelo número contado</b>. Use só para acertar o estoque com a gerência sabendo — e depois que tudo o que chegou do Central e das notas já foi guardado.`,
+    botoes: [
+      { k: 'cancelar', txt: 'Cancelar', cor: 'cinza' },
+      { k: 'liberar',  txt: 'Contar com a senha', cor: 'laranja', senha: true },
+    ],
+  });
+  if (k !== 'liberar') return;
+  _elLiberado = true;
+  _pintarSoLista();
+  toast('Contagem do Estoque da Loja liberada até trocar de setor.', 'ok');
+}
 
 async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null, data = null } = {}) {
   // O MESMO PRODUTO PODE APARECER DUAS VEZES NA MESMA CONTAGEM
@@ -5384,7 +5409,7 @@ async function registrarContagem(rows, { motivo = 'Contagem', responsavel = null
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
   // Rede de protecao: nenhum caminho de contagem grava no Estoque da Loja do Teatro.
-  if (linhas.some(r => _LOCAIS_SEM_CONTAGEM.includes(r.local))) return { error: { message: _MSG_EL_FECHADO } };
+  if (linhas.some(r => _localFechado(r.local))) return { error: { message: _MSG_EL_FECHADO } };
 
   // 1) esperado (saldo anterior) por produto+local — para o delta do razão
   const anterior = {};
