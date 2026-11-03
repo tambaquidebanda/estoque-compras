@@ -2332,7 +2332,9 @@ function _janelaTrava({ titulo, html, botoes }) {
 // chegou depois da contagem, a senha de liberacao soma (na hora, ou depois pelo cartao
 // no computador). A hora da saida vem do razao (criado_em = relogio do SERVIDOR), nunca
 // do liberado_em, que e o relogio do aparelho. Limite: contagem que bateu exato nao
-// grava linha no razao e nao e vista aqui.
+// grava linha no razao e nao e vista aqui. So conta contagem e ajuste A MAO (ref_tabela
+// nula): o ajuste com ref (diferenca de confirmacao, estorno por SQL) nao e contagem —
+// o estorno do PED-3973 (03/11 11:49) fez o PED-4020 deixar de somar 67 bolinhos.
 const _TRANSF_MARCA_NAO_SOMADO = 'Não somado na chegada';
 
 async function _razaoEmLotes(montar, ids) {        // .in() grande estoura a URL: lotes de 100
@@ -2355,7 +2357,8 @@ async function _transfJaContados(itens, lugar, criadoEm) {
   const desde = s.linhas.map(m => m.criado_em).sort()[0] || criadoEm;
   if (!desde) return { contados: {} };
   const c = await _razaoEmLotes(l => sb.from('est_movimentacoes').select('produto_id,criado_em,responsavel,tipo')
-    .eq('local', lugar).in('tipo', ['contagem', 'ajuste']).in('produto_id', l).gt('criado_em', desde), pids);
+    .eq('local', lugar).in('tipo', ['contagem', 'ajuste']).is('ref_tabela', null)
+    .in('produto_id', l).gt('criado_em', desde), pids);
   if (c.erro) return { erro: c.erro };
   const contados = {};
   c.linhas.sort((a, b) => a.criado_em < b.criado_em ? -1 : 1)
