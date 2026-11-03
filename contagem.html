@@ -169,6 +169,19 @@
     .td-pad { color: var(--txt2); font-size: .8rem; min-width: 38px; }
     .td-ped { color: var(--verde); font-weight: 700; font-size: .9rem; min-width: 38px; }
     .td-ped.zero { color: var(--txt2); }
+    .td-loja { color: var(--txt2); font-size: .78rem; min-width: 34px; white-space: nowrap; }
+    .td-loja.neg { color: #f87171; font-weight: 700; }
+    /* com a coluna Loja a tabela tem 6 colunas: aperta para caber em 375 px sem rolar */
+    .prod-table.com-loja thead th { padding: .5rem .3rem; letter-spacing: .02em; }
+    .prod-table.com-loja tbody td { padding: .45rem .25rem; }
+    .prod-table.com-loja tbody td:first-child { padding-left: .75rem; }
+    .prod-table.com-loja thead th:first-child { padding-left: .75rem; }
+    .prod-table.com-loja .inp-est { width: 58px; }
+    .prod-table.com-loja .td-pad, .prod-table.com-loja .td-ped { min-width: 30px; }
+    .ped-table.com-loja th, .ped-table.com-loja td { padding: .35rem .25rem; }
+    .ped-table.com-loja th:first-child, .ped-table.com-loja td:first-child { padding-left: .5rem; }
+    .ped-table.com-loja th { letter-spacing: .02em; }
+    .ped-table.com-loja .inp-modal { width: 60px !important; padding-left: .15rem; padding-right: .15rem; }
     .inp-est {
       width: 72px; background: var(--inp); border: 1.5px solid var(--borda);
       border-radius: 8px; color: var(--txt); font-size: 1rem; font-weight: 700;
@@ -1822,6 +1835,26 @@ async function selecionarGrupo(grupo) {
   }
 }
 
+// SALDO DO ESTOQUE DA LOJA, so informacao (03/11/2026, pedido do Wagner): a contagem do
+// setor e a liberacao mostram quanto o estoque de origem tem no sistema — Estoque da Loja
+// no Centro, Estoque Delivery no P10. Nao entra em conta nenhuma.
+async function _saldoOrigemMob(pids, unidade) {
+  const out = {}, lugar = _origemPedidoInterno(unidade), ids = [...new Set(pids.filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 100) {      // .in() grande estoura a URL
+    const { data, error } = await sb.from('est_saldo_local').select('produto_id,saldo')
+      .eq('local', lugar).in('produto_id', ids.slice(i, i + 100));
+    if (error) { console.error('saldo da loja:', error.message); return null; }
+    (data || []).forEach(r => { out[r.produto_id] = Number(r.saldo) || 0; });
+  }
+  return out;
+}
+function _fmtSaldoLoja(v) {
+  if (v === undefined) return { txt: '0', neg: false };
+  const t = Math.abs(v % 1) < 1e-9 ? String(v) : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  return { txt: t, neg: v < 0 };
+}
+let _saldoLojaVez = 0;   // a tela pode trocar de grupo enquanto o saldo chega
+
 function renderProdutos() {
   const el   = document.getElementById('lista-produtos');
   const isEL = _modoSaldo();
@@ -1844,18 +1877,35 @@ function renderProdutos() {
           oninput="calcPedido(${i})">
       </td>
       ${isEL ? '' : `<td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${pedIni}</td>`}
+      ${isEL ? '' : `<td class="td-center td-loja" id="loja-${i}">…</td>`}
     </tr>`;
   }).join('');
-  el.innerHTML = `<table class="prod-table">
+  el.innerHTML = `<table class="prod-table${isEL ? '' : ' com-loja'}">
     <thead><tr>
       <th>Produto</th>
       <th class="td-center">Un.</th>
       ${isEL ? '' : '<th class="td-center">Pad.</th>'}
       <th class="td-center">${isEL ? 'Contagem' : 'Estoque'}</th>
       ${isEL ? '' : '<th class="td-center">Pedido</th>'}
+      ${isEL ? '' : '<th class="td-center" title="Saldo do estoque da loja no sistema (só informação)">Loja</th>'}
     </tr></thead>
     <tbody>${linhas}</tbody>
   </table>`;
+  if (!isEL) _pintarSaldoLoja();
+}
+
+async function _pintarSaldoLoja() {
+  const vez = ++_saldoLojaVez, prods = _grupoProds;
+  const saldo = await _saldoOrigemMob(prods.map(p => p.produto_id), _local);
+  if (vez !== _saldoLojaVez) return;               // trocou de grupo: esta resposta ja nao vale
+  prods.forEach((p, i) => {
+    const td = document.getElementById(`loja-${i}`);
+    if (!td) return;
+    if (!saldo || !p.produto_id) { td.textContent = '—'; return; }
+    const f = _fmtSaldoLoja(saldo[p.produto_id]);
+    td.textContent = f.txt;
+    td.className = 'td-center td-loja' + (f.neg ? ' neg' : '');
+  });
 }
 
 function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
@@ -2543,14 +2593,17 @@ async function abrirLiberarPedido(id) {
     return val !== undefined ? val : '—';
   };
 
+  const saldoLoja = await _saldoOrigemMob((itens||[]).map(it => it.produto_id), ped?.local);
   const rows = (itens||[]).map(it => {
     const est = estoqueMap[it.nome?.trim().toUpperCase()];
     const pad = getPad(it.nome||'');
+    const sl  = saldoLoja && it.produto_id ? _fmtSaldoLoja(saldoLoja[it.produto_id]) : { txt: '—', neg: false };
     const estFmt = est !== undefined ? est : '—';
     const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:700' : 'color:#fd7e14;font-weight:700';
     return `<tr>
       <td style="font-size:.8rem">${esc(it.nome)}</td>
       <td style="text-align:center;color:#6c757d;font-size:.8rem">${pad}</td>
+      <td style="text-align:center;font-size:.8rem;${sl.neg ? 'color:#dc3545;font-weight:700' : 'color:#6c757d'}">${sl.txt}</td>
       <td style="text-align:center;font-size:.8rem;${estCor}">${estFmt}</td>
       <td style="text-align:center;font-size:.8rem">${it.qtd_pedida??'—'}</td>
       <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="any" inputmode="decimal" style="width:64px"></td>
@@ -2559,10 +2612,11 @@ async function abrirLiberarPedido(id) {
 
   document.getElementById('modal-liberar-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}${ped?.obs?' · '+esc(ped.obs):''}</div>
-    <table class="ped-table" style="margin-bottom:.75rem;font-size:.8rem">
+    <table class="ped-table com-loja" style="margin-bottom:.75rem;font-size:.8rem">
       <thead><tr>
         <th>Produto</th>
         <th style="text-align:center;color:#6c757d">Padrão</th>
+        <th style="text-align:center;color:#6c757d" title="Saldo do estoque da loja no sistema (só informação)">Loja</th>
         <th style="text-align:center">Estoque</th>
         <th style="text-align:center">Pedido</th>
         <th style="text-align:center">Lib.</th>
