@@ -1086,7 +1086,7 @@ async function registrarContagem(rows, opts) {
   const linhas = Object.values(dedup);
   if (!linhas.length) return { error: null };
   // Rede de protecao: nenhum caminho de contagem grava no Estoque da Loja do Teatro.
-  if (linhas.some(r => _LOCAIS_SEM_CONTAGEM.includes(r.local))) return { error: { message: _MSG_EL_FECHADO } };
+  if (linhas.some(r => _localFechado(r.local))) return { error: { message: _MSG_EL_FECHADO } };
 
   const anterior = {};
   const ids = [...new Set(linhas.map(r => r.produto_id))];
@@ -1302,8 +1302,14 @@ function _estoqueMob() { return _ESTOQUES_MOB[_local] || _ESTOQUES_MOB['Centro']
 // (SA BATATA 100g: 438 entraram desde 19/10, 10 sairam por pedido, a contagem de 22/10
 // tirou 305). Central e Estoque Delivery seguem contando: ainda nao tem o recebimento
 // da producao. O ajuste manual no Estoque da Loja continua so com a senha de liberacao.
+// 03/11/2026 (Wagner): a contagem do Estoque da Loja volta pelo CELULAR, mas so com a
+// senha de liberacao, pedida a cada vez que o botao e tocado. A liberacao vale ate sair
+// do Estoque da Loja (voltarSetores) e a contagem grava "liberado com senha" no motivo.
+// O computador continua bloqueado.
 const _LOCAIS_SEM_CONTAGEM = ['ESTOQUE_LOJA'];
-const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro não é mais contado: o saldo entra pelo recebimento e pelas transferências do Central e sai pelos pedidos dos setores.';
+const _MSG_EL_FECHADO = 'O Estoque da Loja do Teatro só é contado com a senha de liberação: toque de novo em Estoque da Loja e peça a senha à gerência.';
+let _elLiberado = false;   // contagem do Estoque da Loja liberada com a senha nesta visita
+const _localFechado = local => _LOCAIS_SEM_CONTAGEM.includes(local) && !_elLiberado;
 // Lugar do setor no razao — o mesmo do computador (_localRazao em app.js). O P10 grava
 // em P10_<SETOR> desde 20/10/2026: antes a Cozinha e a Churrasqueira do P10 caiam na
 // mesma linha de saldo do Centro e a contagem de uma loja apagava a da outra.
@@ -1540,9 +1546,21 @@ function pedirPinEstoque() {
   atualizarPinDisplay();
   mostrarModal('modal-pin');
 }
-function pedirPinEstoqueLoja() {
+async function pedirPinEstoqueLoja() {
   const est = _estoqueMob();
-  if (_LOCAIS_SEM_CONTAGEM.includes(est.local)) { toast(_MSG_EL_FECHADO, 'err'); return; }
+  if (_LOCAIS_SEM_CONTAGEM.includes(est.local)) {
+    _elLiberado = false;
+    const k = await _janelaTrava({
+      titulo: `🔐 Contar o ${esc(est.nome)}`,
+      html: `A contagem <b>troca o saldo do sistema pelo número contado</b>. Use só para acertar o estoque com a gerência sabendo.<div style="margin-top:.5rem;font-size:13px;color:#475569">Peça a senha de liberação à gerência.</div>`,
+      botoes: [
+        { k: 'cancelar', txt: 'Cancelar', cor: 'cinza' },
+        { k: 'liberar',  txt: 'Contar com a senha', cor: 'laranja', senha: true },
+      ],
+    });
+    if (k !== 'liberar') return;
+    _elLiberado = true;
+  }
   const pin = _pins[est.pin];
   if (!pin) { selecionarEstoqueLoja(); return; }
   _pinTarget = { tipo: 'estoque_loja', pinKey: est.pin };
@@ -1641,6 +1659,7 @@ async function selecionarSetor(setor) {
 }
 function voltarSetores() {
   _setor = null; _grupo = null; _grupoProds = [];
+  _elLiberado = false;   // saiu do Estoque da Loja: a proxima contagem pede a senha de novo
   document.getElementById('setor-grid').style.display       = 'block';
   document.getElementById('grupos-produtos').style.display  = 'none';
   document.getElementById('btn-enviar').style.display         = '';
@@ -1659,7 +1678,7 @@ function _rodapeDaUnidade() {
 }
 function selecionarEstoqueLoja() {
   const est = _estoqueMob();
-  if (_LOCAIS_SEM_CONTAGEM.includes(est.local)) { toast(_MSG_EL_FECHADO, 'err'); return; }
+  if (_localFechado(est.local)) { toast(_MSG_EL_FECHADO, 'err'); return; }
   if (est.setor === _ESPELHO_SETOR_P10) _aplicarEspelhoDeliveryMob();
   _setor = est.setor; _grupo = null; _grupoProds = [];
   document.getElementById('setor-grid').style.display         = 'none';
@@ -1674,7 +1693,7 @@ function selecionarEstoqueLoja() {
 
 async function salvarSaldoContagem() {
   if (!_setor || !_grupo || !_grupoProds.length) return;
-  if (_LOCAIS_SEM_CONTAGEM.includes(_localDoSetor(_local, _setor))) { toast(_MSG_EL_FECHADO, 'err'); return; }
+  if (_localFechado(_localDoSetor(_local, _setor))) { toast(_MSG_EL_FECHADO, 'err'); return; }
   const btn = document.getElementById('btn-salvar-saldo');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
 
@@ -1713,7 +1732,8 @@ async function salvarSaldoContagem() {
   const saldoRows = itensCont.filter(it => it.produto_id)
     .map(it => ({ produto_id: it.produto_id, local: est.local, saldo: it.estoque * _fatorDe(it.produto_id) }));
   if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ${est.setor}/${T.grupo}`, responsavel: resp, data });
+    const comSenha = _LOCAIS_SEM_CONTAGEM.includes(est.local) ? ' · liberado com senha' : '';
+    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo contagem ${num_inv} · ${est.setor}/${T.grupo}${comSenha}`, responsavel: resp, data });
     if (eSaldo) { console.error('saldo loja:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
   }
 
