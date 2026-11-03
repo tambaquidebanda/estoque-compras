@@ -3415,12 +3415,55 @@ function _pintarSoLista() {
   });
 }
 
+// SALDO DO ESTOQUE DA LOJA, so informacao (03/11/2026, pedido do Wagner; o celular tem o
+// mesmo): a contagem do setor e a liberacao mostram quanto o estoque de origem tem no
+// sistema — Estoque da Loja no Centro, Estoque Delivery no P10. Nao entra em conta nenhuma.
+async function _saldoOrigem(pids, unidade) {
+  const out = {}, lugar = _origemPedidoInterno(unidade), ids = [...new Set(pids.filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 100) {      // .in() grande estoura a URL
+    const { data, error } = await sb.from('est_saldo_local').select('produto_id,saldo')
+      .eq('local', lugar).in('produto_id', ids.slice(i, i + 100));
+    if (error) { console.error('saldo da loja:', error.message); return null; }
+    (data || []).forEach(r => { out[r.produto_id] = Number(r.saldo) || 0; });
+  }
+  return out;
+}
+function _fmtSaldoLoja(v) {
+  if (v === undefined) return { txt: '0', neg: false };
+  const t = Math.abs(v % 1) < 1e-9 ? String(v) : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  return { txt: t, neg: v < 0 };
+}
+// So na contagem de SETOR do Centro e do P10: no proprio estoque, no Central e na Producao
+// a coluna repetiria o saldo do lugar ou mostraria uma loja que nao e a dele.
+function _mostraLojaInv() {
+  if (!_invSetor || _invSetor === 'ESTOQUE DA LOJA') return false;
+  if (!['Centro', 'Delivery P10'].includes(_invLocal)) return false;
+  return _localDaContagem(_invLocal, _invSetor) !== _origemPedidoInterno(_invLocal);
+}
+let _saldoLojaVezInv = 0;   // a tela pode trocar de grupo enquanto o saldo chega
+
+async function _pintarSaldoLojaInv() {
+  const vez = ++_saldoLojaVezInv, prods = _invProds;
+  const saldo = await _saldoOrigem(prods.map(p => p.produto_id), _invLocal);
+  if (vez !== _saldoLojaVezInv) return;            // trocou de grupo: esta resposta ja nao vale
+  prods.forEach((p, i) => {
+    const td = document.getElementById(`inv-loja-${i}`);
+    if (!td) return;
+    if (!saldo || !p.produto_id) { td.textContent = '—'; return; }
+    const f = _fmtSaldoLoja(saldo[p.produto_id]);
+    td.textContent = f.txt;
+    td.className = 'text-center small ' + (f.neg ? 'text-danger fw-bold' : 'text-muted');
+  });
+}
+
 function renderInventario() {
   const tbody = document.getElementById('lst-inventario');
   const isEL  = _invSetor === 'ESTOQUE DA LOJA';
+  const loja  = _mostraLojaInv();
+  document.getElementById('inv-th-loja')?.classList.toggle('d-none', !loja);
   _pintarSoLista();
   if (!_invProds.length) {
-    tbody.innerHTML = `<tr><td colspan="${isEL ? 3 : 5}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${isEL ? 3 : loja ? 6 : 5}" class="text-center text-muted py-4">Nenhum produto neste grupo.</td></tr>`;
     return;
   }
   tbody.innerHTML = _invProds.map((p, i) => {
@@ -3448,8 +3491,10 @@ function renderInventario() {
       <td class="text-center fw-bold" id="inv-ped-${i}" style="color:#06D6A0;font-size:1.05rem">
         ${padrao !== null ? _fmtPed(Math.max(0, padrao)) : '—'}
       </td>`}
+      ${loja ? `<td class="text-center small text-muted" id="inv-loja-${i}">…</td>` : ''}
     </tr>`;
   }).join('');
+  if (loja) _pintarSaldoLojaInv();
 }
 
 // ─── ADICIONAR / REMOVER PRODUTO NO GRUPO ────────────────────────
@@ -4847,14 +4892,17 @@ async function abrirLiberarPedido(pedidoId) {
     return val !== undefined ? val : '—';
   };
 
+  const saldoLoja = await _saldoOrigem((itens || []).map(it => it.produto_id), ped?.local);
   const rows = (itens || []).map(it => {
     const est = estoqueMap[it.nome?.trim().toUpperCase()];
     const pad = getPad(it.nome || '');
     const estFmt = est !== undefined ? est : '—';
     const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:600' : 'color:#fd7e14;font-weight:600';
+    const sl = saldoLoja && it.produto_id ? _fmtSaldoLoja(saldoLoja[it.produto_id]) : { txt: '—', neg: false };
     return `<tr>
       <td>${esc(it.nome)}</td>
       <td class="text-center text-muted">${pad}</td>
+      <td class="text-center ${sl.neg ? 'text-danger fw-bold' : 'text-muted'}">${sl.txt}</td>
       <td class="text-center" style="${estCor}">${estFmt}</td>
       <td class="text-center">${it.qtd_pedida ?? '—'}</td>
       <td class="text-center" style="width:110px">
@@ -4875,6 +4923,7 @@ async function abrirLiberarPedido(pedidoId) {
         <thead class="table-light"><tr>
           <th>Produto</th>
           <th class="text-center text-muted" title="Quantidade padrão para o dia">Padrão</th>
+          <th class="text-center text-muted" title="Saldo do estoque da loja no sistema (só informação)">Loja</th>
           <th class="text-center" title="Estoque contado na contagem">Estoque</th>
           <th class="text-center">Pedido</th>
           <th class="text-center">Qtd. a Liberar</th>
