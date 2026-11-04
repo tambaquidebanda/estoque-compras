@@ -609,10 +609,6 @@ h1 {
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
 .saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }
 .plan-dura { min-width: 130px; }
-.plan-conta-sub { display: block; font-size: .72rem; color: #8a9692; white-space: nowrap; font-weight: 400; }
-.plan-conta-gasta { color: #5f6d69; }
-.plan-chega-falta { color: var(--pl-vermelho); font-weight: 700; }
-.plan-porsem { color: #8a9692; }
 .plan-dura-txt { font-size: .78rem; font-weight: 700; white-space: nowrap; }
 .plan-dura-txt small { font-weight: 500; color: #8a9692; }
 .plan-dura-bar { position: relative; height: 6px; background: #edf1f0; border-radius: 99px; margin-top: 4px; }

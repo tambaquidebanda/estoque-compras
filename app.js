@@ -7457,13 +7457,13 @@ function _planConta(un, l) {
     const depois = _fornProxEntrega(l.fornId, chega);
     if (depois) dias = Math.round((new Date(depois + 'T12:00:00') - new Date(chega + 'T12:00:00')) / 864e5);
   }
-  const { antes, cobre, precisa, depois, chegaCom, falta, auto } = _planCobertura(un, l, nAntes, dias);
+  const { antes, cobre, precisa, falta, auto } = _planCobertura(un, l, nAntes, dias);
   const troca = _planPedir[un]?.[l.pid];
   const pedir = troca ?? auto;
   // O que sobra no fim do último dia coberto SEM o pedido de hoje e JÁ com a margem (Wagner,
   // 29/10/2026: o número bate com o "Falta" da conta). Negativo = o que falta.
   // sobraSem = sem a margem: decide a etiqueta "só pela margem"
-  const sobra = Math.max(0, chegaCom) - depois;   // = −Falta da conta (o que falta antes de chegar não volta)
+  const sobra = l.tem + l.pedido - precisa;
   const sobraSem = l.tem + l.pedido - antes - cobre;
   const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
   // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar.
@@ -7477,7 +7477,7 @@ function _planConta(un, l) {
   }
   // Acaba antes do pedido de hoje chegar: o estoque não aguenta (o já pedido conta)
   const naoChega = nAntes > 0 && l.consDia > 0 && l.tem + l.pedido < antes - 1e-9;
-  return { dias, nAntes, chega, tipo, antes, cobre, depois, chegaCom, horiz: nAntes + dias, dura, naoChega,
+  return { dias, nAntes, chega, tipo, antes, cobre, horiz: nAntes + dias, dura, naoChega,
     precisa, falta, auto, pedir, sobra, sobraSem, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio };
 }
 
@@ -7489,13 +7489,8 @@ function _planCobertura(un, l, nAntes, dias) {
   for (let i = 0; i < nAntes; i++) antes += _planConsDe(l, _isoMais(hoje, i));
   for (let i = 0; i < dias; i++) cobre += _planConsDe(l, _isoMais(hoje, nAntes + i));
   const precisa = antes + cobre * (1 + _planMargem(un));
-  // Conta por entrega (Wagner, 04/11/2026): Tem hoje − Gasta até chegar = Chega com;
-  // Pedir = Precisa depois − Chega com. Se o estoque acaba antes de chegar, o que faltou
-  // nesses dias não volta (não dá para vender ontem com o pedido de terça): Chega com = 0.
-  const chegaCom = l.tem + l.pedido - antes;
-  const depois = cobre * (1 + _planMargem(un));
-  const falta = Math.max(0, depois - Math.max(0, chegaCom));
-  return { antes, cobre, precisa, depois, chegaCom, falta, auto: _planArred(falta / l.fator, l.unComp) };
+  const falta = Math.max(0, precisa - l.tem - l.pedido);
+  return { antes, cobre, precisa, falta, auto: _planArred(falta / l.fator, l.unComp) };
 }
 
 // Linha embaixo da barra da Dura: quanto sobra no "cobre até" (Wagner, 29/10/2026 — as duas
@@ -7567,9 +7562,8 @@ function _pintarPlan() {
     ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>Precisa</dt><dd>O pedido feito hoje chega na próxima entrega do fornecedor (dias fixos ou prazo, em Cadastros &gt; Fornecedores) e precisa durar até a entrega seguinte. A conta soma o consumo de hoje até a chegada (o estoque tem que aguentar) e o dos dias cobertos depois que chega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda. Fornecedor sem dias nem prazo: conta como se chegasse hoje e cobre ${diasP} dias. Escolhendo o dia em "Chega" no topo, ele vale para todos os produtos da unidade, só naquele dia: abate a venda até a véspera e cobre ${diasP} dias (ou os dias do produto) a partir dele. Se o estoque acaba antes de chegar, a linha avisa.</dd>
-    <dt>A linha</dt><dd>Lê da esquerda para a direita. <b>Tem hoje</b> = estoque da unidade + o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias). <b>Gasta até chegar</b> = consumo de hoje até a véspera do dia em que o pedido de hoje chega. <b>Chega com</b> = o que sobra nesse dia (em vermelho, quanto falta e o dia em que acaba). <b>Precisa depois</b> = consumo do dia em que chega até a véspera da entrega seguinte, com a margem.</dd>
-    <dt>Pedir</dt><dd>Precisa depois − Chega com, na embalagem de compra. Se o estoque acaba antes de chegar, o que faltou nesses dias não volta e o pedido cobre só os dias depois que chega. Dá para trocar o número na linha.</dd>
-    <dt>Dura até</dt><dd>Ao abrir a linha. Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana, com a margem a partir do dia que o pedido chega ("até seg 03/11" = segunda é o último dia inteiro). Ao lado ("cobre até"), até que dia a compra de hoje precisa durar depois que chega; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje e já com a margem (em vermelho, quanto falta — o mesmo "Falta" da conta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
+    <dt>Pedir</dt><dd>Precisa − estoque da unidade agora − o que já foi pedido e não chegou (até ${_PLAN_PEDIDO_DIAS} dias), na embalagem de compra. Dá para trocar o número na linha.</dd>
+    <dt>Dura</dt><dd>Até que dia o estoque mais o já pedido aguentam, dia a dia pela média de cada dia da semana, com a margem a partir do dia que o pedido chega ("até seg 03/11" = segunda é o último dia inteiro). Ao lado ("cobre até"), até que dia a compra de hoje precisa durar depois que chega; embaixo da barra, quanto sobra no fim desse dia sem o pedido de hoje e já com a margem (em vermelho, quanto falta — o mesmo "Falta" da conta). A barra fica vermelha quando o estoque não chega até esse dia e amarela acima de 60 dias. O tracinho marca até onde a compra cobre: arraste para mudar só aquele produto.</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
     <dt>Estoque</dt><dd>O mesmo da tela de Saldo. No Centro, saldo no Estoque da Loja ou num setor de produto que nenhuma lista do Centro conta não entra (ao abrir a linha aparece como "Não conta"). O Estoque Central entra, e aparece à parte.</dd>
@@ -7625,7 +7619,7 @@ function _pintarPlanTabela() {
   mt.indeterminate = marc.length > 0 && !mt.checked;
   const tb = document.getElementById('plan-tbody');
   if (!vis.length) {
-    tb.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">${_planFiltros.ver === 'comprar' ? 'Nada para comprar com estes filtros. Clique em "Não precisa" para ver o resto.' : 'Nenhum produto com estes filtros.'}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-5">${_planFiltros.ver === 'comprar' ? 'Nada para comprar com estes filtros. Clique em "Não precisa" para ver o resto.' : 'Nenhum produto com estes filtros.'}</td></tr>`;
     return;
   }
   const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
@@ -7638,37 +7632,9 @@ function _pintarPlanTabela() {
     const mk = arr.filter(x => x.c.marcado);
     const fid = porForn ? arr[0].l.fornId : null;
     const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornChegada(fid) ? `, próxima ${_ddmm(_fornChegada(fid))}` : ''}` : '';
-    const cab = `<tr class="plan-grupo"><td colspan="8"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}${esc(ent)}</span></td></tr>`;
+    const cab = `<tr class="plan-grupo"><td colspan="7"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}${esc(ent)}</span></td></tr>`;
     return cab + arr.map(({ l, c }) => _planLinha(un, B, l, c, n1, porForn)).join('');
   }).join('');
-}
-
-// A CONTA POR ENTREGA NA LINHA (Wagner, 04/11/2026 — a coluna "Dura até" confundia: dizia
-// até quando dura, até quando a compra cobre e quanto falta no mesmo lugar). Agora a linha
-// se lê da esquerda para a direita: Tem hoje − Gasta até chegar = Chega com; Pedir =
-// Precisa depois − Chega com. As datas ficam embaixo de cada número.
-function _planCelulasConta(un, l, c, n1, unx) {
-  const hoje = _planD.hoje;
-  const tem = l.tem + l.pedido;
-  const neg = v => v < 0 ? `<span class="plan-falta">−${n1(-v)}</span>` : n1(v);
-  const sub = t => `<span class="plan-conta-sub">${t}</span>`;
-  const partes = [];
-  if (l.pedido > 0) partes.push(`${n1(l.tem)} + ${n1(l.pedido)} a caminho`);
-  if (l.temParte) partes.push(`${l.temParte > 0 ? '' : '−'}${n1(Math.abs(l.temParte))} no ${un === 'Centro' ? 'Central' : 'Produção'}`);
-  const temTit = l.temTela !== l.tem ? ` title="Na tela de Saldo: ${n1(l.temTela)} ${esc(l.un)}"` : '';
-  const tdTem = `<td class="text-end"${temTit}>${neg(tem)}${unx}${partes.map(x => sub(x)).join('')}</td>`;
-  if (!(l.consDia > 0)) return tdTem + '<td class="text-end text-muted">—</td><td class="text-end text-muted">—</td><td class="text-end text-muted">—</td>';
-  const iniCobre = _isoMais(hoje, c.nAntes), fimCobre = _isoMais(hoje, c.horiz - 1);
-  const tdGasta = c.nAntes > 0
-    ? `<td class="text-end plan-conta-gasta">${n1(c.antes)}${unx}${sub(c.nAntes === 1 ? 'hoje' : `até ${_planDiaTxt(_isoMais(hoje, c.nAntes - 1))}`)}</td>`
-    : `<td class="text-end plan-conta-gasta"><span class="text-muted">—</span>${sub('chega hoje')}</td>`;
-  // acaba antes de chegar: o dia em que acaba (mesma conta da Dura, sem margem antes da chegada)
-  const acaba = c.chegaCom < 0 && c.dura !== null ? (c.dura < 1 ? 'acabou' : `acaba ${_planDiaTxt(_isoMais(hoje, Math.floor(c.dura)))}`) : '';
-  const tdChega = c.chegaCom < 0
-    ? `<td class="text-end"><span class="plan-chega-falta">falta ${n1(-c.chegaCom)}</span>${unx}${sub(`<span class="plan-falta">${acaba}</span>`)}</td>`
-    : `<td class="text-end">${n1(c.chegaCom)}${unx}${sub(c.chega ? `na ${_planDiaTxt(c.chega)}` : 'hoje')}</td>`;
-  const tdPrecisa = `<td class="text-end plan-conta-gasta">${n1(c.depois)}${unx}${sub(iniCobre === fimCobre ? _planDiaTxt(iniCobre) : `${_planDiaTxt(iniCobre)} a ${_planDiaTxt(fimCobre)}`)}</td>`;
-  return tdTem + tdGasta + tdChega + tdPrecisa;
 }
 
 function _planLinha(un, B, l, c, n1, porForn) {
@@ -7678,32 +7644,17 @@ function _planLinha(un, B, l, c, n1, porForn) {
   else if (l.foraLista) tags.push(`<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`);
   else if (!l.base && l.comprado > 0) tags.push(`<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} no período, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`);
   else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
+  if (c.naoChega) tags.push(`<span class="plan-base plan-base-alerta" title="O estoque e o já pedido acabam antes de ${_ddmm(c.chega)}, quando chega o pedido feito hoje. Comprar por fora ou pedir entrega antes.">acaba antes de chegar</span>`);
+  // Estoque + já pedido cobrem até o "cobre até" sem a margem: o pedido é só a segurança
+  // (Wagner, 29/10/2026 — decidir a olho se faz ou não)
+  if (c.auto > 0 && c.sobraSem >= 0)
+    tags.push(`<span class="plan-base plan-base-margem" title="Sem a margem de ${Math.round(_planMargem(un) * 100)}%, o estoque e o já pedido cobrem até ${_planDiaTxt(_isoMais(_planD.hoje, c.horiz - 1))} e ainda sobram ${n1(c.sobraSem)} ${esc(l.un)}. O pedido sugerido é só a margem de segurança.">só pela margem</span>`);
   if (l.fator === 1 && norm(l.unComp) !== norm(l.un))
     tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
   const sub = porForn ? esc(l.cat) : l.forn ? `${esc(l.forn)}${l.fornOrigem === 'troca' ? ' <i class="bi bi-arrow-left-right" title="Fornecedor trocado nesta tela"></i>' : ''}` : 'sem compra recente';
   const diasBase = l.base === 'ficha' ? B.nDias : B.nCal;
   const porSem = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
-  const mudou = _planPedir[un]?.[l.pid] !== undefined;
-  let emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
-  // chopp: quantos barris (a troca depende dos vazios, quem pede ajusta)
-  const barril = /BARRIL/.test(l.nome) && /^(LT?|LITROS?)$/i.test(l.unComp) ? Number((l.nome.match(/(\d+)\s*(LITROS|L)\b/) || [])[1]) : 0;
-  if (barril > 0 && c.pedir > 0) emb += ` · ≈ ${Math.ceil(c.pedir * l.fator / barril - 1e-9)} barris`;
-  const aberta = _planAbertos.has(l.pid);
-  const cls = ['plan-linha', c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok', aberta ? 'plan-aberta' : ''].join(' ');
-  const linha = `<tr class="${cls}" onclick="planAbrir(event, '${l.pid}')">
-    <td class="plan-col-chk"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
-    <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(l.nome)}</div><div class="plan-sub"><span>${sub}</span>${porSem > 0 ? `<span class="plan-porsem">${n1(porSem)} ${esc(l.un)} por semana</span>` : ''}${tags.join('')}</div></td>
-    ${_planCelulasConta(un, l, c, n1, unx)}
-    <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
-         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
-    <td class="text-end plan-total">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '<span class="text-muted fw-normal">—</span>'}</td>
-  </tr>`;
-  return aberta ? linha + _planDetalhe(un, B, l, c, n1) : linha;
-}
-
-// Dura até (no detalhe desde 04/11/2026; na linha ficou a conta por entrega): barra até o
-// dobro da cobertura (mín. 14 dias), tracinho nos dias de cobertura
-function _planDuraHtml(un, l, c) {
+  // Dura: barra até o dobro da cobertura (mín. 14 dias), tracinho nos dias de cobertura
   const dura = c.dura;
   let duraHtml = '<span class="text-muted small">—</span>';
   if (dura !== null) {
@@ -7720,7 +7671,24 @@ function _planDuraHtml(un, l, c) {
         onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${Math.min(c.horiz / escala, 1) * 100}%"></i></div>
       <div class="plan-dura-sobra">${_planSobraTxt(c.sobra, l.un, _planMargem(un))}</div></div>`;
   }
-  return duraHtml;
+  const mudou = _planPedir[un]?.[l.pid] !== undefined;
+  let emb = l.fator !== 1 ? `${esc(l.unComp)} de ${n1(l.fator)} ${esc(l.un)}` : esc(l.unComp);
+  // chopp: quantos barris (a troca depende dos vazios, quem pede ajusta)
+  const barril = /BARRIL/.test(l.nome) && /^(LT?|LITROS?)$/i.test(l.unComp) ? Number((l.nome.match(/(\d+)\s*(LITROS|L)\b/) || [])[1]) : 0;
+  if (barril > 0 && c.pedir > 0) emb += ` · ≈ ${Math.ceil(c.pedir * l.fator / barril - 1e-9)} barris`;
+  const aberta = _planAbertos.has(l.pid);
+  const cls = ['plan-linha', c.marcado ? 'plan-marcado' : c.auto > 0 ? '' : 'plan-ok', aberta ? 'plan-aberta' : ''].join(' ');
+  const linha = `<tr class="${cls}" onclick="planAbrir(event, '${l.pid}')">
+    <td class="plan-col-chk"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
+    <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(l.nome)}</div><div class="plan-sub"><span>${sub}</span>${tags.join('')}</div></td>
+    <td class="text-end">${porSem > 0 ? n1(porSem) + unx : '<span class="text-muted">—</span>'}</td>
+    <td class="text-end"><span class="${l.temTela < 0 ? 'plan-falta' : ''}">${l.temTela < 0 ? '−' + n1(-l.temTela) : n1(l.temTela)}</span>${unx}${l.temParte ? `<span class="plan-parte" title="Fica no cartão ${un === 'Centro' ? 'Estoque Central' : 'Produção'} da tela de Saldo. Entra na conta.">${l.temParte > 0 ? '+' : '−'} ${n1(Math.abs(l.temParte))} no ${un === 'Centro' ? 'Central' : 'Produção'}</span>` : ''}${l.pedido > 0 ? `<span class="plan-caminho">+ ${n1(l.pedido)} a caminho</span>` : ''}</td>
+    <td class="plan-dura">${duraHtml}</td>
+    <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
+         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
+    <td class="text-end plan-total">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '<span class="text-muted fw-normal">—</span>'}</td>
+  </tr>`;
+  return aberta ? linha + _planDetalhe(un, B, l, c, n1) : linha;
 }
 
 // O que antes eram colunas (venda por semana, onde está, a conta, dias) aparece ao abrir a linha
@@ -7751,7 +7719,7 @@ function _planDetalhe(un, B, l, c, n1) {
   const faixa = (a, b) => a === b ? dsem(a) : `${dsem(a)} a ${dsem(b)}`;
   const chegaTxt = { escolhido: 'dia escolhido no topo da tela (só hoje)', fixo: 'próxima entrega do fornecedor', prazo: `prazo do fornecedor (${_fornCompra[l.fornId]?.prazo} d)`, sem: 'fornecedor sem dias de entrega no cadastro: conta como se chegasse hoje' }[c.tipo];
   const dowHtml = l.consDow ? `<div class="plan-dow">${[1, 2, 3, 4, 5, 6, 0].map(i => `<span><small>${_FORN_DIAS[i].toLowerCase()}</small>${l.consDow[i] >= 10 ? _metaNum(Math.round(l.consDow[i])) : n1(l.consDow[i])}</span>`).join('')}</div>` : '';
-  return `<tr class="plan-det"><td colspan="8"><div class="plan-det-grade">
+  return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
     <div class="plan-det-card"><h6>Consumo por semana</h6>${semHtml}
       ${dowHtml ? `<h6 class="mt-2">Média por dia da semana</h6>${dowHtml}` : ''}
       <div class="mt-2 text-muted">${origem}${l.perda > 0 ? ` · perda do cadastro ${Math.round(l.perda * 100)}% (entra na conta)` : ''}</div></div>
@@ -7759,18 +7727,15 @@ function _planDetalhe(un, B, l, c, n1) {
     <div class="plan-det-card"><h6>A conta</h6>
       ${lin('Pedido de hoje chega', c.chega ? `<b>${dsem(c.chega)}</b>` : 'hoje')}
       <div class="text-muted mb-1">${chegaTxt}</div>
-      ${lin('Estoque agora', `${n1(l.tem)} ${unx}`)}
-      ${l.pedido > 0 ? lin('+ já pedido', `${n1(l.pedido)} ${unx}`) : ''}
-      ${c.nAntes > 0 ? lin(`− gasta até chegar (${faixa(hoje, _isoMais(hoje, c.nAntes - 1))})`, `${n1(c.antes)} ${unx}`) : ''}
-      ${lin('= chega com', c.chegaCom < 0 ? `<span class="plan-falta">falta ${n1(-c.chegaCom)} ${unx}</span>` : `${n1(c.chegaCom)} ${unx}`, true)}
-      ${c.chegaCom < 0 ? '<div class="text-muted mb-1">O que falta antes de chegar não volta: o pedido cobre só os dias depois que chega.</div>' : ''}
-      ${lin(`Precisa depois: ${c.dias} ${c.dias === 1 ? 'dia' : 'dias'} (${faixa(iniCobre, fimCobre)}) + ${margem}%`, `${n1(c.depois)} ${unx}`)}
+      ${c.nAntes > 0 ? lin(`Até chegar (${faixa(hoje, _isoMais(hoje, c.nAntes - 1))})`, `${n1(c.antes)} ${unx}`) : ''}
+      ${lin(`Cobrir ${c.dias} ${c.dias === 1 ? 'dia' : 'dias'} (${faixa(iniCobre, fimCobre)}) + ${margem}%`, `${n1(c.cobre * (1 + _planMargem(un)))} ${unx}`)}
+      ${lin('Precisa', `${n1(c.precisa)} ${unx}`, true)}
+      ${lin('− estoque agora', `${n1(l.tem)} ${unx}`)}
+      ${l.pedido > 0 ? lin('− já pedido', `${n1(l.pedido)} ${unx}`) : ''}
       ${lin('Falta', c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)} ${unx}</span>` : '<span class="text-success">nada</span>', true)}
-      ${c.auto > 0 && c.sobraSem >= 0 ? `<div class="mt-1 text-muted">Só pela margem: sem os ${margem}%, o estoque e o já pedido cobrem até ${dsem(fimCobre)} e ainda sobram ${n1(c.sobraSem)} ${unx}.</div>` : ''}
       ${lin(`Pedir em ${esc(l.unComp)}${l.fator !== 1 ? ` de ${n1(l.fator)} ${unx}` : ''}`, `<b>${n1(c.auto)}</b>`)}
       ${lin('Último custo', l.custo > 0 ? brl(l.custo) : '—')}
       ${c.naoChega ? `<div class="mt-1 plan-falta">O estoque e o já pedido acabam antes de ${dsem(c.chega)}. O pedido de hoje não chega a tempo.</div>` : ''}</div>
-    ${c.dura !== null ? `<div class="plan-det-card plan-dura"><h6>Dura até</h6>${_planDuraHtml(un, l, c)}</div>` : ''}
     <div class="plan-det-card"><h6>Cobrir quantos dias depois que chega</h6>
       <input type="number" class="form-control form-control-sm plan-dias${c.proprio ? ' plan-proprio' : ''}" min="1" max="60" step="1" value="${c.dias}" onchange="planDiasProd('${l.pid}', this.value)" aria-label="Dias de cobertura de ${esc(l.nome)}"> dias
       <div class="mt-2 text-muted">${c.proprio ? 'Só deste produto, fica guardado. Apague para voltar ao padrão.' : c.tipo === 'fixo' ? 'Até a entrega seguinte do fornecedor. Trocar aqui vale só para este produto e fica guardado.' : 'Padrão da unidade. Trocar aqui vale só para este produto e fica guardado.'}</div>
@@ -7889,7 +7854,7 @@ function planDuraArrastar(ev) {
     if (txt) txt.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias - 1));
     if (sob && l) {
       const k = _planCobertura(_planUn, l, antes, dias);
-      sob.innerHTML = _planSobraTxt(Math.max(0, k.chegaCom) - k.depois, l.un, _planMargem(_planUn));
+      sob.innerHTML = _planSobraTxt(l.tem + l.pedido - k.precisa, l.un, _planMargem(_planUn));
     }
   };
   ev.preventDefault();
