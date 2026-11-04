@@ -3430,8 +3430,7 @@ async function _saldoOrigem(pids, unidade) {
 }
 function _fmtSaldoLoja(v) {
   if (v === undefined) return { txt: '0', neg: false };
-  const t = Math.abs(v % 1) < 1e-9 ? String(v) : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
-  return { txt: t, neg: v < 0 };
+  return { txt: _fmtQtd(v), neg: v < 0 };
 }
 // So na contagem de SETOR do Centro e do P10: no proprio estoque, no Central e na Producao
 // a coluna repetiria o saldo do lugar ou mostraria uma loja que nao e a dele.
@@ -3468,7 +3467,7 @@ function renderInventario() {
   }
   tbody.innerHTML = _invProds.map((p, i) => {
     const padrao = _getPadrao(p.nome);
-    const padraoTxt = padrao !== null ? padrao : '—';
+    const padraoTxt = _fmtQtd(padrao);
     const semProd = !p.produto_id ? ' title="Produto não encontrado no cadastro" style="color:#dc3545"' : '';
     const btnRemover = p.adicionado
       ? ` <button class="btn btn-link btn-sm p-0 ms-1 text-danger" title="Remover produto adicionado"
@@ -3481,7 +3480,7 @@ function renderInventario() {
       <td><strong${semProd}>${esc(p.nome)}</strong>${!p.produto_id ? ' <i class="bi bi-exclamation-circle text-danger small" title="Não cadastrado"></i>' : ''}${btnRemover}</td>
       <td class="text-center text-muted small">${esc(p.unidade || '—')}</td>
       <td class="text-center">
-        <input type="number" class="form-control form-control-sm text-center"
+        <input type="number" class="form-control form-control-sm text-center q2"
           id="inv-est-${i}" min="0" step="any" value="0"${_invSoLista ? ' disabled' : ''}
           style="width:90px;margin:auto" oninput="calcPedidoInv(${i})">
       </td>
@@ -3625,12 +3624,24 @@ async function _excluirProdGlobal(nome) {
   toast(`"${nome}" excluído da contagem.`, 'ok');
 }
 
-function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
-
-function _fmtPed(v) {
-  if (v % 1 === 0) return String(v);
-  return v.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+// QUANTIDADE COM DUAS CASAS (04/11/2026): no que se digita, no que se grava e no que se
+// mostra. A tela de Saldo mostrava 0.42000000000000004 (resto de conta com ponto
+// flutuante) e cada tela formatava de um jeito (2.58, 0,420, 0,575). Os campos de
+// quantidade da contagem e do pedido interno levam a classe q2: ao digitar a 3a casa,
+// ela some. parseQtd arredonda em 2 casas o que vai para o banco.
+function _q2(v) { const n = Number(v); return Number.isFinite(n) ? Math.round((n + Math.sign(n) * 1e-9) * 100) / 100 : 0; }
+function parseQtd(v) { return _q2(parseFloat(String(v ?? '').replace(',', '.')) || 0); }
+function _fmtQtd(v) {
+  if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return '—';
+  return _q2(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 }
+function _lim2(el) {
+  const m = String(el.value ?? '').match(/^(-?\d*)([.,])(\d{3,})$/);
+  if (m) el.value = m[1] + m[2] + m[3].slice(0, 2);
+}
+document.addEventListener('input', e => { if (e.target?.classList?.contains('q2')) _lim2(e.target); }, true);
+
+function _fmtPed(v) { return _fmtQtd(v); }
 
 function calcPedidoInv(i) {
   const est    = parseQtd(document.getElementById(`inv-est-${i}`)?.value);
@@ -3693,7 +3704,7 @@ async function abrirEditarPadroes() {
       return `<tr>
         <td class="small">${esc(p.nome)}</td>
         <td class="text-center">
-          <input type="number" class="form-control form-control-sm text-center"
+          <input type="number" class="form-control form-control-sm text-center q2"
             id="pad-${d}-${pi}" min="0" step="any" value="${val}" placeholder="—" style="width:100px;margin:auto">
         </td>
       </tr>`;
@@ -4151,10 +4162,10 @@ async function verDetalheContagem(invId) {
     const atCor = typeof ped.atendido === 'number' && ped.atendido < solicitado ? 'text-danger' : '';
     return `<tr>
       <td>${esc(it.nome)}</td>
-      <td class="text-center">${+(it.estoque ?? 0)}</td>
-      <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
-      <td class="text-center fw-bold text-primary">${+(+solicitado).toFixed(3)}</td>
-      <td class="text-center fw-bold ${atCor}">${typeof atendido === 'number' ? +atendido.toFixed(3) : atendido}</td>
+      <td class="text-center">${_fmtQtd(it.estoque ?? 0)}</td>
+      <td class="text-center text-muted">${_fmtQtd(it.pedido_padrao)}</td>
+      <td class="text-center fw-bold text-primary">${_fmtQtd(solicitado)}</td>
+      <td class="text-center fw-bold ${atCor}">${typeof atendido === 'number' ? _fmtQtd(atendido) : atendido}</td>
     </tr>`;
   }).join('');
 
@@ -4198,10 +4209,10 @@ async function abrirEditarContagem(invId) {
     return `<tr>
       <td>${esc(it.nome)}</td>
       <td class="text-center text-muted small">${esc(unidade || '—')}</td>
-      <td class="text-center text-muted">${it.pedido_padrao ?? '—'}</td>
+      <td class="text-center text-muted">${_fmtQtd(it.pedido_padrao)}</td>
       <td class="text-center" style="width:120px">
-        <input type="number" class="form-control form-control-sm text-center"
-          id="cont-est-${it.id}" value="${it.estoque ?? 0}" min="0" step="any"
+        <input type="number" class="form-control form-control-sm text-center q2"
+          id="cont-est-${it.id}" value="${_q2(it.estoque ?? 0)}" min="0" step="any"
           oninput="_recalcPed('${it.id}',${it.pedido_padrao ?? 0})">
       </td>
       <td class="text-center fw-bold text-primary" id="cont-ped-${it.id}" style="width:90px">${ped}</td>
@@ -4896,18 +4907,18 @@ async function abrirLiberarPedido(pedidoId) {
   const rows = (itens || []).map(it => {
     const est = estoqueMap[it.nome?.trim().toUpperCase()];
     const pad = getPad(it.nome || '');
-    const estFmt = est !== undefined ? est : '—';
+    const estFmt = _fmtQtd(est);
     const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:600' : 'color:#fd7e14;font-weight:600';
     const sl = saldoLoja && it.produto_id ? _fmtSaldoLoja(saldoLoja[it.produto_id]) : { txt: '—', neg: false };
     return `<tr>
       <td>${esc(it.nome)}</td>
-      <td class="text-center text-muted">${pad}</td>
+      <td class="text-center text-muted">${typeof pad === 'number' ? _fmtQtd(pad) : pad}</td>
       <td class="text-center ${sl.neg ? 'text-danger fw-bold' : 'text-muted'}">${sl.txt}</td>
       <td class="text-center" style="${estCor}">${estFmt}</td>
-      <td class="text-center">${it.qtd_pedida ?? '—'}</td>
+      <td class="text-center">${_fmtQtd(it.qtd_pedida)}</td>
       <td class="text-center" style="width:110px">
-        <input type="number" class="form-control form-control-sm text-center"
-          id="lib-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="any">
+        <input type="number" class="form-control form-control-sm text-center q2"
+          id="lib-qtd-${it.id}" value="${_q2(it.qtd_pedida ?? 0)}" min="0" step="any">
       </td>
     </tr>`;
   }).join('');
@@ -4989,7 +5000,7 @@ async function _conferirQtdPedido(itens, setor, etapa) {
       if (v > 0) (hist[l.produto_id] = hist[l.produto_id] || []).push(v);
     }));
     const mediana = a => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-    const fmt = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+    const fmt = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 
     const avisos = [];
     alvo.forEach(i => {
@@ -5061,8 +5072,8 @@ async function abrirEditarPedido(pedidoId) {
   const rows = (itens || []).map(it => `<tr>
     <td>${esc(it.nome)}</td>
     <td class="text-center" style="width:130px">
-      <input type="number" class="form-control form-control-sm text-center"
-        id="edit-qtd-${it.id}" value="${it.qtd_pedida ?? 0}" min="0" step="any">
+      <input type="number" class="form-control form-control-sm text-center q2"
+        id="edit-qtd-${it.id}" value="${_q2(it.qtd_pedida ?? 0)}" min="0" step="any">
     </td>
   </tr>`).join('');
 
@@ -5238,7 +5249,7 @@ async function _movSaldo(produto_id, local, delta) {
   if (!produto_id || !delta) return;
   const { data: cur } = await sb.from('est_saldo_local')
     .select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
-  const novoSaldo = (cur?.saldo ?? 0) + delta;
+  const novoSaldo = Math.round(((cur?.saldo ?? 0) + delta) * 1e4) / 1e4;   // sem 0.42000000000000004
   // onConflict obrigatório: a PK é 'id' (surrogate) e (produto_id,local) é UNIQUE.
   // Sem isso o upsert vira INSERT, viola o UNIQUE (23505) e o saldo NÃO era gravado
   // (recebimento/transferência/pedido interno "não iam" para o saldo).
@@ -5320,22 +5331,33 @@ function _custoUsoProd(p) {
 //
 // A trava so PERGUNTA — nunca bloqueia. Quem conta pode confirmar e seguir, que
 // e' o certo quando a compra grande realmente aconteceu.
+//
+// 04/11/2026: valia so para numero >= 50 e >= 50x o normal, e na pratica so o acai
+// (kg digitado em gramas) caia nela. Agora vale para todo item contado acima de zero,
+// 10x acima ou abaixo do normal, e sugere o numero (÷10, ÷100 ou ÷1000) mais perto do
+// normal. Simulado em out/2026: 57 casos acima (era 23) — leite 21,5 com normal 2,
+// canela 1,5 com normal 0,15, kit vatapa 97 com normal 9 — e 173 abaixo (pacote no
+// lugar de unidade: perfex 1 com normal 500, chopp 1 barril com normal 50 L).
 // ─────────────────────────────────────────────────────────────────────────────
 async function _conferirContagemFora(itens, setor, local) {
   try {
-    const ids = [...new Set(itens.filter(i => i.produto_id && (i.total || 0) >= 50).map(i => i.produto_id))];
-    if (!ids.length) return true;                       // ninguem digitou numero grande
+    const ids = [...new Set(itens.filter(i => i.produto_id && (Number(i.total) || 0) > 0).map(i => i.produto_id))];
+    if (!ids.length) return true;                       // nada contado acima de zero
 
     const desde = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
     const historico = async (invIds, pids) => {         // produto_id -> [total > 0]
-      const h = {}, lotes = [];
-      for (let i = 0; i < invIds.length; i += 200) lotes.push(invIds.slice(i, i + 200));
-      const resps = await Promise.all(lotes.map(l => sb.from('est_inventario_itens')
-        .select('produto_id,total').in('inventario_id', l).in('produto_id', pids)));
-      resps.forEach(({ data: linhas }) => (linhas || []).forEach(l => {
-        const v = Number(l.total) || 0;
-        if (v > 0) (h[l.produto_id] = h[l.produto_id] || []).push(v);
-      }));
+      const h = {}, lotes = [];                         // .in() grande estoura a URL: 100 x 100
+      for (let i = 0; i < invIds.length; i += 100)
+        for (let j = 0; j < pids.length; j += 100) lotes.push([invIds.slice(i, i + 100), pids.slice(j, j + 100)]);
+      const resps = await Promise.all(lotes.map(([l, p]) => sb.from('est_inventario_itens')
+        .select('produto_id,total').in('inventario_id', l).in('produto_id', p)));
+      resps.forEach(({ data: linhas, error }) => {
+        if (error) console.error('_conferirContagemFora historico:', error.message);
+        (linhas || []).forEach(l => {
+          const v = Number(l.total) || 0;
+          if (v > 0) (h[l.produto_id] = h[l.produto_id] || []).push(v);
+        });
+      });
       return h;
     };
 
@@ -5348,9 +5370,7 @@ async function _conferirContagemFora(itens, setor, local) {
     // qualquer unidade e setor. Sem isto a trava ficava muda justamente na estreia: em
     // 13/10/2026 a Cozinha do P10 contou pela primeira vez e passaram murupi 494,852,
     // dende 400 e pimenta de cheiro 180 (gramas no campo de kg); em 15/10 o dende 399
-    // passou porque o P10 tinha so 2 contagens dele - uma era o proprio 400. Simulado de
-    // 01/08 a 20/10: pega esses 4 e o alcool em gel 600 do Salao; o resto (10) e
-    // descartavel que o P10 conta em unidade e o Centro em pacote, so nos primeiros dias.
+    // passou porque o P10 tinha so 2 contagens dele - uma era o proprio 400.
     const semHist = ids.filter(id => (hist[id] || []).length < 3);
     let geral = {};
     if (semHist.length) {
@@ -5366,29 +5386,39 @@ async function _conferirContagemFora(itens, setor, local) {
     const suspeitos = [];
     itens.forEach(it => {
       const v = Number(it.total) || 0;
-      if (v < 50 || !it.produto_id) return;
+      if (v <= 0 || !it.produto_id) return;
       const aqui = (hist[it.produto_id] || []).length >= 3;
       const h = aqui ? hist[it.produto_id] : geral[it.produto_id];
       if (!h || h.length < 3) return;
       h.sort((a, b) => a - b);
       const mediana = h[Math.floor(h.length / 2)];
-      if (mediana <= 0 || v < 50 * mediana) return;
-      const emKg = v / 1000;
-      const pareceGrama = emKg >= mediana / 5 && emKg <= mediana * 5;
-      suspeitos.push({ nome: it.nome, v, mediana, emKg, pareceGrama, aqui });
+      if (mediana <= 0) return;
+      const r = v / mediana;
+      if (r < 10 && r > 0.1) return;
+      // Acima: o numero dividido por 10, 100 ou 1000 que cai mais perto do normal
+      // (virgula esquecida ou gramas no campo de kg). Abaixo: costuma ser unidade
+      // trocada (pacote no lugar de unidade, barril no lugar de litro) - sem palpite.
+      let sug = null, div = 0;
+      if (r >= 10) [10, 100, 1000].forEach(k => {
+        const c = v / k;
+        if (c < mediana / 4 || c > mediana * 4) return;
+        if (sug === null || Math.abs(Math.log(c / mediana)) < Math.abs(Math.log(sug / mediana))) { sug = c; div = k; }
+      });
+      suspeitos.push({ nome: it.nome, v, mediana, sug, div, baixo: r <= 0.1, aqui });
     });
     if (!suspeitos.length) return true;
 
-    const fmt = n => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+    const fmt = n => _fmtQtd(n);
     const linhas = suspeitos.map(s =>
       `• ${s.nome}: você digitou ${fmt(s.v)} — o normal ${s.aqui ? 'aqui' : 'nas outras contagens'} é ${fmt(s.mediana)}` +
-      (s.pareceGrama ? `\n   (${fmt(s.v)} gramas seria ${fmt(s.emKg)})` : '')
+      (s.sug !== null ? `\n   Não seria ${fmt(s.sug)}?${s.div === 1000 ? ` (${fmt(s.v)} gramas = ${fmt(s.sug)} kg)` : ''}`
+        : s.baixo ? `\n   Confira se contou na unidade da coluna "Un."` : '')
     ).join('\n');
 
     return confirm(
       `Confira estes valores antes de salvar:\n\n${linhas}\n\n` +
-      `Se a quantidade é essa mesmo, pode continuar.\n` +
-      `Salvar assim?`
+      `Se a quantidade está certa, aperte OK.\n` +
+      `Para corrigir, aperte Cancelar e troque o número.`
     );
   } catch (e) {
     console.error('_conferirContagemFora falhou (contagem segue):', e);
@@ -5505,11 +5535,11 @@ async function abrirReceberPedido(pedidoId) {
 
   const rows = (itens || []).map(it => `<tr>
     <td>${esc(it.nome)}</td>
-    <td class="text-center">${it.qtd_pedida ?? '—'}</td>
-    <td class="text-center">${it.qtd_liberada ?? '—'}</td>
+    <td class="text-center">${_fmtQtd(it.qtd_pedida)}</td>
+    <td class="text-center">${_fmtQtd(it.qtd_liberada)}</td>
     <td class="text-center" style="width:130px">
-      <input type="number" class="form-control form-control-sm text-center"
-        id="rec-qtd-${it.id}" value="${it.qtd_liberada ?? 0}" min="0" step="any">
+      <input type="number" class="form-control form-control-sm text-center q2"
+        id="rec-qtd-${it.id}" value="${_q2(it.qtd_liberada ?? 0)}" min="0" step="any">
     </td>
   </tr>`).join('');
 
@@ -5765,7 +5795,7 @@ async function _planoConfirmacao(pedidoId, itens) {
     _contouDepois(origem, pids, ped.liberado_em, null),
     destino ? _contouDepois(destino, pids, ped.liberado_em, ped) : new Set(),
   ]);
-  const fmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const fmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
   const movs = [], data = hojeLocal();
   for (const it of itens) {
     if (!it.produto_id) continue;
@@ -5893,7 +5923,7 @@ async function _pedidosACaminho(pids) {
 const _TRANSF_UNIDADES = ['Centro', 'Delivery P10', 'Produção', 'Estoque Central'];
 const _transfLugar = u => u === 'Delivery P10' ? LOCAL_ESTOQUE_P10 : _localRazao(u, 'ESTOQUE DA LOJA');
 const _transfQ = v => (v === null || v === undefined || v === '') ? '—'
-  : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 let _transfModo   = 'pedir';   // 'pedir' (ao Central) | 'entregar' (Produção -> Central) | 'enviar' (Centro -> Central)
 
 // Quem manda e quem recebe em cada modo. 'entregar' e 'enviar' nascem ja enviados:
@@ -5975,7 +6005,7 @@ function _renderTransfCard(p, unidade) {
     cancelado: ['bg-danger',            'Cancelado'],
   }[p.status] || ['bg-secondary', p.status];
   const inp = (attr, id, val) =>
-    `<input type="number" class="form-control form-control-sm text-end ms-auto" style="width:95px" min="0" step="any" ${attr}="${id}" value="${val ?? ''}">`;
+    `<input type="number" class="form-control form-control-sm text-end ms-auto q2" style="width:95px" min="0" step="any" ${attr}="${id}" value="${val == null ? '' : _q2(val)}">`;
 
   const linhas = (p._itens || []).map(it => {
     const prod = prodFT(it.produto_id);
@@ -6193,7 +6223,7 @@ async function _transfDecidirContados(ped, itens, qtds, lugar, nomeLugar) {
   if (r.erro) return { erro: r.erro };
   const marcados = itens.filter(it => (qtds[it.id] ?? 0) > 0 && r.contados[it.produto_id]);
   if (!marcados.length) return { pular: new Set(), somados: new Set() };
-  const q = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const q = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
   const lista = marcados.map(it => {
     const m = r.contados[it.produto_id];
     return `<li><b>${esc(it.nome || '')}</b> ${q(qtds[it.id])} · ${m.tipo === 'ajuste' ? 'ajustado' : 'contado'} ${esc(_horaManaus(m.criado_em))}${m.responsavel ? ' por ' + esc(m.responsavel) : ''}</li>`;
@@ -6742,7 +6772,7 @@ function _rowEmerg(idx) {
       <input type="hidden" id="emerg-id-${idx}">
     </div>
     <div style="width:85px">
-      <input type="number" class="form-control form-control-sm text-center" id="emerg-qtd-${idx}"
+      <input type="number" class="form-control form-control-sm text-center q2" id="emerg-qtd-${idx}"
         min="0" step="any" placeholder="Qtd">
     </div>
     ${podeDeletar
@@ -15852,7 +15882,7 @@ function renderSaldo() {
   let subtotalValor = 0;
   tbody.innerHTML = filtrado.map((p, idx) => {
     const key      = p.produto_id || norm(p.nome);
-    const saldoFmt = p.saldo % 1 === 0 ? String(p.saldo) : parseFloat(p.saldo).toFixed(3).replace(/\.?0+$/, '');
+    const saldoFmt = _fmtQtd(p.saldo);
     const semProd  = !p.produto_id ? ' <span class="text-danger" title="Não cadastrado">⚠</span>' : '';
     const bgRow    = idx % 2 === 0 ? '#fff' : '#f8fffe';
 
@@ -15866,13 +15896,13 @@ function renderSaldo() {
       total += v + (cam?.q || 0);                  // a caminho ainda é do estoque da unidade
       const numBg  = v <= 0 ? '#fff5f5' : bgRow;
       const numCor = v <= 0 ? '#dc3545' : '#212529';
-      const camFmt = cam ? `<span class="saldo-caminho" title="${esc(cam.peds.join(', '))} liberado, o setor ainda não confirmou">+ ${parseFloat(cam.q.toFixed(3))} a caminho</span>` : '';
-      return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${val ?? '—'}${camFmt}</td>`;
+      const camFmt = cam ? `<span class="saldo-caminho" title="${esc(cam.peds.join(', '))} liberado, o setor ainda não confirmou">+ ${_fmtQtd(cam.q)} a caminho</span>` : '';
+      return `<td class="text-center fw-semibold" style="background:${numBg};color:${numCor};border-left:1px solid ${cor}22">${_fmtQtd(val)}${camFmt}</td>`;
     }).join('');
 
     const elBg     = p.saldo <= 0 ? '#fff5f5' : '#f0fdf4';
     const elCor    = p.saldo <= 0 ? '#dc3545' : '#166534';
-    const totalFmt = total % 1 === 0 ? String(total) : parseFloat(total).toFixed(3).replace(/\.?0+$/, '');
+    const totalFmt = _fmtQtd(total);
     const totalCor = total <= 0 ? '#dc3545' : '#b45309';
 
     const custo    = _custoSaldoDe(p);
@@ -15955,7 +15985,7 @@ function _pedirAjusteSaldo(nome, local, atual, avisoHtml = '') {
             <div class="text-muted small">${esc(local)} · saldo atual: ${esc(String(atual))}</div></div>
           ${avisoHtml}
           <label class="form-label" for="aj-novo">Novo saldo</label>
-          <input id="aj-novo" type="text" inputmode="decimal" class="form-control mb-3" value="${esc(String(atual))}">
+          <input id="aj-novo" type="text" inputmode="decimal" class="form-control mb-3 q2" value="${esc(String(_q2(atual)).replace('.', ','))}">
           <label class="form-label" for="aj-motivo">Motivo <span class="text-danger">*</span></label>
           <select id="aj-motivo" class="form-select mb-2"><option value="">Escolha o motivo…</option>${opts}</select>
           <input id="aj-obs" type="text" class="form-control" maxlength="200"
@@ -16187,7 +16217,7 @@ async function verInventarioValorado(id) {
       <td class="text-end" style="font-weight:700;padding:6px 10px">${brl(sub)}</td></tr>`;
     arr.forEach(it => {
       const q = Number(it.quantidade);
-      const qFmt = q % 1 === 0 ? String(q) : q.toFixed(3).replace(/\.?0+$/, '');
+      const qFmt = _fmtQtd(q);
       corpo += `<tr>
         <td style="padding:4px 10px">${esc(it.nome)}</td>
         <td class="text-center" style="padding:4px 10px">${qFmt}</td>

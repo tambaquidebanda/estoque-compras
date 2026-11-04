@@ -897,7 +897,7 @@ async function _movSaldo(produto_id, local, delta) {
   if (!produto_id || !delta) return;
   const { data: cur } = await sb.from('est_saldo_local')
     .select('saldo').eq('produto_id', produto_id).eq('local', local).maybeSingle();
-  const novoSaldo = (cur?.saldo ?? 0) + delta;
+  const novoSaldo = Math.round(((cur?.saldo ?? 0) + delta) * 1e4) / 1e4;   // sem 0.42000000000000004
   const { error } = await sb.from('est_saldo_local')
     .upsert({ produto_id, local, saldo: novoSaldo, updated_at: new Date().toISOString() }, { onConflict: 'produto_id,local' });
   if (error) console.error('_movSaldo upsert falhou:', produto_id, local, error.message);
@@ -931,22 +931,33 @@ async function movimentar(mov) {
 //
 // A trava so PERGUNTA — nunca bloqueia. Quem conta pode confirmar e seguir, que
 // e' o certo quando a compra grande realmente aconteceu.
+//
+// 04/11/2026: valia so para numero >= 50 e >= 50x o normal, e na pratica so o acai
+// (kg digitado em gramas) caia nela. Agora vale para todo item contado acima de zero,
+// 10x acima ou abaixo do normal, e sugere o numero (÷10, ÷100 ou ÷1000) mais perto do
+// normal. Simulado em out/2026: 57 casos acima (era 23) — leite 21,5 com normal 2,
+// canela 1,5 com normal 0,15, kit vatapa 97 com normal 9 — e 173 abaixo (pacote no
+// lugar de unidade: perfex 1 com normal 500, chopp 1 barril com normal 50 L).
 // ─────────────────────────────────────────────────────────────────────────────
 async function _conferirContagemFora(itens, setor, local) {
   try {
-    const ids = [...new Set(itens.filter(i => i.produto_id && (i.total || 0) >= 50).map(i => i.produto_id))];
-    if (!ids.length) return true;                       // ninguem digitou numero grande
+    const ids = [...new Set(itens.filter(i => i.produto_id && (Number(i.total) || 0) > 0).map(i => i.produto_id))];
+    if (!ids.length) return true;                       // nada contado acima de zero
 
     const desde = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
     const historico = async (invIds, pids) => {         // produto_id -> [total > 0]
-      const h = {}, lotes = [];
-      for (let i = 0; i < invIds.length; i += 200) lotes.push(invIds.slice(i, i + 200));
-      const resps = await Promise.all(lotes.map(l => sb.from('est_inventario_itens')
-        .select('produto_id,total').in('inventario_id', l).in('produto_id', pids)));
-      resps.forEach(({ data: linhas }) => (linhas || []).forEach(l => {
-        const v = Number(l.total) || 0;
-        if (v > 0) (h[l.produto_id] = h[l.produto_id] || []).push(v);
-      }));
+      const h = {}, lotes = [];                         // .in() grande estoura a URL: 100 x 100
+      for (let i = 0; i < invIds.length; i += 100)
+        for (let j = 0; j < pids.length; j += 100) lotes.push([invIds.slice(i, i + 100), pids.slice(j, j + 100)]);
+      const resps = await Promise.all(lotes.map(([l, p]) => sb.from('est_inventario_itens')
+        .select('produto_id,total').in('inventario_id', l).in('produto_id', p)));
+      resps.forEach(({ data: linhas, error }) => {
+        if (error) console.error('_conferirContagemFora historico:', error.message);
+        (linhas || []).forEach(l => {
+          const v = Number(l.total) || 0;
+          if (v > 0) (h[l.produto_id] = h[l.produto_id] || []).push(v);
+        });
+      });
       return h;
     };
 
@@ -959,9 +970,7 @@ async function _conferirContagemFora(itens, setor, local) {
     // qualquer unidade e setor. Sem isto a trava ficava muda justamente na estreia: em
     // 13/10/2026 a Cozinha do P10 contou pela primeira vez e passaram murupi 494,852,
     // dende 400 e pimenta de cheiro 180 (gramas no campo de kg); em 15/10 o dende 399
-    // passou porque o P10 tinha so 2 contagens dele - uma era o proprio 400. Simulado de
-    // 01/08 a 20/10: pega esses 4 e o alcool em gel 600 do Salao; o resto (10) e
-    // descartavel que o P10 conta em unidade e o Centro em pacote, so nos primeiros dias.
+    // passou porque o P10 tinha so 2 contagens dele - uma era o proprio 400.
     const semHist = ids.filter(id => (hist[id] || []).length < 3);
     let geral = {};
     if (semHist.length) {
@@ -977,29 +986,39 @@ async function _conferirContagemFora(itens, setor, local) {
     const suspeitos = [];
     itens.forEach(it => {
       const v = Number(it.total) || 0;
-      if (v < 50 || !it.produto_id) return;
+      if (v <= 0 || !it.produto_id) return;
       const aqui = (hist[it.produto_id] || []).length >= 3;
       const h = aqui ? hist[it.produto_id] : geral[it.produto_id];
       if (!h || h.length < 3) return;
       h.sort((a, b) => a - b);
       const mediana = h[Math.floor(h.length / 2)];
-      if (mediana <= 0 || v < 50 * mediana) return;
-      const emKg = v / 1000;
-      const pareceGrama = emKg >= mediana / 5 && emKg <= mediana * 5;
-      suspeitos.push({ nome: it.nome, v, mediana, emKg, pareceGrama, aqui });
+      if (mediana <= 0) return;
+      const r = v / mediana;
+      if (r < 10 && r > 0.1) return;
+      // Acima: o numero dividido por 10, 100 ou 1000 que cai mais perto do normal
+      // (virgula esquecida ou gramas no campo de kg). Abaixo: costuma ser unidade
+      // trocada (pacote no lugar de unidade, barril no lugar de litro) - sem palpite.
+      let sug = null, div = 0;
+      if (r >= 10) [10, 100, 1000].forEach(k => {
+        const c = v / k;
+        if (c < mediana / 4 || c > mediana * 4) return;
+        if (sug === null || Math.abs(Math.log(c / mediana)) < Math.abs(Math.log(sug / mediana))) { sug = c; div = k; }
+      });
+      suspeitos.push({ nome: it.nome, v, mediana, sug, div, baixo: r <= 0.1, aqui });
     });
     if (!suspeitos.length) return true;
 
-    const fmt = n => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+    const fmt = n => _fmtQtd(n);
     const linhas = suspeitos.map(s =>
       `• ${s.nome}: você digitou ${fmt(s.v)} — o normal ${s.aqui ? 'aqui' : 'nas outras contagens'} é ${fmt(s.mediana)}` +
-      (s.pareceGrama ? `\n   (${fmt(s.v)} gramas seria ${fmt(s.emKg)})` : '')
+      (s.sug !== null ? `\n   Não seria ${fmt(s.sug)}?${s.div === 1000 ? ` (${fmt(s.v)} gramas = ${fmt(s.sug)} kg)` : ''}`
+        : s.baixo ? `\n   Confira se contou na unidade da coluna "Un."` : '')
     ).join('\n');
 
     return confirm(
       `Confira estes valores antes de salvar:\n\n${linhas}\n\n` +
-      `Se a quantidade é essa mesmo, pode continuar.\n` +
-      `Salvar assim?`
+      `Se a quantidade está certa, aperte OK.\n` +
+      `Para corrigir, aperte Cancelar e troque o número.`
     );
   } catch (e) {
     console.error('_conferirContagemFora falhou (contagem segue):', e);
@@ -1850,8 +1869,7 @@ async function _saldoOrigemMob(pids, unidade) {
 }
 function _fmtSaldoLoja(v) {
   if (v === undefined) return { txt: '0', neg: false };
-  const t = Math.abs(v % 1) < 1e-9 ? String(v) : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
-  return { txt: t, neg: v < 0 };
+  return { txt: _fmtQtd(v), neg: v < 0 };
 }
 let _saldoLojaVez = 0;   // a tela pode trocar de grupo enquanto o saldo chega
 
@@ -1864,7 +1882,7 @@ function renderProdutos() {
   }
   const linhas = _grupoProds.map((p, i) => {
     const pad    = getPadrao(p.nome);
-    const padTxt = pad !== null ? pad : '—';
+    const padTxt = _fmtQtd(pad);
     const pedIni = pad !== null ? Math.max(0, pad - 0) : '—';
     const semProd = !p.produto_id ? ' class="sem-prod"' : '';
     return `<tr>
@@ -1876,7 +1894,7 @@ function renderProdutos() {
           min="0" step="any" value="0" inputmode="decimal"
           oninput="calcPedido(${i})">
       </td>
-      ${isEL ? '' : `<td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${pedIni}</td>`}
+      ${isEL ? '' : `<td class="td-center td-ped${pedIni === 0 ? ' zero' : ''}" id="ped-${i}">${_fmtQtd(pedIni)}</td>`}
       ${isEL ? '' : `<td class="td-center td-loja" id="loja-${i}">…</td>`}
     </tr>`;
   }).join('');
@@ -1908,7 +1926,21 @@ async function _pintarSaldoLoja() {
   });
 }
 
-function parseQtd(v) { return parseFloat(String(v ?? '').replace(',', '.')) || 0; }
+// QUANTIDADE COM DUAS CASAS (04/11/2026): no que se digita, no que se grava e no que se
+// mostra. Cada tela formatava de um jeito (0,420 no Pedido, 0.42000000000000004 na tela
+// de Saldo do computador). Todo campo numerico desta tela e quantidade: ao digitar a
+// 3a casa, ela some. parseQtd arredonda em 2 casas o que vai para o banco.
+function _q2(v) { const n = Number(v); return Number.isFinite(n) ? Math.round((n + Math.sign(n) * 1e-9) * 100) / 100 : 0; }
+function parseQtd(v) { return _q2(parseFloat(String(v ?? '').replace(',', '.')) || 0); }
+function _fmtQtd(v) {
+  if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return '—';
+  return _q2(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+function _lim2(el) {
+  const m = String(el.value ?? '').match(/^(-?\d*)([.,])(\d{3,})$/);
+  if (m) el.value = m[1] + m[2] + m[3].slice(0, 2);
+}
+document.addEventListener('input', e => { if (e.target?.matches?.('input[type="number"]')) _lim2(e.target); }, true);
 
 function calcPedido(i) {
   const est    = parseQtd(document.getElementById(`est-${i}`)?.value);
@@ -1917,7 +1949,7 @@ function calcPedido(i) {
   if (!el) return;
   if (padrao === null) { el.textContent = '—'; el.className = 'td-center td-ped zero'; return; }
   const ped = Math.max(0, padrao - est);
-  el.textContent = ped % 1 === 0 ? String(ped) : ped.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  el.textContent = _fmtQtd(ped);
   el.className   = 'td-center td-ped' + (ped === 0 ? ' zero' : '');
 }
 
@@ -2279,12 +2311,12 @@ async function _blocoTransfMob() {
     .order('criado_em',{ascending:true}).limit(20);
   if (!peds?.length) return '';
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
-  const q = v => v == null ? '—' : Number(v).toLocaleString('pt-BR',{maximumFractionDigits:3});
+  const q = v => _fmtQtd(v);
   return `<div style="margin:.5rem 0 1rem"><div style="font-weight:700;color:#60a5fa;margin:0 .25rem .4rem">🔄 Chegando do Estoque Central (${peds.length})</div>` +
     peds.map(p => {
       const its = (itens||[]).filter(it => it.pedido_id === p.id);
       const rows = its.map(it => `<tr><td>${esc(it.nome)}</td><td>${q(it.qtd_liberada)}</td>
-        <td><input type="number" inputmode="decimal" min="0" step="any" data-transf-recebida-mob="${it.id}" value="${it.qtd_liberada ?? ''}"
+        <td><input type="number" inputmode="decimal" min="0" step="any" data-transf-recebida-mob="${it.id}" value="${it.qtd_liberada == null ? '' : _q2(it.qtd_liberada)}"
           style="width:70px;padding:.3rem;border-radius:6px;border:1px solid #475569;background:#0f172a;color:#fff;text-align:right"></td></tr>`).join('');
       return `<div class="ped-card" data-transf-card-mob="${p.id}" style="border:2px solid #3b82f6">
         <div class="ped-card-header"><div>
@@ -2423,7 +2455,7 @@ async function _transfDecidirContados(ped, itens, qtds, lugar, nomeLugar) {
   if (r.erro) return { erro: r.erro };
   const marcados = itens.filter(it => (qtds[it.id] ?? 0) > 0 && r.contados[it.produto_id]);
   if (!marcados.length) return { pular: new Set(), somados: new Set() };
-  const q = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const q = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
   const lista = marcados.map(it => {
     const m = r.contados[it.produto_id];
     return `<li><b>${esc(it.nome || '')}</b> ${q(qtds[it.id])} · ${m.tipo === 'ajuste' ? 'ajustado' : 'contado'} ${esc(_horaManaus(m.criado_em))}${m.responsavel ? ' por ' + esc(m.responsavel) : ''}</li>`;
@@ -2505,7 +2537,7 @@ function _cardPedEstoque(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
   const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">🚨 Emergência</span>' : '';
-  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td></tr>`).join('');
+  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
       <div>
@@ -2547,7 +2579,7 @@ function _cardMeusPedidos(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
   const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">🚨 Emergência</span>' : '';
-  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td><td>${it.qtd_recebida??'—'}</td></tr>`).join('');
+  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td><td>${_fmtQtd(it.qtd_recebida)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
       <div>
@@ -2598,15 +2630,15 @@ async function abrirLiberarPedido(id) {
     const est = estoqueMap[it.nome?.trim().toUpperCase()];
     const pad = getPad(it.nome||'');
     const sl  = saldoLoja && it.produto_id ? _fmtSaldoLoja(saldoLoja[it.produto_id]) : { txt: '—', neg: false };
-    const estFmt = est !== undefined ? est : '—';
+    const estFmt = _fmtQtd(est);
     const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:700' : 'color:#fd7e14;font-weight:700';
     return `<tr>
       <td style="font-size:.8rem">${esc(it.nome)}</td>
-      <td style="text-align:center;color:#6c757d;font-size:.8rem">${pad}</td>
+      <td style="text-align:center;color:#6c757d;font-size:.8rem">${typeof pad === 'number' ? _fmtQtd(pad) : pad}</td>
       <td style="text-align:center;font-size:.8rem;${sl.neg ? 'color:#dc3545;font-weight:700' : 'color:#6c757d'}">${sl.txt}</td>
       <td style="text-align:center;font-size:.8rem;${estCor}">${estFmt}</td>
-      <td style="text-align:center;font-size:.8rem">${it.qtd_pedida??'—'}</td>
-      <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${it.qtd_pedida??0}" min="0" step="any" inputmode="decimal" style="width:64px"></td>
+      <td style="text-align:center;font-size:.8rem">${_fmtQtd(it.qtd_pedida)}</td>
+      <td><input type="number" class="inp-modal" id="lib-${it.id}" value="${_q2(it.qtd_pedida??0)}" min="0" step="any" inputmode="decimal" style="width:64px"></td>
     </tr>`;
   }).join('');
 
@@ -2680,7 +2712,7 @@ async function _conferirQtdPedido(itens, setor, etapa) {
       if (v > 0) (hist[l.produto_id] = hist[l.produto_id] || []).push(v);
     }));
     const mediana = a => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-    const fmt = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+    const fmt = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 
     const avisos = [];
     alvo.forEach(i => {
@@ -2764,7 +2796,7 @@ async function abrirEditarPedidoMob(id) {
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
     <td>${esc(it.nome)}</td>
-    <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${it.qtd_pedida??0}" min="0" step="any" inputmode="decimal"></td>
+    <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${_q2(it.qtd_pedida??0)}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-editar-mob-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}${ped?.obs?' · '+esc(ped.obs):''}</div>
@@ -2797,8 +2829,8 @@ async function abrirReceberPedido(id) {
   _pedReceberLocal = ped?.local || null;
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
   const rows = (itens||[]).map(it=>`<tr>
-    <td>${esc(it.nome)}</td><td>${it.qtd_pedida??'—'}</td><td>${it.qtd_liberada??'—'}</td>
-    <td><input type="number" class="inp-modal" id="rec-${it.id}" value="${it.qtd_liberada??0}" min="0" step="any" inputmode="decimal"></td>
+    <td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td>
+    <td><input type="number" class="inp-modal" id="rec-${it.id}" value="${_q2(it.qtd_liberada??0)}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-receber-body').innerHTML = `
     <div class="modal-subtitulo">${esc(ped?.num_pedido||'—')} · ${esc(ped?.setor||'')} · ${ped?.data||''}</div>
@@ -2977,7 +3009,7 @@ async function _planoConfirmacao(pedidoId, itens) {
     _contouDepois(origem, pids, ped.liberado_em, null),
     destino ? _contouDepois(destino, pids, ped.liberado_em, ped) : new Set(),
   ]);
-  const fmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const fmt = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
   const movs = [], data = hojeLocal();
   for (const it of itens) {
     if (!it.produto_id) continue;
