@@ -8282,8 +8282,34 @@ function _pintarLocalReceb(doPedido = false) {
   }
 }
 
+// QUANTIDADE RECEBIDA FORA DO COMUM (04/11/2026) — mesma ideia da trava da contagem.
+// O normal aqui e o PEDIDO: de 01/08 a 03/11 entraram 11 itens 10x acima ou abaixo do
+// pedido e quase todos eram erro — agua 6 FD lancada 72 (unidade no lugar de fardo),
+// canela 0,2 kg lancada 2, saco 100 lancado 1000, coca zero 36 lancada 396. Comparar com
+// o historico de compras nao serve: emergencia compra 5 kg de acucar onde o normal e 90.
+// Pergunta ao marcar o ✓ (e o momento em que o item e conferido); Cancelar deixa o item
+// sem marcar para corrigir. So sugere numero quando ÷10/÷100/÷1000 bate com o pedido.
+function _conferirQtdReceb(nome, unidade, pedida, recebida) {
+  const p = Number(pedida) || 0, v = Number(recebida) || 0;
+  if (p <= 0 || v <= 0) return true;
+  const r = v / p;
+  if (r < 10 && r > 0.1) return true;
+  const fmt = n => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  const un = unidade ? ` ${unidade}` : '';
+  const sug = r >= 10 ? [10, 100, 1000].map(k => v / k).find(c => Math.abs(c - p) <= p * 0.1) : undefined;
+  return confirm(
+    `Confira a quantidade de ${nome}:\n\n` +
+    `Pedido: ${fmt(p)}${un}\nVocê digitou: ${fmt(v)}${un} (${r >= 10 ? fmt(Math.round(r)) + 'x o pedido' : 'bem menos que o pedido'})\n\n` +
+    (sug !== undefined ? `Não seria ${fmt(sug)}${un}?\n\n` : `Confira se a nota está na mesma unidade do pedido (${unidade || 'Un.'}).\n\n`) +
+    `Se a quantidade está certa, aperte OK.\nPara corrigir, aperte Cancelar e troque o número.`
+  );
+}
+
 async function togIncluirReceb(id) {
   const btn = document.getElementById(`inc-rec-${id}`);
+  const _it = (_recebItensAbertos || []).find(x => String(x.id) === String(id));
+  if (!btn.classList.contains('checked') && _it && !_conferirQtdReceb(_it.produto, _it.unidade_med, _it.quantidade,
+      parseFloat(document.getElementById(`qtd-rec-${id}`)?.value))) return;
   btn.classList.toggle('checked');
   calcTotalReceb();
   // Marcar = conferido: grava na hora e trava a linha. Desmarcar = desfazer.
