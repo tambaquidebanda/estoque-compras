@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulação na TV</title>
+<script src="/__teste__/estado.js"></script>
+<style>
+  :root {
+    --fundo: #14181d; --painel: #1e242b; --borda: #313a44; --txt: #eef2f5; --txt2: #9aa7b3;
+    --laranja: #e8590c; --verde: #2f9e44;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--fundo); color: var(--txt);
+    font: 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  header { height: 58px; display: flex; align-items: center; gap: 14px; padding: 0 20px;
+    background: var(--painel); border-bottom: 3px solid var(--laranja); }
+  header h1 { font-size: 19px; margin: 0; font-weight: 800; letter-spacing: .01em; white-space: nowrap; }
+  .selo { background: var(--laranja); color: #fff; font-weight: 800; font-size: 12px; letter-spacing: .08em;
+    padding: 4px 9px; border-radius: 5px; }
+  .copia { color: var(--txt2); font-size: 13px; white-space: nowrap; }
+  .ctrl { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+  .grupo { display: flex; align-items: center; gap: 4px; background: var(--fundo); border: 1px solid var(--borda);
+    border-radius: 8px; padding: 3px; }
+  .grupo span { color: var(--txt2); font-size: 13px; padding: 0 6px; white-space: nowrap; }
+  button, input, select { font: inherit; color: var(--txt); }
+  button { background: transparent; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: var(--borda); }
+  button.on { background: var(--laranja); color: #fff; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--laranja); outline-offset: 2px; }
+  input[type=date] { background: var(--painel); border: 1px solid var(--borda); border-radius: 6px; padding: 3px 6px; color-scheme: dark; }
+  .perigo { border: 1px solid #c92a2a; color: #ffa8a8; }
+  .perigo:hover { background: #c92a2a; color: #fff; }
+
+  main { height: calc(100% - 58px); display: flex; justify-content: center; align-items: center; gap: var(--gap, 36px); padding: 10px 20px 14px; }
+  .cel { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .topo { display: flex; align-items: center; gap: 8px; }
+  .topo input { width: 210px; background: transparent; border: 0; border-bottom: 1px dashed var(--borda);
+    font-size: 20px; font-weight: 800; text-align: center; padding: 2px 4px; }
+  .topo select { background: var(--painel); border: 1px solid var(--borda); border-radius: 7px; padding: 4px 6px; }
+  .topo button { border: 1px solid var(--borda); padding: 4px 9px; }
+  .moldura-caixa { position: relative; }
+  .moldura { position: absolute; top: 0; left: 0; transform-origin: top left; width: 414px; height: 868px;
+    background: #000; border-radius: 46px; padding: 12px; box-shadow: 0 0 0 2px #3b4652, 0 18px 50px rgba(0,0,0,.55); }
+  .moldura iframe { width: 390px; height: 844px; border: 0; border-radius: 34px; background: #fff; display: block; }
+</style>
+</head>
+<body>
+<header>
+  <span class="selo">TESTE</span>
+  <h1>Contagem, pedidos e recebimento</h1>
+  <span class="copia" id="copia"></span>
+  <div class="ctrl">
+    <div class="grupo"><span>Celulares</span>
+      <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button>
+    </div>
+    <div class="grupo"><span>Tamanho</span>
+      <button id="menos" aria-label="Diminuir">−</button><button id="mais" aria-label="Aumentar">+</button>
+    </div>
+    <div class="grupo"><span>Data simulada</span>
+      <input type="date" id="data"><button id="real">hoje de verdade</button>
+    </div>
+    <button class="perigo" id="zero">Recomeçar do zero</button>
+  </div>
+</header>
+<main id="palco"></main>
+
+<script>
+const TELAS = [
+  { arq: 'contagem.html',    nome: 'Contagem e pedidos' },
+  { arq: 'recebimento.html', nome: 'Recebimento de compras' },
+];
+const PADRAO = [
+  { rotulo: 'Cozinha / Bar', tela: 'contagem.html' },
+  { rotulo: 'Estoque',       tela: 'contagem.html' },
+  { rotulo: 'Recebimento',   tela: 'recebimento.html' },
+];
+const ler = (k, d) => { try { const v = JSON.parse(localStorage.getItem('tv_' + k)); return v ?? d; } catch (e) { return d; } };
+const gravar = (k, v) => { try { localStorage.setItem('tv_' + k, JSON.stringify(v)); } catch (e) {} };
+
+let n = ler('n', 2), zoom = ler('zoom', 1), cels = ler('cels', PADRAO);
+if (!Array.isArray(cels) || cels.length < 3) cels = PADRAO;
+
+const info = window.__TESTE_INFO__ || {}, hoje = window.__HOJE_TESTE__ || '';
+document.getElementById('copia').textContent = info.copiado_em
+  ? 'dados copiados em ' + info.copiado_em.slice(8,10) + '/' + info.copiado_em.slice(5,7) + ' ' + info.copiado_em.slice(11,16) : '';
+const inpData = document.getElementById('data');
+inpData.value = hoje;
+
+const palco = document.getElementById('palco');
+
+function montar() {
+  palco.innerHTML = '';
+  document.querySelectorAll('[data-n]').forEach(b => b.classList.toggle('on', +b.dataset.n === n));
+  for (let i = 0; i < n; i++) {
+    const c = cels[i];
+    const el = document.createElement('section');
+    el.className = 'cel';
+    el.innerHTML = `
+      <div class="topo">
+        <input value="" aria-label="Nome deste celular">
+        <select aria-label="Tela">${TELAS.map(t => `<option value="${t.arq}">${t.nome}</option>`).join('')}</select>
+        <button title="Recarregar este celular">↻</button>
+      </div>
+      <div class="moldura-caixa"><div class="moldura"><iframe title="Celular ${i + 1}"></iframe></div></div>`;
+    const [inp, sel, rec] = [el.querySelector('input'), el.querySelector('select'), el.querySelector('button')];
+    const fr = el.querySelector('iframe');
+    inp.value = c.rotulo; sel.value = c.tela;
+    fr.src = '/' + c.tela;
+    inp.oninput = () => { c.rotulo = inp.value; gravar('cels', cels); };
+    sel.onchange = () => { c.tela = sel.value; gravar('cels', cels); fr.src = '/' + c.tela; };
+    rec.onclick = () => { fr.src = '/' + c.tela; };
+    palco.appendChild(el);
+  }
+  ajustar();
+}
+
+function ajustar() {
+  const gap = 36, topo = 46;
+  const alt = palco.clientHeight - 24 - topo, larg = palco.clientWidth - 40 - gap * (n - 1);
+  let s = Math.min(alt / 868, larg / n / 414) * zoom;
+  s = Math.max(.4, s);
+  palco.style.setProperty('--gap', gap + 'px');
+  palco.querySelectorAll('.moldura-caixa').forEach(cx => {
+    cx.style.width = (414 * s) + 'px'; cx.style.height = (868 * s) + 'px';
+    cx.firstElementChild.style.transform = `scale(${s})`;
+  });
+}
+
+document.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { n = +b.dataset.n; gravar('n', n); montar(); });
+document.getElementById('mais').onclick  = () => { zoom = Math.min(1.6, zoom + .08); gravar('zoom', zoom); ajustar(); };
+document.getElementById('menos').onclick = () => { zoom = Math.max(.5, zoom - .08); gravar('zoom', zoom); ajustar(); };
+const post = (url, corpo) => fetch(url, { method: 'POST', body: JSON.stringify(corpo || {}) }).then(() => location.reload());
+inpData.onchange = () => post('/__teste__/data', { hoje: inpData.value || null });
+document.getElementById('real').onclick = () => post('/__teste__/data', { hoje: null });
+document.getElementById('zero').onclick = () => {
+  if (confirm('Apagar tudo o que foi feito na simulação e voltar à cópia original dos dados?')) post('/__teste__/recomecar');
+};
+addEventListener('resize', ajustar);
+// login feito (ou saiu) num celular: os outros recarregam para entrar junto
+addEventListener('storage', e => {
+  if (!/^sb-.*auth-token$/.test(e.key || '') || !!e.oldValue === !!e.newValue) return;
+  setTimeout(() => document.querySelectorAll('#palco iframe').forEach(f => { f.src = f.src; }), 600);
+});
+montar();
+</script>
+</body>
+</html>

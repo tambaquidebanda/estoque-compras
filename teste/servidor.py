@@ -457,6 +457,8 @@ def _estado_js():
 
 BARRA_JS = r"""
 (function(){
+  // dentro da tela da TV (/tv) cada celular e um iframe: a barra fica so no topo da TV
+  try { if (window.top !== window && window.top.location.pathname.indexOf('/tv') === 0) return; } catch (e) {}
   const h = window.__HOJE_TESTE__, info = window.__TESTE_INFO__ || {};
   const b = document.createElement('div');
   b.id = 'barra-teste';
@@ -570,6 +572,8 @@ class H(BaseHTTPRequestHandler):
         p = urllib.parse.unquote(u.path)
         if p in ('', '/'):
             p = '/index.html'
+        if p in ('/tv', '/tv.html'):   # celulares lado a lado para projetar na TV
+            return self._env(200, open(os.path.join(AQUI, 'tv.html'), encoding='utf-8').read(), 'text/html')
         if p == '/supabase.js':
             return self._env(200, SUPABASE_JS, 'application/javascript')
         caminho = os.path.normpath(os.path.join(RAIZ, p.lstrip('/')))
@@ -708,6 +712,7 @@ def main():
     print(' AMBIENTE DE TESTE - nada aqui toca o banco de verdade')
     print(f'  Computador: http://localhost:{PORTA}')
     print(f'  Tablet (mesmo Wi-Fi): http://{ip}:{PORTA}/producao.html')
+    print(f'  TV (celulares lado a lado): http://localhost:{PORTA}/tv')
     print('  Login: seu e-mail de sempre, qualquer senha')
     print('=' * 64)
     sys.stdout.flush()
