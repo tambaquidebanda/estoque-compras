@@ -60,7 +60,6 @@
     <div class="grupo"><span>Data simulada</span>
       <input type="date" id="data"><button id="real">hoje de verdade</button>
     </div>
-    <button class="perigo" id="zero">Recomeçar do zero</button>
   </div>
 </header>
 <main id="palco"></main>
@@ -133,9 +132,8 @@ document.getElementById('menos').onclick = () => { zoom = Math.max(.5, zoom - .0
 const post = (url, corpo) => fetch(url, { method: 'POST', body: JSON.stringify(corpo || {}) }).then(() => location.reload());
 inpData.onchange = () => post('/__teste__/data', { hoje: inpData.value || null });
 document.getElementById('real').onclick = () => post('/__teste__/data', { hoje: null });
-document.getElementById('zero').onclick = () => {
-  if (confirm('Apagar tudo o que foi feito na simulação e voltar à cópia original dos dados?')) post('/__teste__/recomecar');
-};
+// "Recomecar do zero" saiu da TV (05/11): apagou a simulacao no meio do ensaio. Para zerar:
+// a barra laranja de http://localhost:8092/contagem.html (fora da TV) ainda tem o botao.
 addEventListener('resize', ajustar);
 // login feito (ou saiu) num celular: os outros recarregam para entrar junto
 addEventListener('storage', e => {
