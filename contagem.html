@@ -57,57 +57,57 @@
     /* ── PRINCIPAL ── */
     #tela-principal { display: none; flex-direction: column; height: 100dvh; overflow: hidden; }
 
-    /* ── CABEÇALHO ── */
+    /* ── CABEÇALHO (05/11: estilo iPhone — segmentado para unidade e dia) ── */
     #cabecalho {
       background: var(--card); border-bottom: 1px solid var(--borda);
-      padding: .6rem 1rem; flex-shrink: 0;
+      padding: .55rem .9rem .65rem; flex-shrink: 0;
     }
-    .cab-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
-    .cab-topo img { height: 28px; }
+    .cab-topo { display: flex; align-items: center; gap: .55rem; margin-bottom: .6rem; }
+    .cab-topo img { height: 26px; margin-right: auto; }
+    .cab-user { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--txt); font-weight: 600; }
+    .cab-avatar {
+      width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+      background: linear-gradient(160deg, #3fd9c9, #1f9e92); color: #fff; font-size: .75rem; font-weight: 800;
+    }
     .btn-sair {
-      background: none; border: 1px solid var(--borda); color: var(--txt2);
-      border-radius: 8px; padding: .3rem .7rem; font-size: .78rem; cursor: pointer;
+      background: rgba(255,255,255,.06); border: 0; color: var(--txt2);
+      border-radius: 999px; padding: .3rem .75rem; font-size: .76rem; font-weight: 600; cursor: pointer;
     }
-    .local-pills { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; margin-bottom: .5rem; }
+    .segmentado {
+      display: flex; gap: 2px; padding: 2px; border-radius: 10px;
+      background: rgba(118,118,128,.24);
+    }
+    .local-pills { margin-bottom: .55rem; }
     .pill {
-      flex: 1; text-align: center; padding: .45rem; border-radius: 8px;
-      border: 1px solid var(--borda); color: var(--txt2); font-size: .82rem;
-      font-weight: 600; cursor: pointer; background: var(--inp); transition: all .15s;
+      flex: 1; text-align: center; padding: .42rem .3rem; border-radius: 8px;
+      color: var(--txt); font-size: .8rem; font-weight: 600; cursor: pointer;
+      white-space: nowrap; transition: background .18s, box-shadow .18s; user-select: none;
     }
-    .pill.ativo { background: var(--verde); border-color: var(--verde); color: #fff; }
-    .info-linha {
-      display: flex; align-items: center; gap: .5rem;
-      font-size: .76rem; color: var(--txt2); margin-bottom: .45rem;
+    .pill.ativo { background: #5b6170; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+    .info-linha { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+    #cabecalho .data-inp {
+      width: auto; margin: 0; padding: .3rem .6rem; border: 0; border-radius: 8px;
+      background: rgba(118,118,128,.24); color: var(--txt); font-size: .82rem; font-weight: 600;
+      font-family: inherit; color-scheme: dark; -webkit-appearance: none;
     }
-    .info-linha strong { color: var(--txt); }
-    .data-inp {
-      background: var(--inp); border: 1px solid var(--borda); border-radius: 6px;
-      color: var(--txt); font-size: .76rem; padding: .18rem .45rem;
-      margin: 0; -webkit-appearance: none; width: auto;
-    }
-    .data-inp:focus { border-color: var(--verde); outline: none; }
-    .sep { color: var(--borda); }
-    /* Day selector */
-    .dias-wrap {
-      display: flex; gap: .3rem; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none; padding-bottom: 2px;
-    }
-    .dias-wrap::-webkit-scrollbar { display: none; }
-    .dia-btn {
-      flex-shrink: 0; background: var(--inp); border: 1px solid var(--borda);
-      border-radius: 7px; color: var(--txt2); font-size: .72rem; font-weight: 700;
-      padding: .3rem .55rem; cursor: pointer; transition: all .15s;
-    }
-    .dia-btn.ativo { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .data-rot { font-size: .72rem; color: var(--txt2); font-weight: 600; letter-spacing: .02em; }
     .feriado-btn {
-      flex-shrink: 0; background: var(--inp); border: 1px solid var(--borda);
-      border-radius: 7px; color: var(--txt2); font-size: .72rem; font-weight: 700;
-      padding: .3rem .6rem; cursor: pointer; transition: all .15s;
+      margin-left: auto; background: rgba(118,118,128,.24); border: 0; border-radius: 999px;
+      color: var(--txt2); font-size: .76rem; font-weight: 700; padding: .32rem .75rem; cursor: pointer;
+      transition: background .15s, color .15s;
     }
-    .feriado-btn.ativo { background: #ffc107; border-color: #ffc107; color: #000; }
+    .feriado-btn.ativo { background: #ffc107; color: #000; }
+    .dias-wrap { display: flex; }
+    .dia-btn {
+      flex: 1; background: transparent; border: 0; border-radius: 8px;
+      color: var(--txt2); font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+      padding: .38rem 0; cursor: pointer; transition: background .18s, color .18s;
+    }
+    .dia-btn.ativo { background: var(--verde); color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
 
     /* Dentro do setor o cabecalho (unidade, data, dia) recolhe num botao na linha do setor:
        sobra a tela para os produtos. O aviso vermelho de unidade continua aparecendo. */
+    #tela-principal:not(.em-setor) #rodape-contagem { display: none !important; }
     #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #cabecalho { padding: 0; border-bottom: 0; }
     #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #cabecalho > :not(#aviso-unidade) { display: none; }
     #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #aviso-unidade { margin: .4rem .6rem; }
@@ -124,21 +124,45 @@
     /* ── VIEW CONTAGEM ── */
     #view-contagem { display: block; }
     .section-titulo {
-      font-size: .7rem; font-weight: 700; color: var(--txt2);
+      font-size: .72rem; font-weight: 700; color: var(--txt2);
       letter-spacing: .08em; text-transform: uppercase;
-      padding: .9rem 1rem .5rem;
+      padding: 1.1rem 1.25rem .6rem;
     }
+    /* Setores como icones de iPhone: quadrado arredondado com degrade, simbolo branco, nome embaixo */
     .setor-grid {
-      display: grid; grid-template-columns: repeat(2, 1fr);
-      gap: .65rem; padding: 0 1rem 1rem;
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      row-gap: 1.15rem; column-gap: .5rem; padding: .2rem 1rem 1.2rem;
     }
     .setor-btn {
-      background: var(--card); border: 1px solid var(--borda);
-      border-radius: 14px; color: var(--txt); font-size: .95rem; font-weight: 600;
-      padding: 1.25rem .5rem; cursor: pointer; text-align: center;
-      line-height: 1.5; transition: all .15s;
+      background: none; border: 0; color: var(--txt); cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: .45rem;
+      font-size: .78rem; font-weight: 600; letter-spacing: .01em; padding: .2rem 0;
+      -webkit-tap-highlight-color: transparent;
     }
-    .setor-btn:active { background: var(--verde); border-color: var(--verde); }
+    .app-ico {
+      width: 64px; height: 64px; border-radius: 15px; display: grid; place-items: center;
+      background: linear-gradient(160deg, var(--c1), var(--c2));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 -2px 6px rgba(0,0,0,.12),
+                  0 8px 18px -8px var(--c2);
+      transition: transform .15s ease, filter .15s ease;
+    }
+    .app-ico svg { width: 32px; height: 32px; stroke: #fff; fill: none; stroke-width: 1.9;
+      stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1px rgba(0,0,0,.18)); }
+    .setor-btn:active .app-ico, .estoque-card:active .app-ico { transform: scale(.9); filter: brightness(.9); }
+    .setor-btn:focus-visible, .estoque-card:focus-visible { outline: 2px solid var(--verde); outline-offset: 3px; border-radius: 14px; }
+    /* Estoque: cartao largo (estilo widget) */
+    .estoque-card {
+      grid-column: 1 / -1; margin-top: .3rem; display: flex; align-items: center; gap: .9rem;
+      background: var(--card); border: 1px solid var(--borda); border-radius: 18px;
+      padding: .8rem .95rem; color: var(--txt); cursor: pointer; text-align: left;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .estoque-card .app-ico { width: 52px; height: 52px; border-radius: 12px; flex-shrink: 0; }
+    .estoque-card .app-ico svg { width: 27px; height: 27px; }
+    .estoque-card b { display: block; font-size: .98rem; }
+    .estoque-card small { display: block; color: var(--txt2); font-size: .76rem; margin-top: .12rem; }
+    .estoque-card .seta { margin-left: auto; color: var(--txt2); font-size: 1.4rem; line-height: 1; }
+    @media (prefers-reduced-motion: reduce) { .app-ico, .pill, .dia-btn { transition: none; } }
 
     /* Breadcrumb + grupos */
     .breadcrumb-bar {
@@ -225,17 +249,19 @@
 
     /* ── BOTTOM NAV ── */
     .bottom-nav {
-      display: flex; background: var(--card);
+      display: flex; background: rgba(36,41,56,.96);
       border-top: 1px solid var(--borda); flex-shrink: 0;
       padding-bottom: env(safe-area-inset-bottom);
     }
     .nav-btn {
-      flex: 1; display: flex; flex-direction: row; align-items: center;
-      justify-content: center; gap: .4rem; background: none; border: none;
-      color: var(--txt2); font-size: .78rem; font-weight: 600;
-      padding: .5rem; cursor: pointer; transition: color .15s;
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: .15rem; background: none; border: none;
+      color: var(--txt2); font-size: .66rem; font-weight: 600;
+      padding: .4rem .5rem .3rem; cursor: pointer; transition: color .15s;
+      -webkit-tap-highlight-color: transparent;
     }
-    .nav-btn .nav-icon { font-size: 1rem; line-height: 1; }
+    .nav-btn .nav-icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.9;
+      stroke-linecap: round; stroke-linejoin: round; }
     .nav-btn.ativo { color: var(--verde); }
 
     /* ── VIEW PEDIDOS ── */
@@ -448,23 +474,23 @@
   <header id="cabecalho">
     <div class="cab-topo">
       <img src="logo.png" alt="Tambaqui">
+      <span class="cab-user"><span class="cab-avatar" id="cab-avatar" aria-hidden="true"></span><span id="exibe-resp">—</span></span>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
-    <div class="local-pills">
-      <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">📍 Centro</div>
-      <div class="pill" data-local="Delivery P10" onclick="escolherLocal('Delivery P10')">🛵 Delivery P10</div>
-      <div class="pill" data-local="Estoque Central" onclick="escolherLocal('Estoque Central')">🏭 Est. Central</div>
-      <div class="pill" data-local="Produção" onclick="escolherLocal('Produção')">🍳 Produção</div>
+    <div class="local-pills segmentado" role="tablist" aria-label="Unidade">
+      <div class="pill ativo" data-local="Centro" onclick="selecionarLocal('Centro')">Centro</div>
+      <div class="pill" data-local="Delivery P10" onclick="escolherLocal('Delivery P10')">Delivery P10</div>
+      <div class="pill" data-local="Estoque Central" onclick="escolherLocal('Estoque Central')">Est. Central</div>
+      <div class="pill" data-local="Produção" onclick="escolherLocal('Produção')">Produção</div>
     </div>
     <div id="aviso-unidade" style="display:none;background:#dc2626;color:#fff;font-weight:700;
          text-align:center;padding:.5rem;border-radius:8px;margin-bottom:.5rem;font-size:.85rem"></div>
     <div class="info-linha">
-      <span>📅</span>
+      <span class="data-rot">Data</span>
       <input type="date" id="data-inv" class="data-inp">
-      <span class="sep">|</span>
-      <span>👤 <strong id="exibe-resp">—</strong></span>
+      <button class="feriado-btn" id="btn-feriado" onclick="toggleFeriado()">Feriado</button>
     </div>
-    <div class="dias-wrap">
+    <div class="dias-wrap segmentado" aria-label="Dia do padrão">
       <button class="dia-btn" data-dia="seg" onclick="setDia('seg')">SEG</button>
       <button class="dia-btn" data-dia="ter" onclick="setDia('ter')">TER</button>
       <button class="dia-btn" data-dia="qua" onclick="setDia('qua')">QUA</button>
@@ -472,7 +498,6 @@
       <button class="dia-btn" data-dia="sex" onclick="setDia('sex')">SEX</button>
       <button class="dia-btn" data-dia="sab" onclick="setDia('sab')">SAB</button>
       <button class="dia-btn" data-dia="dom" onclick="setDia('dom')">DOM</button>
-      <button class="feriado-btn" id="btn-feriado" onclick="toggleFeriado()">🎉 Feriado</button>
     </div>
   </header>
 
@@ -483,16 +508,8 @@
     <div id="view-contagem">
       <!-- Setor grid -->
       <div id="setor-grid">
-        <div class="section-titulo">Selecione o Setor</div>
-        <div class="setor-grid">
-          <button class="setor-btn" onclick="pedirPinSetor('CHURRASQUEIRA')">🔥<br>Churrasqueira</button>
-          <button class="setor-btn" onclick="pedirPinSetor('COZINHA')">🍳<br>Cozinha</button>
-          <button class="setor-btn" onclick="pedirPinSetor('BAR')">🍹<br>Bar</button>
-          <button class="setor-btn" onclick="pedirPinSetor('SALAO')">🪑<br>Salão</button>
-          <button class="setor-btn" onclick="pedirPinSetor('ASG')">🧹<br>ASG</button>
-          <button class="setor-btn" onclick="pedirPinSetor('DELIVERY')">🛵<br>Delivery</button>
-          <button class="setor-btn" onclick="pedirPinEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">🏪<br>Estoque da Loja</button>
-        </div>
+        <div class="section-titulo">Toque no seu setor</div>
+        <div class="setor-grid"></div>
       </div>
 
       <!-- Grupos + Produtos -->
@@ -585,10 +602,10 @@
   <!-- Bottom Nav -->
   <nav class="bottom-nav">
     <button class="nav-btn ativo" id="nav-contagem" onclick="showMainTab('contagem')">
-      <span class="nav-icon">📋</span><span>Contagem</span>
+      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg><span>Contagem</span>
     </button>
     <button class="nav-btn" id="nav-pedidos" onclick="showMainTab('pedidos')">
-      <span class="nav-icon">📦</span><span>Pedidos</span>
+      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 2.004 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/></svg><span>Pedidos</span>
     </button>
   </nav>
 </div>
@@ -1255,6 +1272,7 @@ async function entrar() {
   document.getElementById('tela-principal').style.display = 'flex';
   const nome = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
   document.getElementById('exibe-resp').textContent = nome;
+  const av = document.getElementById('cab-avatar'); if (av) av.textContent = (String(nome || '?').trim()[0] || '?').toUpperCase();
   await Promise.all([carregarProdutos(), carregarMapeamentos()]);
   // Abre no Centro — NÃO restaura a última unidade (ver _LOCAIS_MOB). O login com
   // unidade marcada (celular do P10) abre direto nela e fica nela.
@@ -1373,6 +1391,36 @@ const _SETORES_BTN_MOB = [
   ['CHURRASQUEIRA', '🔥', 'Churrasqueira'], ['COZINHA', '🍳', 'Cozinha'], ['BAR', '🍹', 'Bar'],
   ['SALAO', '🪑', 'Salão'], ['ASG', '🧹', 'ASG'], ['DELIVERY', '🛵', 'Delivery'],
 ];
+// Icones dos setores (desenho de linha, branco sobre degrade — estilo icone de iPhone)
+const _ICO = {
+  fogo:    '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+  chef:    '<path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.457.316-.844.727-1.041a4 4 0 0 0-2.134-7.589 5 5 0 0 0-9.186 0 4 4 0 0 0-2.134 7.588c.411.198.727.585.727 1.041V20a1 1 0 0 0 1 1Z"/><path d="M6 17h12"/>',
+  drink:   '<path d="M8 22h8"/><path d="M12 11v11"/><path d="m19 3-7 8-7-8Z"/>',
+  cadeira: '<path d="M19 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v3"/><path d="M3 16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v1.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V11a2 2 0 0 0-4 0z"/><path d="M5 18v2"/><path d="M19 18v2"/>',
+  brilho:  '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/>',
+  moto:    '<circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/>',
+  copo:    '<path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8"/><path d="M5 8h14"/><path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/><path d="m12 8 1-6h2"/>',
+  gotas:   '<path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z"/><path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/>',
+  sorvete: '<path d="m7 11 4.08 10.35a1 1 0 0 0 1.84 0L17 11"/><path d="M17 7A5 5 0 0 0 7 7"/><path d="M17 7a2 2 0 0 1 0 4H7a2 2 0 0 1 0-4"/>',
+  caixa:   '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 2.004 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/>',
+  galpao:  '<path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/><path d="M6 18h12"/><path d="M6 14h12"/><rect width="12" height="12" x="6" y="10"/>',
+  fabrica: '<path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/>',
+  panela:  '<path d="M2 12h20"/><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="m4 8 16-4"/><path d="m8.86 6.78-.45-1.81a2 2 0 0 1 1.45-2.43l1.94-.48a2 2 0 0 1 2.43 1.46l.45 1.8"/>',
+};
+// setor -> [icone, cor de cima, cor de baixo]
+const _ICO_SETOR = {
+  'CHURRASQUEIRA': ['fogo', '#ffa24c', '#f0532d'],  'COZINHA': ['chef', '#ffd25e', '#f29a0c'],
+  'BAR': ['drink', '#c58cff', '#7c4dff'],            'SALAO': ['cadeira', '#6fb3ff', '#2f6bf0'],
+  'ASG': ['brilho', '#5ee3cf', '#119e8d'],           'DELIVERY': ['moto', '#ff7d93', '#e0264d'],
+  'BEBIDAS': ['copo', '#62d2ff', '#1689e0'],         'MATERIAL DE LIMPEZA': ['gotas', '#5ee3cf', '#119e8d'],
+  'SOBREMESAS': ['sorvete', '#ff9ccf', '#e0479a'],   'DESCARTAVEL': ['caixa', '#b9c3d6', '#6b7a96'],
+  'ESTOQUE DA LOJA': ['galpao', '#5fe08e', '#17a34a'], 'ESTOQUE DELIVERY': ['caixa', '#5fe08e', '#17a34a'],
+  'ESTOQUE CENTRAL': ['fabrica', '#5fe08e', '#17a34a'], 'PRODUCAO': ['panela', '#5fe08e', '#17a34a'],
+};
+function _icoSetor(setor) {
+  const [ico, c1, c2] = _ICO_SETOR[setor] || ['caixa', '#9aa6bd', '#5b6880'];
+  return `<span class="app-ico" style="--c1:${c1};--c2:${c2}"><svg viewBox="0 0 24 24" aria-hidden="true">${_ICO[ico]}</svg></span>`;
+}
 function _renderSetorGrid() {
   const grid = document.querySelector('#setor-grid .setor-grid');
   if (!grid) return;
@@ -1387,9 +1435,11 @@ function _renderSetorGrid() {
     lista.push([k, e, r]);
   });
   const setores = est.unico ? '' : lista.map(([k, e, r]) =>
-    `<button class="setor-btn" onclick="pedirPinSetor('${esc(k)}')">${e}<br>${esc(r)}</button>`).join('');
+    `<button class="setor-btn" onclick="pedirPinSetor('${esc(k)}')">${_icoSetor(k)}<span>${esc(r)}</span></button>`).join('');
+  const sub = _LOCAIS_SEM_CONTAGEM.includes(est.local) ? 'Contagem com a senha da gerência'
+            : est.unico ? 'Contagem do estoque' : 'Contagem do estoque da unidade';
   grid.innerHTML = setores +
-    `<button class="setor-btn" onclick="pedirPinEstoqueLoja()" style="grid-column:1/-1;background:#1a2f1a;border-color:#2d5a2d;color:#4ade80">${est.emoji}<br>${est.nome}</button>`;
+    `<button class="estoque-card" onclick="pedirPinEstoqueLoja()">${_icoSetor(est.setor)}<span><b>${esc(est.nome)}</b><small>${sub}</small></span><span class="seta" aria-hidden="true">›</span></button>`;
 }
 
 function escolherLocal(l) {
