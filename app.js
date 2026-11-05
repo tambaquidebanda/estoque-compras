@@ -7117,7 +7117,7 @@ async function _planCarregar() {
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
     _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data',
       q => q.eq('tipo', 'pedido_interno_saida').in('local', locaisSaida).gte('data', vIni).lt('data', _isoMais(vFim, 1))),
-    _metaSelect('cmp_compras', 'data,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
+    _metaSelect('cmp_compras', 'data,data_entrega,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
     _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data', q => q.eq('tipo', 'recebimento').gte('data', segunda)),
   ]);
@@ -7267,7 +7267,7 @@ function _planBase(un) {
   });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
   const C = _planCompras(D.compras, un, D.hoje, p);
-  const { pedido, pedidoDet, comprado } = C;
+  const { pedido, pedidoDet, pedidoChega, comprado } = C;
   // ── linhas ──
   const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
   Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
@@ -7295,7 +7295,7 @@ function _planBase(un) {
     return {
       consDow, chegou: chegou[pid] || {},
       ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta, C });
@@ -7308,7 +7308,7 @@ function _planCompras(compras, un, hoje, p) {
   const fin = _PLAN_UNI_FIN[un];
   const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
   const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
-  const pedido = {}, pedidoDet = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
+  const pedido = {}, pedidoDet = {}, pedidoChega = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
   const uso = {};        // { pid: { forn: { n: pedidos distintos, ped: Set, fornId, data } } } da unidade
   const historico = {};  // { pid: { forn: fornId } } quem já vendeu este produto (180 dias, qualquer unidade)
   [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
@@ -7317,7 +7317,11 @@ function _planCompras(compras, un, hoje, p) {
     if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
       const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
       pedido[pid] = (pedido[pid] || 0) + q;
-      (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})`);
+      // chega no dia da entrega do pedido; sem data ou atrasado (nao recebido) conta como hoje
+      const dia = c.data_entrega && c.data_entrega > hoje ? c.data_entrega : hoje;
+      if (q > 0) (pedidoChega[pid] ||= []).push({ dia, q });
+      (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})` + (c.data_entrega
+        ? (c.data_entrega > hoje ? ` · chega ${_planDiaTxt(c.data_entrega)}` : c.data_entrega < hoje ? ` · era para ${_ddmm(c.data_entrega)}, conta como hoje` : ' · chega hoje') : ''));
     }
     if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
       comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
@@ -7337,7 +7341,7 @@ function _planCompras(compras, un, hoje, p) {
   });
   const catDaCategoria = {};
   Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
-  return { pedido, pedidoDet, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
+  return { pedido, pedidoDet, pedidoChega, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
 }
 
 // Fornecedor sugerido de um produto (Wagner, 28/10/2026: o último fornecedor errava quando
@@ -7463,14 +7467,12 @@ function _planConta(un, l) {
     const depois = _fornProxEntrega(l.fornId, chega);
     if (depois) dias = Math.round((new Date(depois + 'T12:00:00') - new Date(chega + 'T12:00:00')) / 864e5);
   }
-  const { antes, cobre, precisa, falta, auto } = _planCobertura(un, l, nAntes, dias);
+  const { antes, cobre, precisa, falta, auto, sobra, sobraSem, minAntes } = _planCobertura(un, l, nAntes, dias);
   const troca = _planPedir[un]?.[l.pid];
   const pedir = troca ?? auto;
   // O que sobra no fim do último dia coberto SEM o pedido de hoje e JÁ com a margem (Wagner,
   // 29/10/2026: o número bate com o "Falta" da conta). Negativo = o que falta.
   // sobraSem = sem a margem: decide a etiqueta "só pela margem"
-  const sobra = l.tem + l.pedido - precisa;
-  const sobraSem = l.tem + l.pedido - antes - cobre;
   const marcado = _planMarca[un]?.[l.pid] ?? (auto > 0);
   // Dura: dia a dia, com a média de cada dia da semana, até o estoque + já pedido acabar.
   // Com a margem a partir do dia que o pedido chega — a mesma conta do Precisa, para a data,
@@ -7478,26 +7480,44 @@ function _planConta(un, l) {
   const fm = 1 + _planMargem(un);
   let dura = null;
   if (l.consDia > 0) {
-    let resto = l.tem + l.pedido; dura = 0;
-    while (dura < 120) { const q = _planConsDe(l, _isoMais(hoje, dura)) * (dura >= nAntes ? fm : 1); if (resto < q) { dura += q > 0 ? resto / q : 0; break; } resto -= q; dura++; }
+    let resto = l.tem; dura = 0;
+    while (dura < 120) { const d = _isoMais(hoje, dura); resto += _planChegaDia(l, d); const q = _planConsDe(l, d) * (dura >= nAntes ? fm : 1); if (resto < q) { dura += q > 0 ? resto / q : 0; break; } resto -= q; dura++; }
   }
-  // Acaba antes do pedido de hoje chegar: o estoque não aguenta (o já pedido conta)
-  const naoChega = nAntes > 0 && l.consDia > 0 && l.tem + l.pedido < antes - 1e-9;
-  return { dias, nAntes, chega, tipo, antes, cobre, horiz: nAntes + dias, dura, naoChega,
+  // Acaba antes do pedido de hoje chegar: o estoque não aguenta (o já pedido conta no dia em que chega)
+  const naoChega = nAntes > 0 && l.consDia > 0 && minAntes < -1e-9;
+  // Acaba antes do já pedido chegar (o tambaqui de 01/11): o "a caminho" não salva esses dias
+  const prox = (l.pedidoChega || []).filter(x => x.dia > hoje).map(x => x.dia).sort()[0] || null;
+  const nProx = prox ? Math.round((new Date(prox + 'T12:00:00') - new Date(hoje + 'T12:00:00')) / 864e5) : 0;
+  const antesDoPedido = !!prox && dura !== null && dura < nProx ? prox : null;
+  return { dias, nAntes, chega, tipo, antes, cobre, horiz: nAntes + dias, dura, naoChega, antesDoPedido,
     precisa, falta, auto, pedir, sobra, sobraSem, marcado: marcado && pedir > 0, total: pedir * l.custo, proprio };
 }
 
 // Precisa / falta / pedido sugerido para cobrir `dias` depois de `nAntes` dias até chegar.
 // Separado da _planConta para o arraste do tracinho refazer a conta sem repintar a tabela.
+// Dia a dia: estoque de hoje + o já pedido NO DIA EM QUE CHEGA − consumo (com a margem a partir
+// do dia que o pedido de hoje chega). Falta = o pior saldo do período coberto: se o já pedido
+// chega no meio, o buraco antes dele também entra (Wagner, 05/11/2026 — antes o já pedido
+// contava inteiro desde hoje e o tambaqui "durava até terça" com as bandas que só chegavam quinta).
+// Sem pedido chegando no meio, dá o mesmo que antes: precisa − estoque − já pedido.
 function _planCobertura(un, l, nAntes, dias) {
-  const hoje = _planD.hoje;
-  let antes = 0, cobre = 0;
-  for (let i = 0; i < nAntes; i++) antes += _planConsDe(l, _isoMais(hoje, i));
-  for (let i = 0; i < dias; i++) cobre += _planConsDe(l, _isoMais(hoje, nAntes + i));
-  const precisa = antes + cobre * (1 + _planMargem(un));
-  const falta = Math.max(0, precisa - l.tem - l.pedido);
-  return { antes, cobre, precisa, falta, auto: _planArred(falta / l.fator, l.unComp) };
+  const hoje = _planD.hoje, fm = 1 + _planMargem(un);
+  let antes = 0, cobre = 0, bal = l.tem, balSem = l.tem, min = null, minSem = null, minAntes = Infinity;
+  for (let i = 0; i < nAntes + dias; i++) {
+    const d = _isoMais(hoje, i), q = _planConsDe(l, d), ch = _planChegaDia(l, d);
+    bal += ch; balSem += ch;
+    if (i < nAntes) { antes += q; bal -= q; balSem -= q; if (bal < minAntes) minAntes = bal; continue; }
+    cobre += q; bal -= q * fm; balSem -= q;
+    if (min === null || bal < min) min = bal;
+    if (minSem === null || balSem < minSem) minSem = balSem;
+  }
+  if (min === null) { min = bal; minSem = balSem; }
+  const precisa = antes + cobre * fm;
+  const falta = Math.max(0, -min);
+  return { antes, cobre, precisa, falta, sobra: min, sobraSem: minSem, minAntes, auto: _planArred(falta / l.fator, l.unComp) };
 }
+// Quanto do já pedido chega no dia d (pedido atrasado ou sem data entra hoje)
+const _planChegaDia = (l, d) => (l.pedidoChega || []).reduce((s, x) => s + (x.dia === d ? x.q : 0), 0);
 
 // Linha embaixo da barra da Dura: quanto sobra no "cobre até" (Wagner, 29/10/2026 — as duas
 // datas sozinhas não diziam se a compra fecha a conta)
@@ -7643,6 +7663,13 @@ function _pintarPlanTabela() {
   }).join('');
 }
 
+// "+ 300 chega qui 05/11" — o já pedido aparece no dia em que chega (atrasado/sem data: "a caminho")
+function _planCaminhoHtml(l, n1) {
+  const hoje = _planD.hoje, por = {};
+  (l.pedidoChega || []).forEach(x => { por[x.dia] = (por[x.dia] || 0) + x.q; });
+  return Object.keys(por).sort().map(d => `<span class="plan-caminho">+ ${n1(por[d])} ${d > hoje ? 'chega ' + _planDiaTxt(d) : 'a caminho'}</span>`).join('');
+}
+
 function _planLinha(un, B, l, c, n1, porForn) {
   const unx = `<span class="plan-un">${esc(l.un)}</span>`;
   const tags = [];
@@ -7650,6 +7677,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
   else if (l.foraLista) tags.push(`<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`);
   else if (!l.base && l.comprado > 0) tags.push(`<span class="plan-base plan-base-alerta" title="Comprado ${brl(l.comprado)} no período, mas nenhuma ficha usa e nada saiu para os setores. Ficha faltando ou compra entrando em outro cadastro.">comprado sem consumo · ${brl(l.comprado)}</span>`);
   else if (!l.base) tags.push('<span class="plan-base plan-base-nada" title="Sem venda pela ficha e sem saída para os setores no período">sem consumo</span>');
+  if (c.antesDoPedido && !c.naoChega) tags.push(`<span class="plan-base plan-base-alerta" title="O estoque acaba antes de ${_planDiaTxt(c.antesDoPedido)}, quando chega o pedido já feito. A conta pede para cobrir esses dias.">acaba antes do já pedido chegar</span>`);
   if (c.naoChega) tags.push(`<span class="plan-base plan-base-alerta" title="O estoque e o já pedido acabam antes de ${_ddmm(c.chega)}, quando chega o pedido feito hoje. Comprar por fora ou pedir entrega antes.">acaba antes de chegar</span>`);
   // Estoque + já pedido cobrem até o "cobre até" sem a margem: o pedido é só a segurança
   // (Wagner, 29/10/2026 — decidir a olho se faz ou não)
@@ -7688,7 +7716,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
     <td class="plan-col-chk"><input type="checkbox" class="form-check-input" ${c.marcado ? 'checked' : ''} ${c.pedir > 0 ? '' : 'disabled'} onchange="planMarcar('${l.pid}', this.checked)" aria-label="Marcar ${esc(l.nome)}"></td>
     <td><div class="plan-nome"><i class="bi bi-chevron-right"></i>${esc(l.nome)}</div><div class="plan-sub"><span>${sub}</span>${tags.join('')}</div></td>
     <td class="text-end">${porSem > 0 ? n1(porSem) + unx : '<span class="text-muted">—</span>'}</td>
-    <td class="text-end"><span class="${l.temTela < 0 ? 'plan-falta' : ''}">${l.temTela < 0 ? '−' + n1(-l.temTela) : n1(l.temTela)}</span>${unx}${l.temParte ? `<span class="plan-parte" title="Fica no cartão ${un === 'Centro' ? 'Estoque Central' : 'Produção'} da tela de Saldo. Entra na conta.">${l.temParte > 0 ? '+' : '−'} ${n1(Math.abs(l.temParte))} no ${un === 'Centro' ? 'Central' : 'Produção'}</span>` : ''}${l.pedido > 0 ? `<span class="plan-caminho">+ ${n1(l.pedido)} a caminho</span>` : ''}</td>
+    <td class="text-end"><span class="${l.temTela < 0 ? 'plan-falta' : ''}">${l.temTela < 0 ? '−' + n1(-l.temTela) : n1(l.temTela)}</span>${unx}${l.temParte ? `<span class="plan-parte" title="Fica no cartão ${un === 'Centro' ? 'Estoque Central' : 'Produção'} da tela de Saldo. Entra na conta.">${l.temParte > 0 ? '+' : '−'} ${n1(Math.abs(l.temParte))} no ${un === 'Centro' ? 'Central' : 'Produção'}</span>` : ''}${_planCaminhoHtml(l, n1)}</td>
     <td class="plan-dura">${duraHtml}</td>
     <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
          title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
@@ -7723,6 +7751,8 @@ function _planDetalhe(un, B, l, c, n1) {
   const hoje = _planD.hoje;
   const iniCobre = _isoMais(hoje, c.nAntes), fimCobre = _isoMais(hoje, c.horiz - 1);
   const faixa = (a, b) => a === b ? dsem(a) : `${dsem(a)} a ${dsem(b)}`;
+  const pedFora = (l.pedidoChega || []).filter(x => x.dia > fimCobre).reduce((s, x) => s + x.q, 0);   // chega depois do período
+  const buraco = c.antesDoPedido && c.falta > c.precisa - l.tem - (l.pedido - pedFora) + 1e-6;
   const chegaTxt = { escolhido: 'dia escolhido no topo da tela (só hoje)', fixo: 'próxima entrega do fornecedor', prazo: `prazo do fornecedor (${_fornCompra[l.fornId]?.prazo} d)`, sem: 'fornecedor sem dias de entrega no cadastro: conta como se chegasse hoje' }[c.tipo];
   const dowHtml = l.consDow ? `<div class="plan-dow">${[1, 2, 3, 4, 5, 6, 0].map(i => `<span><small>${_FORN_DIAS[i].toLowerCase()}</small>${l.consDow[i] >= 10 ? _metaNum(Math.round(l.consDow[i])) : n1(l.consDow[i])}</span>`).join('')}</div>` : '';
   return `<tr class="plan-det"><td colspan="7"><div class="plan-det-grade">
@@ -7737,7 +7767,8 @@ function _planDetalhe(un, B, l, c, n1) {
       ${lin(`Cobrir ${c.dias} ${c.dias === 1 ? 'dia' : 'dias'} (${faixa(iniCobre, fimCobre)}) + ${margem}%`, `${n1(c.cobre * (1 + _planMargem(un)))} ${unx}`)}
       ${lin('Precisa', `${n1(c.precisa)} ${unx}`, true)}
       ${lin('− estoque agora', `${n1(l.tem)} ${unx}`)}
-      ${l.pedido > 0 ? lin('− já pedido', `${n1(l.pedido)} ${unx}`) : ''}
+      ${l.pedido > 0 ? lin(pedFora > 0 ? '− já pedido (até ' + _ddmm(fimCobre) + ')' : '− já pedido', `${n1(l.pedido - pedFora)} ${unx}`) : ''}
+      ${buraco ? `<div class="text-muted mb-1">O já pedido só chega ${dsem(c.antesDoPedido)}: a falta é o que não aguenta até lá.</div>` : ''}
       ${lin('Falta', c.falta > 0 ? `<span class="plan-falta">${n1(c.falta)} ${unx}</span>` : '<span class="text-success">nada</span>', true)}
       ${lin(`Pedir em ${esc(l.unComp)}${l.fator !== 1 ? ` de ${n1(l.fator)} ${unx}` : ''}`, `<b>${n1(c.auto)}</b>`)}
       ${lin('Último custo', l.custo > 0 ? brl(l.custo) : '—')}
@@ -7860,7 +7891,7 @@ function planDuraArrastar(ev) {
     if (txt) txt.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias - 1));
     if (sob && l) {
       const k = _planCobertura(_planUn, l, antes, dias);
-      sob.innerHTML = _planSobraTxt(l.tem + l.pedido - k.precisa, l.un, _planMargem(_planUn));
+      sob.innerHTML = _planSobraTxt(k.sobra, l.un, _planMargem(_planUn));
     }
   };
   ev.preventDefault();
@@ -11735,6 +11766,7 @@ async function _executarFinalizarCompExt(pedido_num, conta, ref, unidade_id, nf)
     totalRecebido: totalAcumulado, acrescimo,
     dataRec, vencimento: venc,
     fornecedor_id: ref?.fornecedor_id || null,
+    fornecedor_nome: ref?.fornecedor_nome || null,
     unidade_id, nf, banco_id: bancoDespesa,
   });
 }
@@ -11828,10 +11860,8 @@ async function finalizarPedidoRegular(pedido_num) {
   renderPendentes();
 }
 
-async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, unidade_id, nf, banco_id }) {
+async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, fornecedor_nome, unidade_id, nf, banco_id }) {
   if (!cCat.length || !cPlanoConta.length) await carregarCaches();
-
-  const totalItens = Math.max(0, totalRecebido - acrescimo);
 
   // Agrupa por plano_conta x unidade (pedido conjunto Centro + Delivery P10) usando os itens originais abertos
   if (!cUnidades.length) await carregarCaches();
@@ -11845,8 +11875,8 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
     if (!grupos[k]) grupos[k] = { plano_conta: plano, unidade_id: uni || null, subtotal: 0 };
     grupos[k].subtotal += ir.total_recebido;
   }
-  const gruposList = Object.values(grupos);
-  const temRateio  = gruposList.length > 1;
+  let gruposList = Object.values(grupos);
+  let temRateio  = gruposList.length > 1;
   const _uniDoPedido = [...new Set(gruposList.map(g => g.unidade_id).filter(Boolean))];
   if (_uniDoPedido.length > 1) {   // a unidade do lancamento vira a de maior valor; cada linha leva a sua
     const porUni = {};
@@ -11862,39 +11892,59 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
       : cPlanoConta.find(p => p.nome.toLowerCase() === g.plano_conta.toLowerCase())?.id || null;
   }
 
-  const { data: lanc, error } = await sb.from('lancamentos').insert([{
-    descricao:      `Pedido ${pedido_num} — Comprador Externo`,
-    valor:          totalRecebido,   // TOTAL (nota + acréscimo) — o financeiro trata valor como total
-    acrescimo:      acrescimo,
+  // O agrupamento acima le `_recebItensAbertos`, que e global da TELA de recebimento.
+  // Pelo botao "Finalizar Pedido" (aba Compras) essa global vem vazia: `orig` fica
+  // undefined, todo item cai num grupo de plano_conta '' e a despesa chega ao
+  // financeiro sem categoria. Nesse caso usa o rateio lido do banco, o mesmo que o
+  // fluxo dos fornecedores normais usa (_executarFinalizarRegular).
+  if (!gruposList.some(g => g.plano_conta_id)) {
+    const { linhas, unidadePrincipal } = await _rateioDoPedido(pedido_num);
+    if (linhas.length) {
+      gruposList = linhas.map(l => ({
+        plano_conta: l.nome, plano_conta_id: l.plano_conta_id,
+        unidade_id: l.unidade_id || null, subtotal: l.valor,
+      }));
+      temRateio = gruposList.length > 1;
+      if (unidadePrincipal) unidade_id = unidadePrincipal;
+    }
+  }
+
+  // VAI PARA AS INTEGRAÇÕES PENDENTES, não direto para o Contas a Pagar.
+  //
+  // Até 05/11/2026 esta função dava INSERT direto em `lancamentos`. O pedido de
+  // comprador externo era o único que pulava a tela de aprovação do financeiro: a
+  // despesa nascia pronta, com o banco CHUTADO em Nubank (sem adiantamento não há
+  // de onde tirar o banco). Nenhum dado escolhia esse banco — nem a forma de
+  // pagamento do pedido, que no estoque e só uma etiqueta.
+  //
+  // Foi o que aconteceu com o #02081 (03/11/2026, R$ 108,63): pago em DINHEIRO, mas
+  // o compras marcou "Cartão". Como ele nunca apareceu nas Integrações Pendentes,
+  // ninguém pôde usá-lo com o botão "Pagamento em Dinheiro — Caixa" (que e o que
+  // deixou #02019/#02048/#02049/#02050/#02057 corretos, pagos no Caixa). Ficou
+  // R$ 108,63 pendente no Nubank, pronto para casar errado na conciliação do extrato.
+  //
+  // `gerarContaFinanceiro` grava rascunho em `lancamentos_rascunho`, traz a trava
+  // anti-duplicata (por numero_pedido E por descrição) e as parcelas. O banco passa
+  // a ser escolhido por quem aprova, no financeiro — não mais adivinhado aqui.
+  // `banco_id`/`dataRec` continuam na assinatura só para não quebrar quem chama.
+  await gerarContaFinanceiro({
+    pedido_num,
     vencimento,
-    tipo:           'pagar',
-    // Despesa de comprador externo entra SEMPRE pendente — o dinheiro só sai
-    // do Caixa após aprovação e retirada da pessoa no financeiro (e o débito no
-    // Nubank/PIX só vira pago ao conciliar o extrato). Marcar pago aqui pulava
-    // a etapa de aprovação e impedia a conciliação. (mesma regra de registrarDespesaRealHistorico)
-    status:         'pendente',
-    data_pagamento: null,
-    banco_id:       banco_id || BANCO_NUBANK_ID,
-    fornecedor_id:  fornecedor_id || null,
-    plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
-    numero_pedido:  pedido_num,
-    observacoes:    nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
-    desconto:       0,
-    tem_rateio:     temRateio,
-    unidade_id:     unidade_id || null,
-  }]).select('id').single();
-
-  if (error) { toast('Erro ao enviar despesa ao financeiro: ' + error.message, 'erro'); return; }
-
-  if (temRateio && lanc?.id && gruposList.length) {
-    await sb.from('rateio_itens').insert(
-      gruposList.map(g => _linhaRateio({ plano_conta_id: g.plano_conta_id, valor: g.subtotal, unidade_id: g.unidade_id }, { lancamento_id: lanc.id }))
-    );
-  }
-
-  if (conta_id && lanc?.id) {
-    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', conta_id);
-  }
+    valor:           totalRecebido,   // total (nota + acréscimo); a função separa os dois
+    acrescimo,
+    fornecedor_id:   fornecedor_id || null,
+    fornecedor_nome: fornecedor_nome || 'COMPRADOR EXTERNO',
+    plano_conta:     temRateio ? null : (gruposList[0]?.plano_conta || ''),
+    nf_numero:       nf,
+    conta_id:        conta_id || null,
+    obs:             `Pedido ${pedido_num}`,
+    temRateio,
+    rateioItensResolvidos: temRateio
+      ? gruposList.map(g => ({ plano_conta_id: g.plano_conta_id, valor: g.subtotal, unidade_id: g.unidade_id }))
+      : [],
+    unidade_id:      unidade_id || null,
+    campo_id_destino: 'lancamento_id',
+  });
 }
 
 async function gerarContaFinanceiro({ pedido_num, vencimento, valor, acrescimo = 0, fornecedor_id,
