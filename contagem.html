@@ -578,7 +578,6 @@
   <!-- Rodapé Contagem -->
   <div id="rodape-contagem">
     <button class="btn-enviar" id="btn-enviar" data-btn-salvar disabled onclick="enviarPedido()">📤 Enviar Pedido</button>
-    <button class="btn-enviar" id="btn-saldo-inicial" data-btn-salvar disabled onclick="salvarSaldoInicialSetorMob()" style="display:none;background:#6c757d">💾 Saldo Inicial</button>
     <button class="btn-enviar" id="btn-salvar-saldo" data-btn-salvar disabled onclick="salvarSaldoContagem()" style="display:none;background:#198754">💾 Salvar Saldo</button>
     <button class="btn-emerg" onclick="abrirEmergencia()">🚨</button>
   </div>
@@ -1409,7 +1408,6 @@ function selecionarLocal(l) {
   _renderSetorGrid();
   if (!_setor) {                           // na grade: rodape conforme a unidade
     document.getElementById('btn-enviar').style.display        = '';
-    document.getElementById('btn-saldo-inicial').style.display = '';
     _rodapeDaUnidade();
   }
   if (Object.keys(_todasEstruturasMob).length) _aplicarEstruturaLocalMob(l);
@@ -1738,8 +1736,6 @@ function voltarSetores() {
   document.getElementById('grupos-produtos').style.display  = 'none';
   document.getElementById('btn-enviar').style.display         = '';
   document.getElementById('btn-enviar').disabled              = true;
-  document.getElementById('btn-saldo-inicial').style.display  = '';
-  document.getElementById('btn-saldo-inicial').disabled       = true;
   document.getElementById('btn-salvar-saldo').style.display   = 'none';
   document.getElementById('btn-salvar-saldo').disabled        = true;
   _rodapeDaUnidade();
@@ -1748,7 +1744,6 @@ function voltarSetores() {
 function _rodapeDaUnidade() {
   if (!_estoqueMob().unico || _setor) return;
   document.getElementById('btn-enviar').style.display        = 'none';
-  document.getElementById('btn-saldo-inicial').style.display = 'none';
 }
 function selecionarEstoqueLoja() {
   const est = _estoqueMob();
@@ -1759,7 +1754,6 @@ function selecionarEstoqueLoja() {
   document.getElementById('grupos-produtos').style.display    = 'block';
   document.getElementById('breadcrumb-setor').textContent     = `${est.emoji} ${est.nome}`;
   document.getElementById('btn-enviar').style.display         = 'none';
-  document.getElementById('btn-saldo-inicial').style.display  = 'none';
   document.getElementById('btn-salvar-saldo').style.display   = '';
   document.getElementById('btn-salvar-saldo').disabled        = true;
   _modoSetor(true);
@@ -1893,7 +1887,6 @@ async function selecionarGrupo(grupo) {
     document.getElementById('btn-salvar-saldo').disabled = false;
   } else {
     document.getElementById('btn-enviar').disabled = false;
-    document.getElementById('btn-saldo-inicial').disabled = false;
   }
 }
 
@@ -1994,48 +1987,6 @@ function calcPedido(i) {
   const ped = Math.max(0, padrao - est);
   el.textContent = _fmtQtd(ped);
   el.className   = 'td-center td-ped' + (ped === 0 ? ' zero' : '');
-}
-
-// ─── SALDO INICIAL DO SETOR ──────────────────────────────────────
-async function salvarSaldoInicialSetorMob() {
-  if (!_setor || !_grupo || !_grupoProds.length) return;
-  if (_LOCAIS_SEM_CONTAGEM.includes(_localDoSetor(_local, _setor))) { toast(_MSG_EL_FECHADO, 'err'); return; }
-  if (!confirm(`Salvar saldo inicial de ${_setor} / ${_grupo}?`)) return;
-  const btn = document.getElementById('btn-saldo-inicial');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-  const data = document.getElementById('inp-data')?.value || hojeLocal();
-  const resp = _nomeResponsavel || (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  const agora = new Date().toISOString();
-  const T     = _telaAgora();   // a tela pode mudar enquanto grava
-
-  const itens = _grupoProds.map((p, i) => ({
-    produto_id: p.produto_id || null, nome: p.nome,
-    estoque: parseFloat(document.getElementById(`est-${i}`)?.value) || 0,
-  }));
-
-  if (!await _conferirContagemFora(itens.map(it => ({ ...it, total: it.estoque })), T.setor, T.local)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
-  if (!await _conferirUnidadeDaNoite(resp, T.local, data)) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
-  if (!await _garantirSessao()) { if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; } return; }
-
-  const num_inv   = await _proximoNumInv();
-  const { data: inv } = await sb.from('est_inventarios').insert([{
-    num_inv, data, local: T.local, responsavel: resp,
-    setor: T.setor, grupo: T.grupo, total_geral: 0,
-  }]).select().single();
-  if (inv) await sb.from('est_inventario_itens').insert(
-    itens.map(it => ({ ...it, inventario_id: inv.id, pedido_padrao: 0, pedido: 0, cozinha_bar: 0, outros: 0, total: it.estoque, unidade: 'UN', valor_unitario: 0, soma_total: 0 }))
-  );
-
-  const saldoRows = itens.filter(it => it.produto_id)
-    .map(it => ({ produto_id: it.produto_id, local: _localDoSetor(T.local, T.setor), saldo: it.estoque * _fatorDe(it.produto_id) }));
-  if (saldoRows.length) {
-    const { error: eSaldo } = await registrarContagem(saldoRows, { motivo: `Saldo inicial ${num_inv} · ${T.setor}`, responsavel: resp, data });
-    if (eSaldo) { console.error('saldo inicial:', eSaldo); toast('Salvo, mas o saldo não atualizou: ' + eSaldo.message, 'err'); }
-  }
-
-  toast(`${num_inv} — saldo inicial de ${T.setor} salvo! ✅`, 'ok');
-  _voltarAoCentro();
-  if (btn) { btn.disabled = false; btn.textContent = '💾 Saldo Inicial'; }
 }
 
 // ─── Numeracao: quem da o numero e o banco ───────────────────────
