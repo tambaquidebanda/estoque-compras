@@ -1022,10 +1022,15 @@ async function _conferirContagemFora(itens, setor, local) {
       const h = aqui ? hist[it.produto_id] : geral[it.produto_id];
       if (!h || h.length < 3) return;
       h.sort((a, b) => a - b);
-      const mediana = h[Math.floor(h.length / 2)];
+      const q = f => h[Math.min(h.length - 1, Math.floor(h.length * f))];
+      const mediana = q(.5), baixa = q(.25), alta = q(.75);   // faixa = metade do meio das contagens
       if (mediana <= 0) return;
       const r = v / mediana;
-      if (r < 10 && r > 0.1) return;
+      // Abaixo compara com as contagens BAIXAS (05/11/2026): contar pouco e normal quando o item
+      // esta acabando. MP Tambaqui de Banda na Churrasqueira: mediana 61 (puxada por recontagens
+      // depois da entrega: 122, 138), noite normal 20 a 36 - contar 5 avisava como se fosse erro.
+      const acima = r >= 10, abaixo = baixa > 0 && v <= baixa / 10;
+      if (!acima && !abaixo) return;
       // Acima: o numero dividido por 10, 100 ou 1000 que cai mais perto do normal
       // (virgula esquecida ou gramas no campo de kg). Abaixo: costuma ser unidade
       // trocada (pacote no lugar de unidade, barril no lugar de litro) - sem palpite.
@@ -1035,13 +1040,14 @@ async function _conferirContagemFora(itens, setor, local) {
         if (c < mediana / 4 || c > mediana * 4) return;
         if (sug === null || Math.abs(Math.log(c / mediana)) < Math.abs(Math.log(sug / mediana))) { sug = c; div = k; }
       });
-      suspeitos.push({ nome: it.nome, v, mediana, sug, div, baixo: r <= 0.1, aqui });
+      suspeitos.push({ nome: it.nome, v, mediana, baixa, alta, sug, div, baixo: !acima, aqui });
     });
     if (!suspeitos.length) return true;
 
     const fmt = n => _fmtQtd(n);
     const linhas = suspeitos.map(s =>
-      `• ${s.nome}: você digitou ${fmt(s.v)} — o normal ${s.aqui ? 'aqui' : 'nas outras contagens'} é ${fmt(s.mediana)}` +
+      `• ${s.nome}: você digitou ${fmt(s.v)}.\n   ${s.aqui ? 'Essa contagem' : 'Nas outras contagens desse produto, ela'} costuma ` +
+      (s.baixa === s.alta ? `dar ${fmt(s.baixa)}.` : `ficar entre ${fmt(s.baixa)} e ${fmt(s.alta)}.`) +
       (s.sug !== null ? `\n   Não seria ${fmt(s.sug)}?${s.div === 1000 ? ` (${fmt(s.v)} gramas = ${fmt(s.sug)} kg)` : ''}`
         : s.baixo ? `\n   Confira se contou na unidade da coluna "Un."` : '')
     ).join('\n');
