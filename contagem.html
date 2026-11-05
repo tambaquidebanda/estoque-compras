@@ -264,66 +264,82 @@
       stroke-linecap: round; stroke-linejoin: round; }
     .nav-btn.ativo { color: var(--verde); }
 
-    /* ── VIEW PEDIDOS ── */
+    /* ── VIEW PEDIDOS (05/11: estilo iPhone, mais espaço para os pedidos) ── */
     #view-pedidos { display: none; flex-direction: column; height: 100%; }
+    /* data e dia da semana não valem para pedidos: somem nesta aba */
+    #tela-principal.aba-pedidos .info-linha, #tela-principal.aba-pedidos .dias-wrap { display: none; }
+    #tela-principal.aba-pedidos .local-pills { margin-bottom: 0; }
     .subtabs {
-      display: flex; border-bottom: 1px solid var(--borda); flex-shrink: 0;
+      display: flex; gap: 2px; padding: 2px; margin: .6rem .9rem .1rem; border-radius: 10px;
+      background: rgba(118,118,128,.24); flex-shrink: 0;
     }
     .subtab {
-      flex: 1; background: none; border: none; color: var(--txt2);
-      font-size: .82rem; font-weight: 600; padding: .75rem .5rem;
-      cursor: pointer; border-bottom: 2px solid transparent; transition: all .15s;
+      flex: 1; background: none; border: 0; color: var(--txt); border-radius: 8px;
+      font-size: .8rem; font-weight: 600; padding: .42rem .3rem; cursor: pointer;
+      transition: background .18s, box-shadow .18s; white-space: nowrap;
     }
-    .subtab.ativo { color: var(--verde); border-bottom-color: var(--verde); }
-    .subtab-content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .subtab.ativo { background: #5b6170; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+    .subtab-content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: .75rem; }
     .filtros-row {
-      display: flex; gap: .5rem; padding: .75rem 1rem;
-      flex-wrap: wrap; align-items: center;
+      display: flex; gap: .4rem; padding: .55rem .9rem .35rem; align-items: center;
     }
-    .filtros-row select { width: auto; margin: 0; font-size: .8rem; padding: .4rem .6rem; flex: 1; min-width: 100px; }
+    .filtros-row select {
+      width: auto; margin: 0; flex: 1; min-width: 0; font-size: .78rem; font-weight: 600;
+      padding: .38rem 1.6rem .38rem .7rem; border: 0; border-radius: 999px;
+      background: rgba(118,118,128,.24) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238892a4' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right .55rem center / 12px;
+      color: var(--txt); text-overflow: ellipsis;
+    }
     .btn-refresh {
-      background: var(--inp); border: 1px solid var(--borda); border-radius: 8px;
-      color: var(--txt); padding: .4rem .65rem; font-size: .9rem; cursor: pointer;
+      flex-shrink: 0; width: 32px; height: 32px; display: grid; place-items: center;
+      background: rgba(118,118,128,.24); border: 0; border-radius: 50%;
+      color: var(--txt); font-size: .95rem; cursor: pointer;
+    }
+    .btn-refresh:active { background: rgba(118,118,128,.4); }
+    .aviso-pin {
+      display: flex; gap: .45rem; align-items: flex-start; margin: .15rem .9rem .35rem;
+      color: var(--txt2); font-size: .72rem; line-height: 1.35;
     }
 
     /* ── PEDIDO CARDS ── */
     .ped-card {
-      background: var(--card); border: 1px solid var(--borda);
-      border-radius: 12px; margin: .5rem 1rem; overflow: hidden;
+      background: var(--card); border-radius: 14px; margin: .55rem .9rem; overflow: hidden;
+      box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 6px 16px -10px rgba(0,0,0,.6);
     }
     .ped-card-header {
       display: flex; align-items: flex-start; justify-content: space-between;
-      padding: .65rem .85rem; gap: .5rem;
+      padding: .7rem .85rem .5rem; gap: .5rem;
     }
-    .ped-num { font-weight: 700; font-size: .9rem; }
-    .ped-info { font-size: .74rem; color: var(--txt2); margin-top: .15rem; }
+    .ped-num { font-weight: 700; font-size: .95rem; letter-spacing: .01em; }
+    .ped-info { font-size: .72rem; color: var(--txt2); margin-top: .15rem; line-height: 1.35; }
     .badge-status {
-      border-radius: 6px; font-size: .72rem; font-weight: 700;
-      padding: .2rem .55rem; white-space: nowrap; display: inline-block; margin-top: .1rem;
+      border-radius: 999px; font-size: .68rem; font-weight: 700; letter-spacing: .02em;
+      padding: .2rem .6rem; white-space: nowrap; display: inline-block; margin-top: .1rem;
     }
     .badge-emerg {
-      background: var(--danger); color: #fff; border-radius: 6px;
-      font-size: .7rem; font-weight: 700; padding: .15rem .45rem;
-      display: inline-block; margin-left: .35rem;
+      background: rgba(220,53,69,.18); color: #ff6b7a; border-radius: 999px;
+      font-size: .66rem; font-weight: 700; padding: .14rem .5rem;
+      display: inline-block; margin-left: .4rem; vertical-align: 2px;
     }
-    .ped-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .ped-table { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
     .ped-table th {
-      background: #1a1a2e; color: var(--txt2); font-size: .68rem;
-      font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
-      padding: .4rem .6rem;
+      color: var(--txt2); font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+      padding: .3rem .6rem; border-top: 1px solid var(--borda);
     }
-    .ped-table td { padding: .38rem .6rem; border-top: 1px solid var(--borda); vertical-align: middle; }
-    .ped-table th:first-child, .ped-table td:first-child { padding-left: .85rem; }
-    .ped-table th:not(:first-child), .ped-table td:not(:first-child) { text-align: center; white-space: nowrap; }
+    .ped-table td { padding: .32rem .6rem; border-top: 1px solid rgba(46,53,72,.6); vertical-align: middle; }
+    .ped-table th:first-child, .ped-table td:first-child { padding-left: .85rem; text-align: left; }
+    .ped-table th:last-child, .ped-table td:last-child { padding-right: .85rem; }
+    .ped-table th:not(:first-child), .ped-table td:not(:first-child) { text-align: right; white-space: nowrap; }
+    .ped-acoes { display: flex; gap: .5rem; align-items: center; padding: .55rem .85rem .8rem; }
     .btn-liberar, .btn-receber, .btn-editar {
-      width: calc(100% - 1.7rem); margin: .6rem .85rem; display: block;
-      border: none; border-radius: 10px; font-size: .88rem; font-weight: 700;
-      padding: .65rem; cursor: pointer; transition: opacity .15s;
+      width: calc(100% - 1.7rem); margin: .55rem .85rem .8rem; display: block;
+      border: none; border-radius: 12px; font-size: .88rem; font-weight: 700;
+      padding: .62rem; cursor: pointer; transition: opacity .15s, transform .12s;
     }
-    .btn-liberar { background: #198754; color: #fff; }
-    .btn-receber { background: var(--blue); color: #fff; }
-    .btn-editar  { background: #6c757d; color: #fff; }
-    .btn-liberar:active, .btn-receber:active, .btn-editar:active { opacity: .8; }
+    .ped-acoes .btn-liberar { margin: 0; flex: 1; width: auto; }
+    .btn-liberar { background: #22a55b; color: #fff; }
+    .btn-receber { background: #0a84ff; color: #fff; }
+    .btn-editar  { background: rgba(118,118,128,.28); color: var(--txt); }
+    .btn-liberar:active, .btn-receber:active, .btn-editar:active { opacity: .85; transform: scale(.98); }
 
     /* ── MODAIS (bottom sheet) ── */
     .modal-overlay {
@@ -403,11 +419,11 @@
     #toast.err { background: var(--danger); }
 
     .btn-cancelar-ped {
-      background: none; border: 1px solid var(--danger); border-radius: 8px;
-      color: var(--danger); padding: .5rem .9rem; cursor: pointer; font-size: .85rem;
+      background: rgba(220,53,69,.14); border: 0; border-radius: 12px;
+      color: #ff6b7a; padding: .62rem 1rem; cursor: pointer; font-size: .88rem; font-weight: 600;
       white-space: nowrap;
     }
-    .btn-cancelar-ped:active { background: rgba(220,53,69,.1); }
+    .btn-cancelar-ped:active { background: rgba(220,53,69,.26); }
     .btn-primary-full {
       width: 100%; background: var(--verde); color: #fff; border: none;
       border-radius: 10px; font-size: 1rem; font-weight: 600;
@@ -529,8 +545,8 @@
     <!-- View: Pedidos -->
     <div id="view-pedidos" style="display:none; flex-direction:column; height:100%">
       <div class="subtabs">
-        <button class="subtab ativo" id="subtab-estoque" onclick="showSubTab('estoque')">📥 Pedidos dos Setores</button>
-        <button class="subtab" id="subtab-meus" onclick="showSubTab('meus')">📤 Meus Pedidos</button>
+        <button class="subtab ativo" id="subtab-estoque" onclick="showSubTab('estoque')">Pedidos dos Setores</button>
+        <button class="subtab" id="subtab-meus" onclick="showSubTab('meus')">Meus Pedidos</button>
       </div>
 
       <div class="subtab-content" id="subtab-content-estoque">
@@ -2146,7 +2162,7 @@ function _linhaQuem(ped) {
   const p = [];
   if (ped.liberado_em) p.push(`Liberado ${h(ped.liberado_em)}${ped.liberado_por ? ' por ' + esc(ped.liberado_por) : ''}`);
   if (ped.recebido_em) p.push(`Recebido ${h(ped.recebido_em)}${ped.recebido_por ? ' por ' + esc(ped.recebido_por) : ''}`);
-  return p.length ? `<div class="ped-info" style="padding:0 .75rem .5rem">${p.join(' · ')}</div>` : '';
+  return p.length ? `<div class="ped-info" style="padding:.45rem .85rem .2rem;border-top:1px solid rgba(46,53,72,.6)">${p.join(' · ')}</div>` : '';
 }
 
 function _msgErroBanco(e) {
@@ -2334,10 +2350,10 @@ async function carregarPedidosEstoque() {
   const [{ data: pedsQ }, blocoTransfQ] = await Promise.all([q, restrito ? '' : _blocoTransfMob()]);
   const peds = (pedsQ || []).filter(_pedNoEscopo);
   const blocoTransf = (restrito
-    ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🍺 PIN do Bar: aqui aparecem só os pedidos de ALCOÓLICAS do Bar.</div>'
+    ? '<div class="aviso-pin"><span>🍺</span><span>PIN do Bar: aparecem só os pedidos de alcoólicas do Bar.</span></div>'
     : soP10
-    ? '<div class="vazio" style="padding:.6rem;font-size:.8rem">🛵 PIN do Estoque Delivery: aqui aparecem só os pedidos dos setores do P10 e o que chega do Estoque Central para o P10.</div>'
-    : '<div class="vazio" style="padding:.6rem;font-size:.8rem">🏪 PIN do Estoque do Centro: os pedidos do Delivery P10 ficam com o PIN do Estoque Delivery.</div>') + (blocoTransfQ || '');
+    ? '<div class="aviso-pin"><span>🛵</span><span>PIN do Estoque Delivery: aparecem só os pedidos dos setores do P10 e o que chega do Estoque Central para o P10.</span></div>'
+    : '<div class="aviso-pin"><span>🏪</span><span>PIN do Estoque do Centro. Os pedidos do Delivery P10 ficam com o PIN do Estoque Delivery.</span></div>') + (blocoTransfQ || '');
   const el = document.getElementById('lst-pedidos-estoque');
   if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
@@ -2374,7 +2390,7 @@ async function _blocoTransfMob() {
           <div class="ped-info">${esc(p.data||'')} · ${esc(p.unidade_origem||'')} → ${esc(p.local||'')}</div>
         </div><span class="badge-status" style="background:#0d6efd;color:#fff">Enviado</span></div>
         <table class="ped-table"><thead><tr><th>Produto</th><th>Env.</th><th>Chegou</th></tr></thead><tbody>${rows}</tbody></table>
-        <div style="padding:.5rem .75rem .75rem"><button class="btn-liberar" style="width:100%" onclick="confirmarChegadaTransfMob('${p.id}')">📦 Confirmar chegada</button></div>
+        <div style="padding:.5rem .75rem .75rem"><button class="btn-liberar" style="width:100%;margin:0" onclick="confirmarChegadaTransfMob('${p.id}')">Confirmar chegada</button></div>
       </div>`;
     }).join('') + '</div>';
 }
@@ -2586,7 +2602,7 @@ async function confirmarChegadaTransfMob(pedidoId) {
 function _cardPedEstoque(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
-  const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">🚨 Emergência</span>' : '';
+  const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">Emergência</span>' : '';
   const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
@@ -2598,9 +2614,9 @@ function _cardPedEstoque(ped, its) {
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th></tr></thead><tbody>${rows}</tbody></table>
     ${_linhaQuem(ped)}
-    ${ped.status==='pendente'?`<div style="display:flex;gap:.5rem;padding:.5rem .75rem .75rem">
-      <button class="btn-liberar" style="flex:1" onclick="abrirLiberarPedido('${ped.id}')">📦 Liberar Pedido</button>
-      <button class="btn-cancelar-ped" onclick="cancelarPedidoInterno('${ped.id}','${esc(ped.num_pedido)}')">🗑️ Cancelar</button>
+    ${ped.status==='pendente'?`<div class="ped-acoes">
+      <button class="btn-liberar" onclick="abrirLiberarPedido('${ped.id}')">Liberar pedido</button>
+      <button class="btn-cancelar-ped" onclick="cancelarPedidoInterno('${ped.id}','${esc(ped.num_pedido)}')">Cancelar</button>
     </div>`:''}
   </div>`;
 }
@@ -2628,7 +2644,7 @@ async function carregarMeusPedidos() {
 function _cardMeusPedidos(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
-  const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">🚨 Emergência</span>' : '';
+  const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">Emergência</span>' : '';
   const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td><td>${_fmtQtd(it.qtd_recebida)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
@@ -2640,8 +2656,8 @@ function _cardMeusPedidos(ped, its) {
     </div>
     <table class="ped-table"><thead><tr><th>Produto</th><th>Ped.</th><th>Lib.</th><th>Rec.</th></tr></thead><tbody>${rows}</tbody></table>
     ${_linhaQuem(ped)}
-    ${ped.status==='pendente'?`<button class="btn-editar" onclick="abrirEditarPedidoMob('${ped.id}')">✏️ Editar Pedido</button>`:''}
-    ${ped.status==='liberado'?`<button class="btn-receber" onclick="abrirReceberPedido('${ped.id}')">✅ Confirmar Recebimento</button>`:''}
+    ${ped.status==='pendente'?`<button class="btn-editar" onclick="abrirEditarPedidoMob('${ped.id}')">Editar pedido</button>`:''}
+    ${ped.status==='liberado'?`<button class="btn-receber" onclick="abrirReceberPedido('${ped.id}')">Confirmar recebimento</button>`:''}
   </div>`;
 }
 
