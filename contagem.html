@@ -106,6 +106,18 @@
     }
     .feriado-btn.ativo { background: #ffc107; border-color: #ffc107; color: #000; }
 
+    /* Dentro do setor o cabecalho (unidade, data, dia) recolhe num botao na linha do setor:
+       sobra a tela para os produtos. O aviso vermelho de unidade continua aparecendo. */
+    #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #cabecalho { padding: 0; border-bottom: 0; }
+    #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #cabecalho > :not(#aviso-unidade) { display: none; }
+    #tela-principal.em-setor:not(.aba-pedidos):not(.cab-aberto) #aviso-unidade { margin: .4rem .6rem; }
+    .btn-contexto {
+      margin-left: auto; background: var(--inp); border: 1px solid var(--borda); color: var(--txt2);
+      border-radius: 8px; font-size: .72rem; font-weight: 700; padding: .25rem .55rem;
+      cursor: pointer; white-space: nowrap;
+    }
+    .btn-contexto.feriado { background: #ffc107; border-color: #ffc107; color: #000; }
+
     /* ── CONTEÚDO PRINCIPAL ── */
     #conteudo-principal { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
@@ -131,7 +143,7 @@
     /* Breadcrumb + grupos */
     .breadcrumb-bar {
       display: flex; align-items: center; gap: .75rem;
-      padding: .7rem 1rem; border-bottom: 1px solid var(--borda);
+      padding: .4rem .75rem; border-bottom: 1px solid var(--borda);
     }
     .btn-voltar {
       background: none; border: none; color: var(--verde);
@@ -140,12 +152,12 @@
     .breadcrumb-setor { font-weight: 700; font-size: .95rem; }
     .grupos-scroll {
       display: flex; gap: .4rem; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none; padding: .6rem 1rem;
+      scrollbar-width: none; padding: .4rem .75rem;
       border-bottom: 1px solid var(--borda);
     }
     .grupos-scroll::-webkit-scrollbar { display: none; }
     .grupo-chip {
-      flex-shrink: 0; padding: .35rem .8rem; border-radius: 20px;
+      flex-shrink: 0; padding: .28rem .7rem; border-radius: 20px;
       border: 1px solid var(--borda); background: var(--inp);
       color: var(--txt2); font-size: .78rem; font-weight: 600;
       cursor: pointer; white-space: nowrap; transition: all .15s;
@@ -159,11 +171,11 @@
     .prod-table thead th {
       background: #1a1a2e; color: var(--txt2); font-size: .7rem;
       font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-      padding: .5rem .6rem; text-align: center; position: sticky; top: 0; z-index: 2;
+      padding: .35rem .5rem; text-align: center; position: sticky; top: 0; z-index: 2;
     }
     .prod-table thead th:first-child { text-align: left; padding-left: 1rem; }
     .prod-table tbody tr { border-bottom: 1px solid var(--borda); }
-    .prod-table tbody td { padding: .45rem .5rem; vertical-align: middle; }
+    .prod-table tbody td { padding: .22rem .4rem; vertical-align: middle; line-height: 1.2; }
     .prod-table tbody td:first-child { padding-left: 1rem; font-size: .82rem; }
     .td-center { text-align: center; }
     .td-pad { color: var(--txt2); font-size: .8rem; min-width: 38px; }
@@ -172,8 +184,8 @@
     .td-loja { color: var(--txt2); font-size: .78rem; min-width: 34px; white-space: nowrap; }
     .td-loja.neg { color: #f87171; font-weight: 700; }
     /* com a coluna Loja a tabela tem 6 colunas: aperta para caber em 375 px sem rolar */
-    .prod-table.com-loja thead th { padding: .5rem .3rem; letter-spacing: .02em; }
-    .prod-table.com-loja tbody td { padding: .45rem .25rem; }
+    .prod-table.com-loja thead th { padding: .35rem .3rem; letter-spacing: .02em; }
+    .prod-table.com-loja tbody td { padding: .22rem .25rem; }
     .prod-table.com-loja tbody td:first-child { padding-left: .75rem; }
     .prod-table.com-loja thead th:first-child { padding-left: .75rem; }
     .prod-table.com-loja .inp-est { width: 58px; }
@@ -185,27 +197,29 @@
     .inp-est {
       width: 72px; background: var(--inp); border: 1.5px solid var(--borda);
       border-radius: 8px; color: var(--txt); font-size: 1rem; font-weight: 700;
-      text-align: center; padding: .45rem .3rem; -webkit-appearance: none; margin: 0;
+      text-align: center; padding: .28rem .3rem; -webkit-appearance: none; margin: 0;
     }
     .inp-est:focus { border-color: var(--verde); outline: none; background: #1e3535; }
+    /* a regra geral de input (padding 12px 16px + margem embaixo) vencia o .inp-est: campo de 44 px desalinhado */
+    .prod-table .inp-est { padding: .3rem .25rem; margin: 0; }
     .sem-prod { color: #ff6b6b; }
     .vazio { text-align: center; color: var(--txt2); padding: 2.5rem 1rem; font-size: .9rem; }
 
     /* ── RODAPÉ CONTAGEM ── */
     #rodape-contagem {
-      display: flex; gap: .6rem; padding: .65rem 1rem;
+      display: flex; gap: .5rem; padding: .45rem .75rem;
       background: var(--bg); border-top: 1px solid var(--borda); flex-shrink: 0;
     }
     .btn-enviar {
       flex: 1; background: var(--verde); color: #fff; border: none;
-      border-radius: 12px; font-size: 1rem; font-weight: 700;
-      padding: .85rem; cursor: pointer; transition: opacity .15s;
+      border-radius: 10px; font-size: .9rem; font-weight: 700;
+      padding: .55rem; cursor: pointer; transition: opacity .15s;
     }
     .btn-enviar:disabled { background: var(--borda); color: var(--txt2); cursor: default; }
     .btn-enviar:not(:disabled):active { opacity: .8; }
     .btn-emerg {
-      background: var(--danger); color: #fff; border: none; border-radius: 12px;
-      font-size: 1.2rem; padding: .85rem .95rem; cursor: pointer; flex-shrink: 0;
+      background: var(--danger); color: #fff; border: none; border-radius: 10px;
+      font-size: 1rem; padding: .55rem .8rem; cursor: pointer; flex-shrink: 0;
     }
     .btn-emerg:active { opacity: .8; }
 
@@ -216,12 +230,12 @@
       padding-bottom: env(safe-area-inset-bottom);
     }
     .nav-btn {
-      flex: 1; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: .2rem; background: none; border: none;
-      color: var(--txt2); font-size: .7rem; font-weight: 600;
-      padding: .6rem .5rem; cursor: pointer; transition: color .15s;
+      flex: 1; display: flex; flex-direction: row; align-items: center;
+      justify-content: center; gap: .4rem; background: none; border: none;
+      color: var(--txt2); font-size: .78rem; font-weight: 600;
+      padding: .5rem; cursor: pointer; transition: color .15s;
     }
-    .nav-btn .nav-icon { font-size: 1.4rem; line-height: 1; }
+    .nav-btn .nav-icon { font-size: 1rem; line-height: 1; }
     .nav-btn.ativo { color: var(--verde); }
 
     /* ── VIEW PEDIDOS ── */
@@ -486,6 +500,7 @@
         <div class="breadcrumb-bar">
           <button class="btn-voltar" onclick="voltarSetores()">‹ Setores</button>
           <span class="breadcrumb-setor" id="breadcrumb-setor"></span>
+          <button class="btn-contexto" id="btn-contexto" onclick="toggleCabecalho()" title="Unidade, data e dia do padrão"></button>
         </div>
         <div class="grupos-scroll" id="grupos-scroll"></div>
         <div id="lista-produtos">
@@ -1208,6 +1223,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   sb   = supabase.createClient(SB_URL, SB_KEY);
   _dia = DIAS_SEM[new Date().getDay()];
   document.getElementById('data-inv').value = hojeLocal();
+  document.getElementById('data-inv').addEventListener('change', _pintarContexto);
   atualizarBtnsDia();
   const { data: { session } } = await sb.auth.getSession();
   if (session) { user = session.user; entrar(); }
@@ -1413,7 +1429,9 @@ function _aplicarEstruturaLocalMob(local) {
 
 // ─── DIA ─────────────────────────────────────────────────────────
 function setDia(dia) {
-  _dia = dia; _feriado = false; atualizarBtnsDia();
+  _dia = dia; _feriado = false;
+  document.getElementById('tela-principal').classList.remove('cab-aberto');
+  atualizarBtnsDia();
   if (_grupo) renderProdutos();
 }
 function toggleFeriado() {
@@ -1427,6 +1445,27 @@ function atualizarBtnsDia() {
   });
   const btnF = document.getElementById('btn-feriado');
   if (btnF) btnF.className = 'feriado-btn' + (_feriado ? ' ativo' : '');
+  _pintarContexto();
+}
+// Linha do setor: "Centro · QUI 05/11 ▾" — toque abre/fecha o cabecalho
+function _pintarContexto() {
+  const b = document.getElementById('btn-contexto'); if (!b) return;
+  const d = document.getElementById('data-inv')?.value || '';
+  const dd = d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';
+  const loc = { 'Delivery P10': 'P10', 'Estoque Central': 'Central' }[_local] || _local || '';
+  const aberto = document.getElementById('tela-principal').classList.contains('cab-aberto');
+  b.textContent = `${loc} · ${_feriado ? 'FERIADO' : (_dia || '').toUpperCase()} ${dd} ${aberto ? '▴' : '▾'}`;
+  b.classList.toggle('feriado', !!_feriado);
+}
+function toggleCabecalho() {
+  document.getElementById('tela-principal').classList.toggle('cab-aberto');
+  _pintarContexto();
+}
+function _modoSetor(on) {
+  const t = document.getElementById('tela-principal');
+  t.classList.toggle('em-setor', on);
+  t.classList.remove('cab-aberto');
+  _pintarContexto();
 }
 
 
@@ -1481,6 +1520,7 @@ function showMainTab(tab) {
   document.getElementById('rodape-contagem').style.display = tab === 'contagem' ? 'flex'  : 'none';
   document.getElementById('nav-contagem').className = 'nav-btn' + (tab === 'contagem' ? ' ativo' : '');
   document.getElementById('nav-pedidos').className  = 'nav-btn' + (tab === 'pedidos'  ? ' ativo' : '');
+  document.getElementById('tela-principal').classList.toggle('aba-pedidos', tab === 'pedidos');
   if (tab === 'pedidos') showSubTab('meus');
 }
 function showSubTab(tab) {
@@ -1687,11 +1727,13 @@ async function selecionarSetor(setor) {
   document.getElementById('grupos-produtos').style.display = 'block';
   document.getElementById('breadcrumb-setor').textContent  = setor;
   document.getElementById('btn-enviar').disabled = true;
+  _modoSetor(true);
   renderGrupos();
 }
 function voltarSetores() {
   _setor = null; _grupo = null; _grupoProds = [];
   _elLiberado = false;   // saiu do Estoque da Loja: a proxima contagem pede a senha de novo
+  _modoSetor(false);
   document.getElementById('setor-grid').style.display       = 'block';
   document.getElementById('grupos-produtos').style.display  = 'none';
   document.getElementById('btn-enviar').style.display         = '';
@@ -1720,6 +1762,7 @@ function selecionarEstoqueLoja() {
   document.getElementById('btn-saldo-inicial').style.display  = 'none';
   document.getElementById('btn-salvar-saldo').style.display   = '';
   document.getElementById('btn-salvar-saldo').disabled        = true;
+  _modoSetor(true);
   renderGrupos();
 }
 
