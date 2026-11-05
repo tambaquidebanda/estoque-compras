@@ -506,72 +506,10 @@ function _ratearValor(linhas, total) {
   return out.filter(l => l.valor !== 0);
 }
 
-async function enviarDespesaCompExternoMobile({ pedido_num, conta_id, itensReceb, itensOriginais, totalRecebido, acrescimo, dataRec, vencimento, fornecedor_id, nf, banco_id, unidade_id }) {
-  const totalItens = Math.max(0, totalRecebido - acrescimo);
-
-  // Agrupa por plano_conta x unidade (pedido conjunto Centro + Delivery P10)
-  const { data: _unis } = await sb.from('unidades').select('id,nome');
-  const grupos = {};
-  for (const ir of itensReceb) {
-    if (ir.bonificado) continue;
-    const orig  = itensOriginais.find(o => o.id === ir.compra_id);
-    const plano = orig?.plano_conta || '';
-    const uni   = (_unis || []).find(u => _normNome(u.nome) === _normNome(orig?.unidade_uso || ''))?.id || '';
-    const k = plano + '|' + uni;
-    if (!grupos[k]) grupos[k] = { plano_conta: plano, unidade_id: uni || null, subtotal: 0 };
-    grupos[k].subtotal += ir.total_recebido;
-  }
-  const gruposList = Object.values(grupos);
-  const temRateio  = gruposList.length > 1;
-  const _uniDoPedido = [...new Set(gruposList.map(g => g.unidade_id).filter(Boolean))];
-  if (_uniDoPedido.length > 1) {   // a unidade do lancamento vira a de maior valor; cada linha leva a sua
-    const porUni = {};
-    gruposList.forEach(g => { if (g.unidade_id) porUni[g.unidade_id] = (porUni[g.unidade_id] || 0) + g.subtotal; });
-    unidade_id = _uniDoPedido.sort((a, b) => porUni[b] - porUni[a])[0];
-  } else gruposList.forEach(g => { g.unidade_id = null; });
-
-  // Resolve plano_conta_id via DB
-  for (const g of gruposList) {
-    if (g.plano_conta) {
-      const { data } = await sb.from('cmp_categorias').select('plano_conta_id').eq('nome', g.plano_conta).maybeSingle();
-      g.plano_conta_id = data?.plano_conta_id || null;
-    }
-  }
-
-  const { data: lanc, error } = await sb.from('lancamentos').insert([{
-    descricao:      `Pedido ${pedido_num} — Comprador Externo`,
-    valor:          totalRecebido,   // TOTAL (nota + acréscimo) — o financeiro trata valor como total
-    acrescimo:      acrescimo,
-    vencimento,
-    tipo:           'pagar',
-    // Despesa de comprador externo entra SEMPRE pendente, em qualquer banco — mesma
-    // regra do desktop (app.js enviarDespesaCompExterno, commits 49f88e9 e 6d0c4d6).
-    // Nascer "pago" pulava a aprovacao/retirada do dinheiro no financeiro e deixava
-    // o lancamento fora da conciliacao, que so enxerga pendente.
-    status:         'pendente',
-    data_pagamento: null,
-    banco_id:       banco_id || BANCO_NUBANK_ID_MOB,
-    unidade_id:     unidade_id || null,
-    fornecedor_id:  fornecedor_id || null,
-    plano_conta_id: temRateio ? null : (gruposList[0]?.plano_conta_id || null),
-    numero_pedido:  pedido_num,
-    observacoes:    nf ? `Pedido ${pedido_num} — NF ${nf}` : `Pedido ${pedido_num}`,
-    desconto:       0,
-    tem_rateio:     temRateio,
-  }]).select('id').single();
-
-  if (error) { toast('Erro ao enviar despesa ao financeiro: ' + error, 'err'); return; }
-
-  if (temRateio && lanc?.id) {
-    await sb.from('rateio_itens').insert(
-      gruposList.map(g => _linhaRateio({ plano_conta_id: g.plano_conta_id, valor: g.subtotal, unidade_id: g.unidade_id }, { lancamento_id: lanc.id }))
-    );
-  }
-
-  if (conta_id && lanc?.id) {
-    await sb.from('cmp_contas_pagar').update({ lancamento_id: lanc.id }).eq('id', conta_id);
-  }
-}
+// `enviarDespesaCompExternoMobile` foi removida em 05/11/2026: ela dava insert
+// direto em `lancamentos`, pulando as Integracoes Pendentes. Quem faz esse
+// envio agora e `gerarContaFinanceiroMobile`, chamada por
+// `_executarFinalizarCompExtMob`.
 
 // Soma o total dos recebimentos de um pedido, IGNORANDO cabeçalhos órfãos (sem itens),
 // que inflariam o valor da conta (valor = soma de TODOS os cmp_recebimentos do pedido).
@@ -604,49 +542,39 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
     return;
   }
 
-  // Banco da despesa: o do adiantamento, quando houve um. Sem adiantamento, Nubank —
-  // que e o cartao com que o comprador externo compra. (Mesma regra do desktop.)
-  let bancoDespesa = BANCO_NUBANK_ID_MOB;
+  // O banco NAO e mais escolhido aqui. Ate 05/11/2026 esta tela chutava Nubank
+  // quando nao havia adiantamento; agora a despesa vai como rascunho e quem aprova,
+  // no financeiro, diz de onde saiu o dinheiro. A trava abaixo fica: adiantamento
+  // ja pago no Caixa = a saida do pedido ja aconteceu, nao se cria outra despesa.
   if (conta.adiantamento_lancamento_id) {
     const { data: adLanc } = await sb.from('lancamentos')
       .select('banco_id,status').eq('id', conta.adiantamento_lancamento_id).maybeSingle();
-    // Adiantamento ja PAGO em dinheiro = a saida do pedido ja aconteceu no Caixa.
-    // Vincula esse pagamento como a conta do pedido em vez de criar outra despesa.
     if (adLanc?.status === 'pago' && adLanc.banco_id === BANCO_CAIXA_ID_MOB) {
       await sb.from('cmp_contas_pagar').update({ lancamento_id: conta.adiantamento_lancamento_id }).eq('id', conta.id);
       return;
     }
-    if (adLanc?.banco_id) bancoDespesa = adLanc.banco_id;
   }
 
   const totalAcum = await _totalRecebComItem(pedido_num);
 
-  const { data: recebIds } = await sb.from('cmp_recebimentos').select('id').eq('pedido_num', pedido_num);
-  const { data: itensTodos } = await sb.from('cmp_recebimento_itens')
-    .select('*').in('recebimento_id', (recebIds||[]).map(r => r.id));
-  const { data: itensOrig } = await sb.from('cmp_compras')
-    .select('id,plano_conta,unidade_uso').eq('pedido_num', pedido_num);
-
-  // Unidade da despesa: a do item do pedido, igual ao gerarContaFinanceiroMobile.
-  // Sem ela o lancamento fica fora do DRE filtrado por unidade e so aparece no
-  // consolidado.
-  let unidade_id = null;
-  if (ref?.unidade_uso) {
-    const { data: uni } = await sb.from('unidades').select('id').ilike('nome', ref.unidade_uso).maybeSingle();
-    unidade_id = uni?.id || null;
-  }
-
   const dataRec = hojeLocal();
   const venc = conta.vencimento || dataRec;
 
-  await enviarDespesaCompExternoMobile({
-    pedido_num, conta_id: conta.id,
-    itensReceb: itensTodos || [],
-    itensOriginais: itensOrig || [],
-    totalRecebido: totalAcum, acrescimo: 0,
-    dataRec, vencimento: venc,
-    fornecedor_id: ref?.fornecedor_id || null, nf: null,
-    banco_id: bancoDespesa, unidade_id,
+  // VAI PARA AS INTEGRAÇÕES PENDENTES, não direto para o Contas a Pagar.
+  // Mesma mudança do desktop (app.js enviarDespesaCompExterno, 05/11/2026): o
+  // comprador externo era o único fluxo que pulava a aprovação do financeiro e
+  // nascia com o banco chutado em Nubank. Ver o comentário longo lá e o caso do
+  // pedido #02081. `gerarContaFinanceiroMobile` grava rascunho, tem a trava
+  // anti-duplicata e resolve categoria/unidade/rateio pelo banco (_rateioDoPedido),
+  // o que também dispensa a busca de itens e de unidade que havia aqui.
+  await gerarContaFinanceiroMobile({
+    parcelas: conta?.parcelas || 1, parcelaIntervalo: conta?.parcela_intervalo || 'mensal',
+    pedido_num, vencimento: venc, valor: totalAcum,
+    fornecedor_id:   ref?.fornecedor_id || null,
+    fornecedor_nome: ref?.fornecedor_nome || 'COMPRADOR EXTERNO',
+    categoria:       ref?.categoria || '',
+    nf_numero: null, conta_id: conta.id,
+    unidade_uso:     ref?.unidade_uso || '',
   });
 }
 
@@ -722,7 +650,13 @@ async function finalizarPedidoCompExtMob(pedido_num) {
 }
 
 async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome, categoria, nf_numero, conta_id, unidade_uso, parcelas = 1, parcelaIntervalo = 'mensal' }) {
-  const producao = localStorage.getItem('gc_integracao_fin') === 'producao';
+  // Fluxo de aprovação (rascunho → Integrações Pendentes) é o padrão permanente, igual
+  // ao desktop (modoIntegracaoProducao). O antigo toggle "Modo Teste/Produção" foi
+  // removido da interface, mas esta tela ainda lia a chave no localStorage — e
+  // localStorage NÃO expira: num celular que usou a versão antiga a chave podia
+  // continuar em 'producao' e o recebimento gravava direto em `lancamentos`,
+  // pulando a aprovação. Agora nunca grava direto.
+  const producao = false;
 
   // Resolve plano_conta_id via cmp_categorias
   let plano_conta_id = null;
