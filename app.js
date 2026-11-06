@@ -7057,7 +7057,7 @@ let _planFornTroca = {};            // { [unidade]: { pid: fornecedor_id } } for
 let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar', grupo: 'cat' };   // ver: comprar | nao | todos; grupo: cat | forn
 let _planAbertos = new Set();       // linhas abertas (detalhe)
 let _planPainel = '';               // '' | 'ajustes' | 'como'
-let _planRefDatas = { chega: null, ate: null };   // datas do cabeçalho da coluna Até a próxima entrega
+let _planRefDatas = { chega: null, ate: null, algumChega: false };   // datas do cabeçalho da coluna Até a próxima entrega
 let _planTocado = new Set();        // linha mexida nesta visita: não some da lista se deixar de faltar
 let _planCfgTimer = null;
 let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
@@ -7689,9 +7689,10 @@ function _pintarPlanTabela() {
   // Datas do cabeçalho da coluna: as que mais aparecem na lista; a linha só repete a data quando é outra
   const moda = arr => { const n = {}; arr.forEach(x => { n[x] = (n[x] || 0) + 1; }); return Object.keys(n).sort((a, b) => n[b] - n[a])[0] ?? null; };
   const comCons = vis.filter(x => x.l.consDia > 0);
-  _planRefDatas = { chega: moda(comCons.map(x => x.c.chega || '')) || null, ate: moda(comCons.filter(x => !x.c.proprio).map(x => x.c.ate)) };
+  _planRefDatas = { chega: moda(comCons.map(x => x.c.chega || '')) || null, ate: moda(comCons.filter(x => !x.c.proprio).map(x => x.c.ate)),
+    algumChega: comCons.some(x => x.c.chega) };
   const r = _planRefDatas;
-  document.getElementById('plan-th-ate').innerHTML = `<div class="plan-ate2"><span>${r.chega ? `Chega ${_planDiaTxt(r.chega)} com` : 'Tem hoje'}</span><i></i><span>Precisa até ${r.ate ? _planDiaTxt(r.ate) : 'a próxima entrega'}</span></div>`;
+  document.getElementById('plan-th-ate').innerHTML = `<div class="plan-ate2"><span>${r.chega ? `Chega ${_planDiaTxt(r.chega)} com` : r.algumChega ? 'Chega com' : 'Tem hoje'}</span><i></i><span>Precisa até ${r.ate ? _planDiaTxt(r.ate) : 'a próxima entrega'}</span></div>`;
   const porForn = _planFiltros.grupo === 'forn';
   const grupos = {};
   vis.forEach(x => (grupos[porForn ? (x.l.forn || 'Sem compra nos últimos 6 meses') : x.l.cat] ||= []).push(x));
@@ -7742,7 +7743,13 @@ function _planLinha(un, B, l, c, n1, porForn) {
     const tChega = c.nAntes > 0
       ? `${nn(l.tem)} em estoque${c.pedAntes > 0 ? ' + ' + n1(c.pedAntes) + ' já pedido' : ''} − ${n1(c.antes)} de consumo até ${_planDiaTxt(_isoMais(c.chega, -1))}${c.zerou ? '. Acaba antes de chegar: conta como zero (o que falta nesses dias não entra no pedido).' : ''}`
       : c.tipo === 'sem' ? 'Fornecedor sem dia de entrega no cadastro: conta como se chegasse hoje. Escolha "Chega" no topo.' : 'Estoque de hoje';
-    const subChega = c.zerou ? `<small>${acaba}</small>` : (c.chega || null) !== ref.chega ? `<small>${c.chega ? 'chega ' + _planDiaTxt(c.chega) : 'hoje'}</small>` : '';
+    // embaixo do número, o caminho do estoque até a entrega (Wagner, 06/11/2026: "155,7 com 335 no
+    // estoque — é contando com o que vai chegar?"): o que sai de consumo e o que entra já pedido
+    const outroDia = (c.chega || null) !== ref.chega;
+    const passos = c.nAntes > 0 ? [`−${n1(c.antes)} consumo`, c.pedAntes > 0 ? `+${n1(c.pedAntes)} a caminho` : ''].filter(Boolean).join(' ') : '';
+    const subChega = c.zerou ? `<small>${acaba}${outroDia ? ' · chega ' + _planDiaTxt(c.chega) : ''}</small>`
+      : c.tipo === 'sem' ? `<small>${ref.chega || ref.algumChega ? 'hoje · sem dia de entrega' : ''}</small>`
+      : `<small>${outroDia ? (c.chega ? _planDiaTxt(c.chega) : 'hoje') + (passos ? ' · ' : '') : ''}${passos}</small>`;
     const subAte = c.proprio ? `<small class="plan-proprio-txt">até ${_planDiaTxt(c.ate)} · só deste</small>` : c.ate !== ref.ate ? `<small>até ${_planDiaTxt(c.ate)}</small>` : '';
     duraHtml = `<div class="plan-ate2">
       <div class="${c.zerou ? 'plan-falta' : ''}" title="${esc(tChega)}"><b>${n1(c.chegaCom)}</b>${subChega}</div>
