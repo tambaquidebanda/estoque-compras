@@ -608,17 +608,13 @@ h1 {
 .plan-parte { display: block; font-size: .72rem; color: #7c3aed; white-space: nowrap; }
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
 .saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }
-/* coluna "Até a próxima entrega": dois números, chega com → precisa (06/11/2026) */
-.plan-dura { min-width: 210px; }
-.plan-ate2 { display: grid; grid-template-columns: 1fr 18px 1fr; align-items: start; gap: 4px; }
-.plan-ate2 > div b { display: block; font-size: .95rem; font-weight: 700; color: var(--pl-tinta); font-variant-numeric: tabular-nums; }
-.plan-ate2 > div.plan-falta b { color: var(--pl-vermelho); }
-.plan-ate2 small { display: block; font-size: .7rem; color: var(--pl-cinza); white-space: nowrap; }
-.plan-ate2 .plan-falta small { color: var(--pl-vermelho); font-weight: 600; }
-.plan-ate2 > i { color: #b7c3bf; font-size: .8rem; padding-top: 3px; text-align: center; }
-.plan-ate2 small.plan-proprio-txt { color: var(--pl-ambar); font-weight: 600; }
-.plan-tabela thead th#plan-th-ate { white-space: nowrap; }
-#plan-th-ate .plan-ate2 span { white-space: normal; line-height: 1.25; }
+/* colunas Tem agora / Sobra / Precisa no padrão da Meta (06/11/2026) */
+.plan-num { white-space: nowrap; }
+.meta-num-sub.plan-proprio-txt { color: var(--pl-ambar); font-weight: 600; }
+.plan-dia-forn { display: block; margin: 2px 0 0 auto; border: 1px solid var(--pl-linha); border-radius: 6px; padding: 1px 6px; font-size: .74rem; color: var(--pl-tinta); background: #fff; }
+.plan-dia-forn.plan-dia-ok { border-color: transparent; background: transparent; color: var(--pl-teal); padding: 0 0 0 6px; }
+.plan-dia-forn.plan-dia-ok:hover { border-color: var(--pl-linha); background: #fff; }
+.plan-dia-forn:focus { outline: 2px solid var(--pl-teal); outline-offset: 1px; }
 /* tracinho no detalhe da linha */
 .plan-trac-txt { font-size: .78rem; color: var(--pl-cinza); }
 .plan-trac-txt b { color: var(--pl-tinta); }

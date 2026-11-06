@@ -2129,14 +2129,15 @@
                 <th class="plan-col-chk"><input type="checkbox" class="form-check-input" id="plan-marcar-todos" title="Marcar/desmarcar os da lista" onchange="planMarcarTodos(this.checked)"></th>
                 <th>Produto</th>
                 <th class="text-end" title="Média por semana do que a venda consumiu, aberta pela ficha até a MP">Consumo / semana</th>
-                <th class="text-end" title="O que a unidade tem agora (e o que já foi pedido e ainda não chegou)">Estoque</th>
-                <th id="plan-th-ate" title="Com quanto o produto chega no dia da entrega e quanto precisa até a próxima entrega (consumo + margem). Pedir = a diferença. Passe o mouse no número para ver a conta.">Até a próxima entrega</th>
+                <th class="text-end" title="O que a unidade tem agora (e, embaixo, o que já foi pedido e ainda não chegou)">Tem agora</th>
+                <th class="text-end" id="plan-th-sobra" title="O que sobra no dia que o pedido chega: tem agora + o que chega até lá − consumo até a véspera. Vermelho = acaba antes de chegar">Sobra na chegada</th>
+                <th class="text-end" id="plan-th-precisa">Precisa</th>
                 <th class="text-center">Pedir</th>
                 <th class="text-end">Total</th>
               </tr>
             </thead>
             <tbody id="plan-tbody">
-              <tr><td colspan="7" class="text-center text-muted py-4">Carregando...</td></tr>
+              <tr><td colspan="8" class="text-center text-muted py-4">Carregando...</td></tr>
             </tbody>
           </table>
         </div>
