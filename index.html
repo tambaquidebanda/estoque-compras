@@ -2057,9 +2057,11 @@
       <div class="plan-barra">
         <div class="plan-barra-esq">
           <button type="button" class="plan-param-chip" id="plan-chips" onclick="planAjustes()" aria-expanded="false" aria-controls="plan-ajustes"></button>
-          <div class="plan-chega" id="plan-chega-box" title="Quando vai chegar o pedido que você está montando agora. Vale para todos os produtos desta unidade, só hoje.">
+          <div class="plan-chega" id="plan-chega-box" title="Quando chega o pedido que você está montando agora e quando é a entrega seguinte. Vale para todos os produtos desta unidade, só hoje. Vazio = pelo cadastro do fornecedor.">
             <i class="bi bi-truck"></i><label for="plan-chega">Chega</label>
             <input type="date" id="plan-chega" onchange="planChega(this.value)">
+            <label for="plan-ate" title="Até quando a compra de hoje precisa durar (cobre até a véspera)">próxima entrega</label>
+            <input type="date" id="plan-ate" onchange="planAte(this.value)">
             <span id="plan-chega-txt"></span>
             <button type="button" id="plan-chega-x" class="d-none" onclick="planChega('')" title="Voltar ao dia de entrega de cada fornecedor" aria-label="Voltar ao cadastro do fornecedor">×</button>
           </div>
@@ -2128,7 +2130,7 @@
                 <th>Produto</th>
                 <th class="text-end" title="Média por semana do que a venda consumiu, aberta pela ficha até a MP">Consumo / semana</th>
                 <th class="text-end" title="O que a unidade tem agora (e o que já foi pedido e ainda não chegou)">Estoque</th>
-                <th title="Até que dia o estoque mais o já pedido aguenta, comparado com até quando a compra precisa cobrir">Dura até</th>
+                <th title="Com quanto o produto chega no dia da entrega e quanto precisa até a próxima entrega. Pedir = a diferença.">Até a próxima entrega</th>
                 <th class="text-center">Pedir</th>
                 <th class="text-end">Total</th>
               </tr>
