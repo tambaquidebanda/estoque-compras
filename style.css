@@ -608,14 +608,30 @@ h1 {
 .plan-parte { display: block; font-size: .72rem; color: #7c3aed; white-space: nowrap; }
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
 .saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }
-/* coluna "Até a próxima entrega": a conta do papel em duas linhas (06/11/2026) */
-.plan-dura { min-width: 230px; }
-.plan-ate-l { font-size: .8rem; color: var(--pl-tinta); white-space: nowrap; }
-.plan-ate-l b { font-weight: 700; }
-.plan-ate-l.plan-falta { font-weight: 500; }
-.plan-ate-s { font-size: .72rem; color: var(--pl-cinza); line-height: 1.3; }
-.plan-ate-s .plan-falta { font-weight: 700; }
-.plan-sobra { color: var(--pl-teal); font-weight: 600; }
+/* coluna "Até a próxima entrega": dois números, chega com → precisa (06/11/2026) */
+.plan-dura { min-width: 210px; }
+.plan-ate2 { display: grid; grid-template-columns: 1fr 18px 1fr; align-items: start; gap: 4px; }
+.plan-ate2 > div b { display: block; font-size: .95rem; font-weight: 700; color: var(--pl-tinta); font-variant-numeric: tabular-nums; }
+.plan-ate2 > div.plan-falta b { color: var(--pl-vermelho); }
+.plan-ate2 small { display: block; font-size: .7rem; color: var(--pl-cinza); white-space: nowrap; }
+.plan-ate2 .plan-falta small { color: var(--pl-vermelho); font-weight: 600; }
+.plan-ate2 > i { color: #b7c3bf; font-size: .8rem; padding-top: 3px; text-align: center; }
+.plan-ate2 small.plan-proprio-txt { color: var(--pl-ambar); font-weight: 600; }
+.plan-tabela thead th#plan-th-ate { white-space: nowrap; }
+#plan-th-ate .plan-ate2 span { white-space: normal; line-height: 1.25; }
+/* tracinho no detalhe da linha */
+.plan-trac-txt { font-size: .78rem; color: var(--pl-cinza); }
+.plan-trac-txt b { color: var(--pl-tinta); }
+.plan-dura-bar { position: relative; height: 6px; background: #edf1f0; border-radius: 99px; margin-top: 10px; }
+.plan-dura-bar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; }
+.plan-dura-bar i { position: absolute; top: -4px; bottom: -4px; width: 3px; background: var(--pl-tinta); opacity: .6; border-radius: 1px; }
+/* o tracinho é uma alça: área de toque maior que o desenho */
+.plan-dura-bar[role="slider"] { cursor: ew-resize; touch-action: none; outline-offset: 4px; }
+.plan-dura-bar[role="slider"]::before { content: ""; position: absolute; inset: -8px 0; }
+.plan-dura-bar[role="slider"]:hover i, .plan-dura-bar[role="slider"]:focus-visible i, .plan-dura-bar.arrastando i { width: 5px; margin-left: -1px; top: -6px; bottom: -6px; opacity: .9; background: var(--pl-teal); }
+.plan-dura-falta .plan-dura-bar span { background: #e0796b; }
+.plan-dura-ok .plan-dura-bar span { background: #5fb3a6; }
+.plan-dura-muito .plan-dura-bar span { background: #e0b354; }
 .plan-pedir { width: 112px; margin: 0 auto; text-align: center; }
 .plan-pedir input { text-align: center; font-weight: 700; color: var(--pl-teal); }
 .plan-pedir.plan-mudou input { background: #fffaf0; border-color: #e0b354; }
