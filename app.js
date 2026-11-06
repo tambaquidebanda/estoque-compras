@@ -7057,7 +7057,6 @@ let _planFornTroca = {};            // { [unidade]: { pid: fornecedor_id } } for
 let _planFiltros = { cat: '', forn: '', busca: '', ver: 'comprar', grupo: 'cat' };   // ver: comprar | nao | todos; grupo: cat | forn
 let _planAbertos = new Set();       // linhas abertas (detalhe)
 let _planPainel = '';               // '' | 'ajustes' | 'como'
-let _planRefDatas = { chega: null, ate: null, algumChega: false };   // datas do cabeçalho da coluna Até a próxima entrega
 let _planTocado = new Set();        // linha mexida nesta visita: não some da lista se deixar de faltar
 let _planCfgTimer = null;
 let _pedidoDoPlan = null;           // cabeçalho que a tela de Pedido preenche ao abrir
@@ -7706,17 +7705,10 @@ function _pintarPlanTabela() {
     return;
   }
   const n1 = v => v > 0 && v < 1 ? Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : _metaNum(v);
-  // Datas do cabeçalho da coluna: as que mais aparecem na lista; a linha só repete a data quando é outra
-  const moda = arr => { const n = {}; arr.forEach(x => { n[x] = (n[x] || 0) + 1; }); return Object.keys(n).sort((a, b) => n[b] - n[a])[0] ?? null; };
-  // só linhas com dia de entrega de verdade: fornecedor sem dia conta "chega hoje" e não pode
-  // virar o cabeçalho (Wagner, 06/11/2026: "por que precisa sex→qui?" — era a Ambev sem dia)
-  const comCons = vis.filter(x => x.l.consDia > 0 && x.c.tipo !== 'sem');
-  _planRefDatas = { chega: moda(comCons.map(x => x.c.chega || '')) || null, ate: moda(comCons.filter(x => !x.c.proprio).map(x => x.c.ate)),
-    algumChega: comCons.some(x => x.c.chega) };
-  const r = _planRefDatas;
-  document.getElementById('plan-th-sobra').textContent = r.chega ? `Sobra na ${_planDiaTxt(r.chega)}` : 'Sobra na chegada';
-  document.getElementById('plan-th-precisa').textContent = r.ate ? `Precisa ${_planFaixaDow(r.chega || _planD.hoje, _isoMais(r.ate, -1))}` : 'Precisa até a próxima';
-  document.getElementById('plan-th-precisa').title = r.ate ? `Consumo de ${_planDiaTxt(r.chega || _planD.hoje)} até ${_planDiaTxt(_isoMais(r.ate, -1))} (véspera da próxima entrega) + margem` : '';
+  // Cabeçalho sem data (Wagner, 06/11/2026): cada fornecedor tem o seu dia, então cada linha
+  // mostra o próprio período embaixo do número
+  document.getElementById('plan-th-sobra').textContent = 'Sobra na chegada';
+  document.getElementById('plan-th-precisa').textContent = 'Precisa';
   const porForn = _planFiltros.grupo === 'forn';
   const grupos = {};
   vis.forEach(x => (grupos[porForn ? (x.l.forn || 'Sem compra nos últimos 6 meses') : x.l.cat] ||= []).push(x));
@@ -7758,7 +7750,6 @@ function _planLinha(un, B, l, c, n1, porForn) {
   // Colunas no padrão da Meta (Wagner, 06/11/2026): Tem agora | Sobra na [dia que chega] |
   // Precisa [chega→véspera da próxima]. O número grande e, embaixo, de onde ele vem. As datas
   // ficam no cabeçalho; a linha só mostra a data quando é diferente dele.
-  const ref = _planRefDatas;
   const unx2 = `<span class="plan-un">${esc(l.un)}</span>`;
   const margem = Math.round(_planMargem(un) * 100);
   const semDia = c.tipo === 'sem' || c.tipo === 'forn';
@@ -7767,18 +7758,17 @@ function _planLinha(un, B, l, c, n1, porForn) {
       onchange="planChegaForn('${l.fornId}', this.value)" aria-label="Dia que chega o pedido de ${esc(l.forn || '')}">` : '';
   let sobraHtml = '<span class="text-muted">—</span>', precisaHtml = '<span class="text-muted">—</span>';
   if (l.consDia > 0) {
-    const outroDia = (c.chega || null) !== ref.chega;
     const fx = c.nAntes > 0 ? `consumo ${n1(c.antes)} ${_planFaixaDow(_planD.hoje, _isoMais(c.chega, -1))}` : '';
     const tSobra = c.nAntes > 0
       ? `Tem agora ${n1(l.tem)}${c.pedAntes > 0 ? ' + ' + n1(c.pedAntes) + ' a caminho' : ''} − consumo ${n1(c.antes)} até ${_planDiaTxt(_isoMais(c.chega, -1))}${c.zerou ? '. Acaba antes de chegar: o pedido conta a partir de zero (o que falta nesses dias não entra).' : ''}`
       : c.tipo === 'sem' ? 'Fornecedor sem dia de entrega: conta como se chegasse hoje. Escolha o dia que chega.' : 'Chega hoje';
-    const pre = outroDia && c.chega && !semDia ? `chega ${_planDiaTxt(c.chega)}${fx ? ' · ' : ''}` : '';
+    const pre = c.chega && !semDia ? `chega ${_planDiaTxt(c.chega)}${fx ? ' · ' : ''}` : '';
     sobraHtml = `<span title="${esc(tSobra)}">${c.zerou ? `<span class="plan-falta">0</span>${unx2}<span class="meta-num-sub falta">falta ${n1(c.faltaAntes)} antes de chegar</span>`
         : `${n1(c.chegaCom)}${unx2}`}${!c.zerou && (pre || fx) ? `<span class="meta-num-sub">${pre}${fx}</span>` : ''}</span>${diaInp
         ? `${c.tipo === 'sem' ? '<span class="meta-num-sub">escolha o dia que chega</span>' : ''}${diaInp}` : ''}`;
     const subAte = c.proprio ? `<span class="meta-num-sub plan-proprio-txt">até ${_planDiaTxt(c.ate)} · só deste</span>`
       : c.tipo === 'sem' ? `<span class="meta-num-sub">hoje + ${c.dias} dias</span>`
-      : c.ate !== ref.ate || outroDia ? `<span class="meta-num-sub">${_planFaixaDow(c.chega || _planD.hoje, _isoMais(c.ate, -1))}</span>` : '';
+      : `<span class="meta-num-sub">${_planFaixaDow(c.chega || _planD.hoje, _isoMais(c.ate, -1))}</span>`;
     precisaHtml = `<span title="Consumo ${n1(c.cobre)} ${esc(l.un)} + ${margem}%, de ${_planDiaTxt(c.chega || _planD.hoje)} até ${_planDiaTxt(_isoMais(c.ate, -1))}${c.pedMeio > 0 ? `. Chegam ${n1(c.pedMeio)} já pedidos no meio do período (abatem do Pedir)` : ''}">${n1(c.precisa)}${unx2}${subAte}<span class="meta-num-sub">consumo ${n1(c.cobre)} + ${margem}%</span></span>`;
   } else if (diaInp) sobraHtml = `<span class="meta-num-sub">escolha o dia que chega</span>${diaInp}`;
   const mudou = _planPedir[un]?.[l.pid] !== undefined;
