@@ -1296,6 +1296,7 @@ async function _sincronizarRascunhoParcelas(pedido_num, notaTotal, acrescimo) {
   for (let i = 0; i < rascs.length; i++) {
     await sb.from('lancamentos_rascunho').update({ valor: notas[i], acrescimo: acrs[i] }).eq('id', rascs[i].id);
   }
+  await _refazerRateioRecebido(pedido_num, 'rascunho_rateio_itens', 'rascunho_id', rascs.map((r, i) => ({ id: r.id, valor: notas[i] })));
 }
 
 // Mesma coisa para lançamentos aprovados. Parcela paga = não mexe em nada.
@@ -1310,8 +1311,48 @@ async function _sincronizarLancamentoParcelas(pedido_num, notaTotal, acrescimo) 
   for (let i = 0; i < lancs.length; i++) {
     await sb.from('lancamentos').update({ valor: notas[i], acrescimo: acrs[i] }).eq('id', lancs[i].id);
   }
+  await _refazerRateioRecebido(pedido_num, 'rateio_itens', 'lancamento_id', lancs.map((l, i) => ({ id: l.id, valor: notas[i] })));
   return true;
 }
+// O recebimento muda o valor da conta, mas o rateio (plano x unidade) ficava o do
+// PEDIDO: comprador externo vai ao financeiro antes de comprar, a conta nasce com os
+// itens pedidos e o recebimento so trocava o valor. 10 contas assim desde o #01650
+// (#02018: conta 943,83, rateio somando 1.022,70) - total certo, DRE por categoria
+// errada (06/11/2026). Agora o rateio de quem JA TEM rateio e refeito pelo que foi
+// recebido, repartido pelo valor de cada parcela. Conta sem rateio (uma categoria so)
+// nao e tocada. Grava o novo antes de apagar o antigo: falhando no meio, a conta
+// nunca fica sem rateio. Linha sem plano de contas = nao mexe (na duvida, o antigo).
+function _repartirRateio(linhas, total) {
+  const soma = linhas.reduce((s, l) => s + l.valor, 0);
+  if (!(soma > 0)) return [];
+  const out = linhas.map(l => ({ ...l, valor: Math.round(l.valor * total / soma * 100) / 100 }));
+  const dif = Math.round((total - out.reduce((s, l) => s + l.valor, 0)) * 100) / 100;
+  if (dif) out[0].valor = Math.round((out[0].valor + dif) * 100) / 100;
+  return out.filter(l => l.valor !== 0);
+}
+async function _refazerRateioRecebido(pedido_num, tabela, chave, alvos) {
+  // alvos: [{ id, valor }] - uma entrada por parcela (lancamento ou rascunho)
+  try {
+    const ids = alvos.map(a => a.id);
+    const { data: antigos, error: eAnt } = await sb.from(tabela).select('id,' + chave).in(chave, ids);
+    if (eAnt || !antigos?.length) return;
+    const { linhas } = await _rateioDoPedido(pedido_num);
+    if (!linhas.length || linhas.some(l => !l.plano_conta_id)) return;
+    const comRateio = new Set(antigos.map(a => a[chave]));
+    const novas = [];
+    alvos.filter(a => comRateio.has(a.id)).forEach(a =>
+      _repartirRateio(linhas, a.valor).forEach(r => novas.push(_linhaRateio(r, { [chave]: a.id }))));
+    if (!novas.length) return;
+    const { data: gravadas, error: eIns } = await sb.from(tabela).insert(novas).select('id');
+    if (eIns) { console.warn('rateio nao refeito', pedido_num, eIns.message); return; }
+    const { error: eDel } = await sb.from(tabela).delete().in('id', antigos.map(a => a.id));
+    if (eDel) {
+      console.warn('rateio antigo nao apagado, desfazendo o novo', pedido_num, eDel.message);
+      await sb.from(tabela).delete().in('id', (gravadas || []).map(g => g.id));
+    }
+  } catch (e) { console.warn('rateio nao refeito', pedido_num, e); }
+}
+
 
 function renderPreviewParcelasMob() {
   const n   = Math.max(1, parseInt(document.getElementById('rec-parcelas')?.value, 10) || 1);
