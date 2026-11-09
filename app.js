@@ -4552,7 +4552,8 @@ async function _enviarPedidoInterno() {
     .map(it => ({ produto_id: it.produto_id, nome: it.nome, qtd_pedida: it.pedido }));
 
   if (!itensPed.length) {
-    toast(`${num_inv} salvo! Todos os produtos estão no padrão — nenhum pedido gerado.`, 'ok');
+    const _subst = await _substituirPendentesAntigos(T, null);
+    toast(`${num_inv} salvo! Todos os produtos estão no padrão — nenhum pedido gerado.${_subst}`, 'ok');
     carregarHistoricoInv();
     _limparCamposEstoque(T);
     return true;
@@ -4569,11 +4570,30 @@ async function _enviarPedidoInterno() {
   if (ePed) { toast(`${num_inv} salvo, mas erro no pedido: ` + ePed.message, 'warn'); return; }
 
   await sb.from('pedidos_internos_itens').insert(itensPed.map(it => ({ ...it, pedido_id: ped.id })));
+  const _subst = await _substituirPendentesAntigos(T, ped.id);
 
-  toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅`, 'ok');
+  toast(`${num_inv} salvo + ${numPed} enviado (${itensPed.length} item(s))! ✅${_subst}`, 'ok');
   carregarHistoricoInv();
   _limparCamposEstoque(T);
   return true;
+}
+
+// PEDIDO NOVO SUBSTITUI O PENDENTE ANTIGO DO MESMO GRUPO (09/11/2026).
+// A trava "ainda aguardando liberação" só olha pedido do MESMO dia, então um
+// pendente de ontem não segurava o de hoje e o grupo acumulava pedidos abertos:
+// em 09/11 o P10 COZINHA/CONGELADOS tinha 3 (PED-4225, 4271 e 4316). Se o estoque
+// liberasse todos, a mercadoria saía em triplo. A contagem mais nova é a que vale:
+// ao gravar, os pendentes do mesmo setor/grupo/unidade viram 'cancelado'. Só
+// 'pendente' (liberado segue a trava de confirmação), só pedido normal de
+// contagem (emergência, transferência e meta de produção ficam como estão).
+async function _substituirPendentesAntigos(T, novoPedId) {
+  let q = sb.from('pedidos_internos').update({ status: 'cancelado' })
+    .eq('setor', T.setor).eq('obs', T.grupo).eq('local', T.local)
+    .eq('tipo', 'normal').eq('status', 'pendente').is('prod_meta_id', null);
+  if (novoPedId) q = q.neq('id', novoPedId);
+  const { data, error } = await q.select('num_pedido');
+  if (error) { console.error('substituir pendentes antigos:', error); return ''; }
+  return data?.length ? ` Substituiu ${data.map(p => p.num_pedido).join(', ')}.` : '';
 }
 
 async function salvarSaldoContagemDesktop() {
