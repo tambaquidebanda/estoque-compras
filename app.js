@@ -12049,6 +12049,14 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
   // anti-duplicata (por numero_pedido E por descrição) e as parcelas. O banco passa
   // a ser escolhido por quem aprova, no financeiro — não mais adivinhado aqui.
   // `banco_id`/`dataRec` continuam na assinatura só para não quebrar quem chama.
+  //
+  // A observação leva a forma de pagamento do pedido ("Pedido #X — Dinheiro"), igual
+  // ao "Enviar Financeiro". É por ela que o financeiro mostra o card "Pagamento em
+  // Dinheiro — Caixa" em vez de "Transferência Interna". Sem ela, #02117, #02151 e
+  // #02152 (pagos em dinheiro) chegaram como transferência (09/11/2026).
+  const { data: _fp } = await sb.from('cmp_compras').select('forma_pagamento')
+    .eq('pedido_num', pedido_num).not('forma_pagamento', 'is', null).limit(1);
+  const formaPgto = _fp?.[0]?.forma_pagamento || '';
   await gerarContaFinanceiro({
     pedido_num,
     vencimento,
@@ -12059,7 +12067,7 @@ async function enviarDespesaCompExterno({ pedido_num, conta_id, itensReceb, tota
     plano_conta:     temRateio ? null : (gruposList[0]?.plano_conta || ''),
     nf_numero:       nf,
     conta_id:        conta_id || null,
-    obs:             `Pedido ${pedido_num}`,
+    obs:             formaPgto ? `Pedido ${pedido_num} — ${formaPgto}` : `Pedido ${pedido_num}`,
     temRateio,
     rateioItensResolvidos: temRateio
       ? gruposList.map(g => ({ plano_conta_id: g.plano_conta_id, valor: g.subtotal, unidade_id: g.unidade_id }))

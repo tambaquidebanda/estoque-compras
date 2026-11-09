@@ -567,7 +567,10 @@ async function _executarFinalizarCompExtMob(pedido_num, conta, ref) {
   // pedido #02081. `gerarContaFinanceiroMobile` grava rascunho, tem a trava
   // anti-duplicata e resolve categoria/unidade/rateio pelo banco (_rateioDoPedido),
   // o que também dispensa a busca de itens e de unidade que havia aqui.
+  const { data: _fp } = await sb.from('cmp_compras').select('forma_pagamento')
+    .eq('pedido_num', pedido_num).not('forma_pagamento', 'is', null).limit(1);
   await gerarContaFinanceiroMobile({
+    formaPgto: _fp?.[0]?.forma_pagamento || '',
     parcelas: conta?.parcelas || 1, parcelaIntervalo: conta?.parcela_intervalo || 'mensal',
     pedido_num, vencimento: venc, valor: totalAcum,
     fornecedor_id:   ref?.fornecedor_id || null,
@@ -649,7 +652,7 @@ async function finalizarPedidoCompExtMob(pedido_num) {
   await carregarPedidosPendentes();
 }
 
-async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome, categoria, nf_numero, conta_id, unidade_uso, parcelas = 1, parcelaIntervalo = 'mensal' }) {
+async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, fornecedor_id, fornecedor_nome, categoria, nf_numero, conta_id, unidade_uso, parcelas = 1, parcelaIntervalo = 'mensal', formaPgto = '' }) {
   // Fluxo de aprovação (rascunho → Integrações Pendentes) é o padrão permanente, igual
   // ao desktop (modoIntegracaoProducao). O antigo toggle "Modo Teste/Produção" foi
   // removido da interface, mas esta tela ainda lia a chave no localStorage — e
@@ -688,7 +691,9 @@ async function gerarContaFinanceiroMobile({ pedido_num, vencimento, valor, forne
     fornecedor_id:  fornecedor_id || null,
     plano_conta_id: temRateio ? null : plano_conta_id,
     numero_pedido:  pedido_num,          // sempre o pedido — NF fica nas observações
-    observacoes:    nf_numero ? `Pedido ${pedido_num} — NF ${nf_numero}` : `Pedido ${pedido_num}`,
+    // A forma de pagamento vai na observação ("Pedido #X — Dinheiro"): é por ela que o
+    // financeiro mostra o card de Dinheiro em vez de Transferência (09/11/2026).
+    observacoes:    `Pedido ${pedido_num}` + (formaPgto ? ` — ${formaPgto}` : '') + (nf_numero ? ` — NF ${nf_numero}` : ''),
     acrescimo:      0,
     desconto:       0,
     tem_rateio:     temRateio,
