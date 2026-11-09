@@ -7592,8 +7592,20 @@ function _planCobertura(un, l, nAntes, dias) {
   }
   if (min === null) { min = bal; minSem = balSem; }
   const falta = Math.max(0, -min);
-  return { antes, cobre, precisa: cobre * fm, falta, sobra: min, sobraSem: minSem, chegaCom, pedAntes, pedMeio, zerou, faltaAntes,
+  const res = { antes, cobre, precisa: cobre * fm, falta, sobra: min, sobraSem: minSem, chegaCom, pedAntes, pedMeio, zerou, faltaAntes,
     auto: _planArred(falta / l.fator, l.unComp) };
+  if (_planFracao(l.un)) return res;
+  // Produto vendido inteiro (Wagner, 09/11/2026: "não vendo meio petit gateau"): consumo
+  // quebrado arredonda para CIMA e a conta da linha fecha em número inteiro, para quem lê
+  // conseguir refazer: chega com = tem − consumo até chegar; precisa = consumo × margem;
+  // pedir = precisa − chega com. KG/L/G/ML seguem com decimal. Nunca pede menos que a conta
+  // dia a dia (que pega o buraco quando o já pedido chega no meio do período).
+  const antesI = Math.ceil(antes - 1e-9), cobreI = Math.ceil(cobre - 1e-9);
+  const chegaComI = zerou ? 0 : Math.max(0, Math.floor(l.tem + pedAntes - antesI + 1e-9));
+  const precisaI = Math.ceil(cobreI * fm - 1e-9);
+  const faltaI = Math.max(0, Math.ceil(falta - 1e-9), precisaI - chegaComI - pedMeio);
+  return { ...res, antes: antesI, cobre: cobreI, precisa: precisaI, chegaCom: chegaComI, falta: faltaI,
+    faltaAntes: Math.ceil(faltaAntes - 1e-9), auto: _planArred(faltaI / l.fator, l.unComp) };
 }
 // Quanto do já pedido chega no dia d (pedido atrasado ou sem data entra hoje)
 const _planChegaDia = (l, d) => (l.pedidoChega || []).reduce((s, x) => s + (x.dia === d ? x.q : 0), 0);
@@ -7776,7 +7788,8 @@ function _planLinha(un, B, l, c, n1, porForn) {
     tags.push(`<span class="plan-base plan-base-saida" title="Compra em ${esc(l.unComp)} e usa em ${esc(l.un)}, mas a conversão no cadastro está 1. Confira a embalagem no cadastro do produto.">conferir embalagem</span>`);
   const sub = porForn ? esc(l.cat) : l.forn ? `${esc(l.forn)}${l.fornOrigem === 'troca' ? ' <i class="bi bi-arrow-left-right" title="Fornecedor trocado nesta tela"></i>' : ''}` : 'sem compra recente';
   const diasBase = l.base === 'ficha' ? B.nDias : B.nCal;
-  const porSem = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
+  const porSem0 = l.vendido > 0 && diasBase ? l.vendido / diasBase * 7 : 0;
+  const porSem = porSem0 > 0 && !_planFracao(l.un) ? Math.ceil(porSem0 - 1e-9) : porSem0;   // inteiro: 24,5 → 25
   // Colunas no padrão da Meta (Wagner, 06/11/2026): Tem agora | Sobra na [dia que chega] |
   // Precisa [chega→véspera da próxima]. O número grande e, embaixo, de onde ele vem. As datas
   // ficam no cabeçalho; a linha só mostra a data quando é diferente dele.
