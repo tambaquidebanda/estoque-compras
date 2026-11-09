@@ -7052,6 +7052,12 @@ function _processarWbInv(wb) {
 const _PLAN_MARGEM_PADRAO = 0.25;
 const _PLAN_DIAS_PADRAO = 7;
 const _PLAN_PEDIDO_DIAS = 21;          // pedido pendente mais velho que isso não conta como "a caminho"
+// Pedido com a entrega vencida há mais que isso e ainda não recebido sai da conta: em 09/11/2026
+// havia 27 assim (o mais velho de 04/09), quase todos recebidos e desfeitos pelo Devolver ou
+// repetidos, e o Planejamento contava tudo como "chega hoje" (1.550 L de chopp fantasma).
+// Aparece no detalhe da linha como "Atrasado, fora da conta". 2 dias = entrega um pouco
+// atrasada continua contando, para ninguém comprar de novo o que só está chegando tarde.
+const _PLAN_ATRASO_DIAS = 2;
 const _PLAN_CFG = 'planejamento_compras';   // inv_configuracoes: margem, dias e dias por produto
 // Unidade do financeiro (cmp_compras.unidade_uso) de cada unidade da Produção
 const _PLAN_UNI_FIN = { 'Centro': 'Tambaqui de Banda Teatro', 'Delivery P10': 'Delivery P10' };
@@ -7292,7 +7298,7 @@ function _planBase(un) {
   });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
   const C = _planCompras(D.compras, un, D.hoje, p);
-  const { pedido, pedidoDet, pedidoChega, comprado } = C;
+  const { pedido, pedidoDet, pedidoChega, pedidoAtrasado, comprado } = C;
   // ── linhas ──
   const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
   Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
@@ -7320,7 +7326,7 @@ function _planBase(un) {
     return {
       consDow, chegou: chegou[pid] || {},
       ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [], pedidoAtrasado: pedidoAtrasado[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta, C });
@@ -7333,13 +7339,17 @@ function _planCompras(compras, un, hoje, p) {
   const fin = _PLAN_UNI_FIN[un];
   const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
   const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
+  const limiteAtraso = _isoMais(hoje, -_PLAN_ATRASO_DIAS);
+  const pedidoAtrasado = {};   // { pid: ['#01998 (28/10) · era para 30/10'] } vencido, fora da conta
   const pedido = {}, pedidoDet = {}, pedidoChega = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
   const uso = {};        // { pid: { forn: { n: pedidos distintos, ped: Set, fornId, data } } } da unidade
   const historico = {};  // { pid: { forn: fornId } } quem já vendeu este produto (180 dias, qualquer unidade)
   [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
     const pid = c.produto_id;
     const minha = c.unidade_uso === fin;
-    if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
+    if (minha && c.status_receb === 'pendente' && c.data_entrega && c.data_entrega < limiteAtraso) {
+      (pedidoAtrasado[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)}) · era para ${_ddmm(c.data_entrega)}`);
+    } else if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
       const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
       pedido[pid] = (pedido[pid] || 0) + q;
       // chega no dia da entrega do pedido; sem data ou atrasado (nao recebido) conta como hoje
@@ -7366,7 +7376,7 @@ function _planCompras(compras, un, hoje, p) {
   });
   const catDaCategoria = {};
   Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
-  return { pedido, pedidoDet, pedidoChega, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
+  return { pedido, pedidoDet, pedidoChega, pedidoAtrasado, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
 }
 
 // Fornecedor sugerido de um produto (Wagner, 28/10/2026: o último fornecedor errava quando
@@ -7828,7 +7838,8 @@ function _planDetalhe(un, B, l, c, n1) {
       lin('Conta como estoque', `${n1(l.tem)} ${unx}`, true) +
       (l.temDet.some(([, q]) => q < 0) ? '<div class="mt-1 text-muted">Negativo: saiu por pedido interno mais do que entrou. Quase sempre é compra que chegou e ainda não foi recebida no sistema.</div>' : '')
     : '<div class="vazio">Nada em estoque nesta unidade.</div>') + fora;
-  const peds = l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '';
+  const peds = (l.pedidoDet.length ? `<h6 class="mt-2">Pedidos não recebidos</h6>${l.pedidoDet.map(x => `<div>${esc(x)}</div>`).join('')}` : '') +
+    ((l.pedidoAtrasado || []).length ? `<h6 class="mt-2">Atrasados, fora da conta</h6>${l.pedidoAtrasado.map(x => `<div>${esc(x)}</div>`).join('')}<div class="text-muted">Entrega vencida há mais de ${_PLAN_ATRASO_DIAS} dias e não recebido. Não conta como chegando até alguém receber ou dispensar.</div>` : '');
   // o que chegou desde segunda: já está no estoque acima, aparece para explicar
   const chg = Object.entries(l.chegou || {}).sort();
   const chegouHtml = chg.length ? `<h6 class="mt-2">Chegou nesta semana</h6>${chg.map(([d, q]) =>
@@ -18668,7 +18679,7 @@ function _pintarMpMeta() {
       <span class="small text-muted ms-2">${grupos.plan.length} MP que a loja também usa: o Planejamento de compras compra o consumo inteiro, inclusive o da Produção</span></td></tr>` + grupos.plan.map(lin).join('') : '');
   corpo.innerHTML = `
     <p class="small text-muted mb-2">A meta final de cada SA aberta pela ficha até a matéria-prima. Já desconta o que está
-      no ${esc(_rotuloSemIcone(u.local_mp))}, na Produção do ${esc(u.rotulo)} e o que já foi pedido e não chegou (pedidos dos últimos ${_PLAN_PEDIDO_DIAS} dias).
+      no ${esc(_rotuloSemIcone(u.local_mp))}, na Produção do ${esc(u.rotulo)} e o que já foi pedido e não chegou (pedidos dos últimos ${_PLAN_PEDIDO_DIAS} dias, sem os de entrega vencida há mais de ${_PLAN_ATRASO_DIAS} dias).
       <strong>Falta</strong> é o que precisa ser comprado; <strong>Pedir</strong> é a Falta na embalagem de compra, arredondada para cima, e pode ser trocada.</p>
     <div class="table-responsive"><table class="table table-sm align-middle mb-0">
       <thead><tr><th></th><th>MP</th><th class="text-end">Precisa</th><th class="text-end">${esc(_rotuloSemIcone(u.local_mp))}</th>
