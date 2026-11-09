@@ -7341,22 +7341,47 @@ function _planCompras(compras, un, hoje, p) {
   const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
   const limiteAtraso = _isoMais(hoje, -_PLAN_ATRASO_DIAS);
   const pedidoAtrasado = {};   // { pid: ['#01998 (28/10) · era para 30/10'] } vencido, fora da conta
+  // Pedido da semana dividido em entregas (Wagner, 09/11/2026): a data_entrega do pedido é a
+  // da 1ª entrega; o resto chega nos outros dias do fornecedor dentro do período. Pedido que
+  // já teve recebimento parcial também segue "a caminho" até o fim do período. O atraso conta
+  // a partir da ÚLTIMA entrega prevista, e o que falta chega no próximo dia de entrega.
+  const perPed = Math.max(1, _planDiasDe(un));
+  const parcial = new Set(compras.filter(x => x.unidade_uso === fin && x.status_receb === 'recebido').map(x => x.pedido_num));
+  const dowDe = d => new Date(d + 'T12:00:00').getDay();
+  const entregasPed = c => {   // dias previstos de entrega deste pedido, em ordem
+    if (!c.data_entrega) return [];
+    const diasF = _fornCompra[c.fornecedor_id]?.dias || [];
+    const out = [c.data_entrega];
+    if (diasF.length >= 2 || parcial.has(c.pedido_num))
+      for (let i = 1; i < perPed; i++) { const d = _isoMais(c.data_entrega, i); if (diasF.includes(dowDe(d))) out.push(d); }
+    return out;
+  };
+  const ultimaPed = c => {
+    const ent = entregasPed(c); if (!ent.length) return null;
+    const u = ent[ent.length - 1];
+    return parcial.has(c.pedido_num) ? [u, _isoMais(c.data_entrega, perPed - 1)].sort()[1] : u;
+  };
   const pedido = {}, pedidoDet = {}, pedidoChega = {}, ultimo = {}, ultimoOutra = {}, catVotos = {}, comprado = {};
   const uso = {};        // { pid: { forn: { n: pedidos distintos, ped: Set, fornId, data } } } da unidade
   const historico = {};  // { pid: { forn: fornId } } quem já vendeu este produto (180 dias, qualquer unidade)
   [...compras].sort((a, b) => (b.data || '').localeCompare(a.data || '')).forEach(c => {
     const pid = c.produto_id;
     const minha = c.unidade_uso === fin;
-    if (minha && c.status_receb === 'pendente' && c.data_entrega && c.data_entrega < limiteAtraso) {
-      (pedidoAtrasado[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)}) · era para ${_ddmm(c.data_entrega)}`);
+    const ultPed = minha && c.status_receb === 'pendente' ? ultimaPed(c) : null;
+    if (ultPed && ultPed < limiteAtraso) {
+      (pedidoAtrasado[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)}) · era para ${_ddmm(ultPed)}`);
     } else if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
       const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
       pedido[pid] = (pedido[pid] || 0) + q;
-      // chega no dia da entrega do pedido; sem data ou atrasado (nao recebido) conta como hoje
-      const dia = c.data_entrega && c.data_entrega > hoje ? c.data_entrega : hoje;
+      // chega no dia da entrega do pedido; já passou: no próximo dia de entrega previsto
+      // (pedido da semana dividido) ou hoje (atrasado / sem data)
+      const prox = c.data_entrega && c.data_entrega <= hoje ? entregasPed(c).find(d => d >= hoje) : null;
+      const dia = c.data_entrega && c.data_entrega > hoje ? c.data_entrega : prox || hoje;
       if (q > 0) (pedidoChega[pid] ||= []).push({ dia, q });
       (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})` + (c.data_entrega
-        ? (c.data_entrega > hoje ? ` · chega ${_planDiaTxt(c.data_entrega)}` : c.data_entrega < hoje ? ` · era para ${_ddmm(c.data_entrega)}, conta como hoje` : ' · chega hoje') : ''));
+        ? (c.data_entrega > hoje ? ` · chega ${_planDiaTxt(c.data_entrega)}`
+          : prox && prox > hoje ? ` · resto chega ${_planDiaTxt(prox)}`
+          : c.data_entrega < hoje && !prox ? ` · era para ${_ddmm(c.data_entrega)}, conta como hoje` : ' · chega hoje') : ''));
     }
     if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
       comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
@@ -7524,8 +7549,9 @@ const _planConsDe = (l, d) => l.consDow ? l.consDow[new Date(d + 'T12:00:00').ge
 // a média da venda até terça e compra para durar até o próximo pedido".
 //   Chega    = dia escolhido no topo, senão a próxima entrega fixa do fornecedor, senão
 //              hoje + prazo (Cadastros > Fornecedores); sem nada, conta como se chegasse hoje
-//   Até      = "próxima entrega" escolhida no topo, senão a entrega fixa seguinte do
-//              fornecedor, senão chega + dias de cobertura da unidade. A compra cobre até a véspera.
+//   Até      = "próxima entrega" escolhida no topo, senão chega + dias de cobertura da unidade
+//              (a semana). A compra cobre até a véspera. Fornecedor com 2+ dias de entrega:
+//              um pedido só, com a divisão sugerida por entrega embaixo do Pedir (09/11/2026).
 //   Chega com = estoque + já pedido que chega até lá − consumo até a véspera. Se acaba antes,
 //              chega com ZERO: a venda perdida não volta e não entra no pedido (Wagner, 06/11/2026)
 //   Precisa  = consumo de "chega" até a véspera de "até" × (1 + margem)
@@ -7542,13 +7568,36 @@ function _planConta(un, l) {
   const ini = chega || hoje;
   const proprio = _planCobreProd(un, l.pid) > 0;     // tracinho do detalhe: só deste produto
   let ate = proprio ? _isoMais(ini, _planCobreProd(un, l.pid)) : _planAteEsc(un), tipoAte = proprio ? 'proprio' : 'escolhido';
-  if (!ate && fixos.length) { ate = _fornProxEntrega(l.fornId, ini); tipoAte = 'fixo'; }
+  // Antes (06/11) o pedido ia só até a próxima entrega do fornecedor; com 2 dias no cadastro
+  // saía picado (Alberta qua+sex = 2 dias de sobremesa). Desde 09/11 (Wagner): a análise é da
+  // semana, um pedido só; os dias do fornecedor só dizem quando chega e como dividir.
   if (!ate || ate <= ini) { ate = _isoMais(ini, _planDiasDe(un)); tipoAte = 'dias'; }
   const dias = _planDifDias(ini, ate);
   const k = _planCobertura(un, l, nAntes, dias);
   const troca = _planPedir[un]?.[l.pid];
   const pedir = troca ?? k.auto;
   const marcado = _planMarca[un]?.[l.pid] ?? (k.auto > 0);
+  // ── passo 2: divisão do pedido da semana pelas entregas do fornecedor (só sugestão) ──
+  // Cada entrega leva o que falta até a véspera da seguinte: soma o consumo × margem, tira o
+  // que chega com e o já pedido que chega no meio, e o acumulado vira a meta de cada entrega.
+  let partes = null;
+  if (fixos.length >= 2 && pedir > 0 && l.consDia > 0 && !naLinha && !escolhido) {
+    const ent = [ini];
+    for (let d = _isoMais(ini, 1); d < ate; d = _isoMais(d, 1)) if (fixos.includes(new Date(d + 'T12:00:00').getDay())) ent.push(d);
+    if (ent.length >= 2) {
+      const fmP = 1 + _planMargem(un);
+      let need = 0, alvoAnt = 0;
+      partes = ent.map((d0, i) => {
+        const fim = ent[i + 1] || ate;
+        for (let d = d0; d < fim; d = _isoMais(d, 1)) need += _planConsDe(l, d) * fmP - (d > ini ? _planChegaDia(l, d) : 0);
+        const alvo = i === ent.length - 1 ? pedir : Math.min(pedir, _planArred(Math.max(0, need - k.chegaCom) / l.fator, l.unComp));
+        const q = Math.max(0, alvo - alvoAnt); alvoAnt = Math.max(alvoAnt, alvo);
+        return { dia: d0, q };
+      }).filter(x => x.q > 0);
+      // uma parte só: mostra quando não é a 1ª entrega ("sex 84" = na terça ainda não precisa)
+      if (partes.length < 2 && !(partes.length === 1 && partes[0].dia !== ini)) partes = null;
+    }
+  }
   // Dura: dia a dia até o estoque + já pedido acabar (só para dizer QUANDO acaba)
   const fm = 1 + _planMargem(un);
   let dura = null;
@@ -7561,7 +7610,7 @@ function _planConta(un, l) {
   const antesDoPedido = !!prox && dura !== null && dura < _planDifDias(hoje, prox) ? prox : null;
   return { ...k, dias, nAntes, chega, tipo, ate, tipoAte, proprio, horiz: nAntes + dias, dura, antesDoPedido,
     naoChega: nAntes > 0 && l.consDia > 0 && k.zerou,
-    pedir, marcado: marcado && pedir > 0, total: pedir * l.custo };
+    pedir, marcado: marcado && pedir > 0, total: pedir * l.custo, partes };
 }
 
 // Dia a dia: estoque de hoje + o já pedido NO DIA EM QUE CHEGA − consumo. Até a véspera da
@@ -7685,8 +7734,8 @@ function _pintarPlan() {
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>A conta</dt><dd>A mesma do papel. O pedido feito hoje chega num dia (o "Chega" do topo, senão a próxima entrega do fornecedor em Cadastros &gt; Fornecedores, senão hoje + prazo; sem nada, conta como se chegasse hoje) e precisa durar até a próxima entrega (a "próxima entrega" do topo, senão a entrega seguinte do fornecedor, senão ${diasP} dias depois que chega).
       <b>Chega com</b> = estoque agora + o já pedido que chega até lá − o consumo de hoje até a véspera. Se acaba antes, chega com zero: o que falta nesses dias não entra no pedido.
-      <b>Precisa</b> = consumo do dia que chega até a véspera da próxima entrega × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda.</dd>
-    <dt>Pedir</dt><dd>Precisa − chega com (o já pedido que chega no meio do período também abate), na embalagem de compra. As colunas seguem a conta: <b>Tem agora</b> (e o que está a caminho), <b>Sobra</b> no dia que chega (tem agora + o que chega até lá − consumo até a véspera; vermelho = acaba antes) e <b>Precisa</b> até a próxima entrega. Fornecedor sem dia de entrega no cadastro: escolha o dia na linha, vale para todos os produtos dele, só hoje. Dá para trocar o número do Pedir na linha.</dd>
+      <b>Precisa</b> = consumo do período (o "Comprar para" do topo, a partir do dia que chega) × (1 + ${margem}%). Cada dia conta pela média do seu dia da semana: sábado vende mais que segunda.</dd>
+    <dt>Pedir</dt><dd>Precisa − chega com (o já pedido que chega no meio do período também abate), na embalagem de compra. As colunas seguem a conta: <b>Tem agora</b> (e o que está a caminho), <b>Sobra</b> no dia que chega (tem agora + o que chega até lá − consumo até a véspera; vermelho = acaba antes) e <b>Precisa</b> para o período. Fornecedor que entrega mais de uma vez na semana: continua um pedido só, e embaixo do Pedir aparece a divisão sugerida por entrega (ex.: "ter 60 · sex 40"); cada entrega se recebe como parcial. Fornecedor sem dia de entrega no cadastro: escolha o dia na linha, vale para todos os produtos dele, só hoje. Dá para trocar o número do Pedir na linha.</dd>
     <dt>Tracinho</dt><dd>Ao abrir a linha, a barra mostra até onde o estoque + já pedido duram e o tracinho até onde a compra de hoje cobre. Arraste para comprar para mais (ou menos) dias só aquele produto; fica guardado e a linha mostra "só deste".</dd>
     <dt>Produção</dt><dd>MP que só a Produção usa (dentro de SA ou PPP) não aparece aqui: quem compra é a Meta de produção, em "MP para comprar"${B.daMeta.length ? ` (${B.daMeta.length} nesta unidade)` : ''}. MP que a loja também usa fica aqui, com o consumo inteiro.</dd>
     <dt>Fornecedor</dt><dd>O que o cadastro do fornecedor diz que entrega o produto (Cadastros &gt; Fornecedores). Sem cadastro, o que mais recebeu pedido desta unidade nas últimas 4 semanas (no empate perde o Comprador Externo). Dá para trocar ao abrir a linha.</dd>
@@ -7829,7 +7878,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
     <td class="text-end plan-num">${sobraHtml}</td>
     <td class="text-end plan-num">${precisaHtml}</td>
     <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
-         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span></div></td>
+         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span>${c.partes ? `<span class="meta-num-sub plan-partes" title="Sugestão de divisão pelas entregas de ${esc(l.forn || 'fornecedor')}: cada entrega cobre até a véspera da seguinte. O pedido continua um só; receba cada entrega como parcial.">${c.partes.map(x => `${_FORN_DIAS[new Date(x.dia + 'T12:00:00').getDay()].toLowerCase()} ${n1(x.q)}`).join(' · ')}</span>` : ''}</div></td>
     <td class="text-end plan-total">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '<span class="text-muted fw-normal">—</span>'}</td>
   </tr>`;
   return aberta ? linha + _planDetalhe(un, B, l, c, n1) : linha;
