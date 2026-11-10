@@ -399,7 +399,7 @@ function semanaISO(dateStr) {
 }
 
 function inicioDaSemana() {
-  const hoje = new Date();
+  const hoje = new Date(hojeLocal() + 'T12:00:00');   // meio-dia: toISOString não vira o dia (UTC)
   const dow  = hoje.getDay();
   const seg  = new Date(hoje);
   seg.setDate(hoje.getDate() - (dow === 0 ? 6 : dow - 1));
@@ -523,18 +523,44 @@ async function carregarCaches() {
 // ═══════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════
+// ── Dados do Dashboard, BI e CMV (10/11/2026: "nunca mais funcionou") ──
+// Compras: paginadas — sem isso o banco devolvia as 1.000 primeiras linhas (maio/junho) e
+// o painel parava em junho. Item dispensado/cancelado não é compra.
+// Faturamento: vem do iComanda (pdv_vendas, somado por dia em vw_faturamento_dia,
+// SQL_VW_FATURAMENTO_DIA.sql). cmp_faturamento, o lançamento manual, ficou vazia.
+async function _comprasPeriodo(colunas, ini, fim) {
+  return _fetchAllPaged('cmp_compras', colunas, q => {
+    q = q.not('pedido_num', 'is', null).not('status_receb', 'in', '("dispensado","cancelado")')
+         .order('data').order('id');
+    if (ini) q = q.gte('data', ini);
+    if (fim) q = q.lte('data', fim);
+    return q;
+  });
+}
+async function _faturamentoDias(ini, fim) {
+  const rows = await _fetchAllPaged('vw_faturamento_dia', 'data,unidade,valor', q => {
+    q = q.order('data').order('unidade');
+    if (ini) q = q.gte('data', ini);
+    if (fim) q = q.lte('data', fim);
+    return q;
+  });
+  return (rows || []).map(r => ({ data: r.data, unidade: r.unidade, valor: Number(r.valor) || 0 }));
+}
+const _hojeMenosMeses = n => { const d = new Date(hojeLocal() + 'T12:00:00'); d.setMonth(d.getMonth() - n, 1); return d.toISOString().slice(0, 10); };
+
 async function carregarDashboard() {
-  const mesAtual = new Date().toISOString().slice(0, 7);
+  const mesAtual = hojeLocal().slice(0, 7);
   const segStr   = inicioDaSemana();
   const domStr   = fimDaSemana();
+  const desde    = _hojeMenosMeses(11);   // 12 meses no gráfico
 
   const [rc, rf] = await Promise.all([
-    sb.from('cmp_compras').select('data,total,fornecedor_nome,categoria').order('data'),
-    sb.from('cmp_faturamento').select('data,valor').order('data'),
+    _comprasPeriodo('data,total,fornecedor_nome,categoria', desde, null),
+    _faturamentoDias(desde, null),
   ]);
 
-  const compras     = rc.data || [];
-  const faturamento = rf.data || [];
+  const compras     = rc || [];
+  const faturamento = rf || [];
 
   // ── KPIs ──
   const compSem = compras
@@ -718,11 +744,10 @@ async function carregarBI() {
   const fim = fimEl?.value || hoje;
 
   // Carrega dados em paralelo
-  let qC = sb.from('cmp_compras')
-    .select('pedido_num,data,fornecedor_nome,categoria,tipo_produto,quantidade,custo_unit')
-    .gte('data', ini).lte('data', fim).order('data');
-  let qF = sb.from('cmp_faturamento').select('data,valor').gte('data', ini).lte('data', fim).order('data');
-  const [{ data: compras }, { data: fat }] = await Promise.all([qC, qF]);
+  const [compras, fat] = await Promise.all([
+    _comprasPeriodo('pedido_num,data,fornecedor_nome,categoria,tipo_produto,quantidade,custo_unit', ini, fim),
+    _faturamentoDias(ini, fim),
+  ]);
 
   const C = compras || [], F = fat || [];
 
@@ -838,11 +863,8 @@ async function renderInsights() {
   const container = document.getElementById('insights-container');
   if (!container) return;
 
-  const mesAtual = new Date().toISOString().slice(0, 7);
-  const { data: compras } = await sb.from('cmp_compras')
-    .select('data,fornecedor_nome,categoria,unidade_uso,custo_unit,quantidade')
-    .order('data', { ascending: false })
-    .limit(500);
+  const mesAtual = hojeLocal().slice(0, 7);
+  const compras = await _comprasPeriodo('data,fornecedor_nome,categoria,unidade_uso,custo_unit,quantidade', _hojeMenosMeses(1), null);
 
   if (!compras?.length) {
     container.innerHTML = '<p class="text-muted">Lance compras para ver os insights automáticos.</p>';
@@ -876,7 +898,7 @@ async function renderInsights() {
   const taxaAtiv      = diaAtual > 0 ? ((diasComCompra/diaAtual)*100).toFixed(0) : 0;
 
   const _semanaStr = d => { const dt = new Date(d + 'T12:00:00'); dt.setDate(dt.getDate() - dt.getDay()); return dt.toISOString().slice(0,10); };
-  const semAtual = _semanaStr(new Date().toISOString().slice(0,10));
+  const semAtual = _semanaStr(hojeLocal());
   const bySem = _grp(compras, c => _semanaStr(c.data));
   const sems  = [...new Set(compras.map(c => _semanaStr(c.data)))].sort();
   const idxA  = sems.indexOf(semAtual);
@@ -1647,12 +1669,12 @@ async function carregarCMV() {
   const periodo = document.getElementById('cmv-periodo').value;
 
   const [rc, rf] = await Promise.all([
-    sb.from('cmp_compras').select('data,total').order('data'),
-    sb.from('cmp_faturamento').select('data,valor').order('data'),
+    _comprasPeriodo('data,total', _hojeMenosMeses(11), null),
+    _faturamentoDias(_hojeMenosMeses(11), null),
   ]);
 
-  const compras     = rc.data || [];
-  const faturamento = rf.data || [];
+  const compras     = rc || [];
+  const faturamento = rf || [];
 
   if (!compras.length) {
     document.getElementById('tb-cmv').innerHTML =
