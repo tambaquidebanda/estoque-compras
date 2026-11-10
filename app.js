@@ -7904,7 +7904,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
     sobraHtml = `<span title="${esc(tSobra)}">${c.zerou ? `<span class="${c.chegaCom > 0 ? '' : 'plan-falta'}">${n1(c.chegaCom)}</span>${unx2}<span class="meta-num-sub falta">falta ${n1(c.faltaAntes)} antes de chegar</span>`
         : `${n1(c.chegaCom)}${unx2}`}${!c.zerou && (pre || fx) ? `<span class="meta-num-sub">${pre}${fx}</span>` : ''}</span>${diaInp
         ? `${c.tipo === 'sem' ? '<span class="meta-num-sub">escolha o dia que chega</span>' : ''}${diaInp}` : ''}`;
-    const subAte = c.proprio ? `<span class="meta-num-sub plan-proprio-txt">até ${_planDiaTxt(c.ate)} · só deste</span>`
+    const subAte = c.proprio ? `<span class="meta-num-sub plan-proprio-txt">até ${_planDiaTxt(_isoMais(c.ate, -1))} · só deste</span>`
       : c.tipo === 'sem' ? `<span class="meta-num-sub">amanhã + ${c.dias} dias</span>`
       : `<span class="meta-num-sub">${_planFaixaDow(c.usa, _isoMais(c.ate, -1))}</span>`;
     precisaHtml = `<span title="Consumo ${n1(c.cobre)} ${esc(l.un)} + ${margem}%, de ${_planDiaTxt(c.usa)} (dia seguinte à entrega) até ${_planDiaTxt(_isoMais(c.ate, -1))}${c.pedMeio > 0 ? `. Chegam ${n1(c.pedMeio)} já pedidos no meio do período (abatem do Pedir)` : ''}">${n1(c.precisa)}${unx2}${subAte}<span class="meta-num-sub">consumo ${n1(c.cobre)} + ${margem}%</span></span>`;
@@ -8082,7 +8082,7 @@ function _planTracinhoHtml(un, l, c) {
   const durTxt = dura >= 120 ? 'passa de 4 meses' : dura < 1 ? 'acabou' : `até ${_planDiaTxt(_isoMais(_planD.hoje, Math.floor(dura) - 1))}`;
   return `<div class="plan-dura-${cls}">
       <div class="plan-trac-txt">Estoque + já pedido: <b>${durTxt}</b></div>
-      <div class="plan-trac-txt">Compra de hoje precisa durar até <b class="plan-trac-fim">${_planDiaTxt(c.ate)}</b>${c.proprio ? ' (só deste)' : ''}</div>
+      <div class="plan-trac-txt">Compra de hoje precisa durar até <b class="plan-trac-fim">${_planDiaTxt(_isoMais(c.ate, -1))}</b>${c.proprio ? ' (só deste)' : ''}</div>
       <div class="plan-dura-bar" role="slider" tabindex="0" aria-label="Até quando comprar ${esc(l.nome)}" aria-valuemin="1" aria-valuemax="90" aria-valuenow="${c.dias}"
         title="Arraste o tracinho para comprar para mais ou menos dias (só este produto)" data-pid="${l.pid}" data-escala="${escala}" data-antes="${c.nAntes}"
         onpointerdown="planDuraArrastar(event)" onkeydown="planDuraTecla(event)"><span style="width:${Math.min(dura / escala, 1) * 100}%"></span><i style="left:${Math.min(c.horiz / escala, 1) * 100}%"></i></div>
@@ -8111,7 +8111,7 @@ function planDuraArrastar(ev) {
     dias = Math.max(1, Math.min(90, Math.round((e.clientX - r.left) / r.width * escala) - antes));
     bar.querySelector('i').style.left = Math.min((antes + dias) / escala, 1) * 100 + '%';
     const fim = box.querySelector('.plan-trac-fim');
-    if (fim) fim.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias));
+    if (fim) fim.textContent = _planDiaTxt(_isoMais(_planD.hoje, antes + dias - 1));   // último dia coberto
     const pr = box.querySelector('.plan-trac-precisa');
     if (pr && l) pr.textContent = _metaNum(_planCobertura(_planUn, l, antes, dias).precisa);
   };
