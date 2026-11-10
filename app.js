@@ -7141,7 +7141,7 @@ async function _planCarregar() {
   const hoje = hojeLocal();
   const locaisSaida = [...new Set(Object.values(_PLAN_LOCAIS_SAIDA).flat())];
   const segunda = _isoMais(hoje, -((new Date(hoje + 'T12:00:00').getDay() + 6) % 7));
-  const [vendas, saldos, fichas, ings, saidas, compras, recebSem] = await Promise.all([
+  const [vendas, saldos, fichas, ings, saidas, compras, recebSem, recebPed] = await Promise.all([
     _metaSelect('prod_venda_item_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
     _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
@@ -7151,8 +7151,10 @@ async function _planCarregar() {
     _metaSelect('cmp_compras', 'data,data_entrega,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
     _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data', q => q.eq('tipo', 'recebimento').gte('data', segunda)),
+    // dia do último recebimento de cada pedido: o resto de um parcial não "chega hoje" se já chegou parte hoje
+    _metaSelect('cmp_recebimentos', 'pedido_num,data_receb', q => q.gte('data_receb', _isoMais(hoje, -_PLAN_PEDIDO_DIAS))),
   ]);
-  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, recebSem, segunda, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
+  return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, recebSem, recebPed, segunda, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
 }
 
 // Produtos que estão em alguma lista de contagem (qualquer unidade, setor ou "+").
@@ -7297,7 +7299,7 @@ function _planBase(un) {
     c[d] = (c[d] || 0) + Number(m.quantidade);
   });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
-  const C = _planCompras(D.compras, un, D.hoje, p);
+  const C = _planCompras(D.compras, un, D.hoje, p, D.recebPed);
   const { pedido, pedidoDet, pedidoChega, pedidoAtrasado, pedidoVencido, comprado } = C;
   // ── linhas ──
   const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
@@ -7335,7 +7337,7 @@ function _planBase(un) {
 // Compras dos últimos 180 dias de uma unidade: o que já foi pedido e não chegou
 // (até _PLAN_PEDIDO_DIAS), o último fornecedor/preço, o fornecedor mais usado e a
 // categoria de compra. Usado pelo Planejamento e pelo "MP para comprar" da Meta.
-function _planCompras(compras, un, hoje, p) {
+function _planCompras(compras, un, hoje, p, recebs) {
   const fin = _PLAN_UNI_FIN[un];
   const limitePed = _isoMais(hoje, -_PLAN_PEDIDO_DIAS);
   const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
@@ -7348,6 +7350,10 @@ function _planCompras(compras, un, hoje, p) {
   // a partir da ÚLTIMA entrega prevista, e o que falta chega no próximo dia de entrega.
   const perPed = Math.max(1, _planDiasDe(un));
   const parcial = new Set(compras.filter(x => x.unidade_uso === fin && x.status_receb === 'recebido').map(x => x.pedido_num));
+  // Último recebimento de cada pedido (#02146, 10/11/2026: chegou 73 de 150 hoje e o resto
+  // aparecia "chega hoje"): o resto de um parcial chega na próxima entrega DEPOIS dele.
+  const ultReceb = {};
+  (recebs || []).forEach(r => { if (r.pedido_num && r.data_receb && !(ultReceb[r.pedido_num] >= r.data_receb)) ultReceb[r.pedido_num] = r.data_receb; });
   const dowDe = d => new Date(d + 'T12:00:00').getDay();
   const entregasPed = c => {   // dias previstos de entrega deste pedido, em ordem
     if (!c.data_entrega) return [];
@@ -7378,15 +7384,18 @@ function _planCompras(compras, un, hoje, p) {
       pedido[pid] = (pedido[pid] || 0) + q;
       // chega no dia da entrega do pedido; já passou: no próximo dia de entrega previsto
       // (pedido da semana dividido) ou hoje (atrasado / sem data)
-      const prox = c.data_entrega && c.data_entrega <= hoje ? entregasPed(c).find(d => d >= hoje) : null;
+      const rec = parcial.has(c.pedido_num) ? ultReceb[c.pedido_num] : null;
+      const prox = c.data_entrega && c.data_entrega <= hoje ? entregasPed(c).find(d => d >= hoje && !(rec && d <= rec)) : null;
+      const resto = !!rec && rec >= hoje && !prox;   // chegou parte hoje e não há outro dia de entrega previsto
       const dia = c.data_entrega && c.data_entrega > hoje ? c.data_entrega : prox || hoje;
       // tipo do aviso na linha (Wagner, 10/11/2026): a caminho (dia futuro) · chega hoje ·
       // pedido atrasado (entrega já passou e ninguém recebeu nem dispensou) · sem data
-      const tipo = !c.data_entrega ? 'semdata' : dia > hoje ? 'futuro' : c.data_entrega < hoje && !prox ? 'atrasado' : 'hoje';
+      const tipo = !c.data_entrega ? 'semdata' : dia > hoje ? 'futuro' : resto ? 'resto' : c.data_entrega < hoje && !prox ? 'atrasado' : 'hoje';
       if (q > 0) (pedidoChega[pid] ||= []).push({ dia, q, tipo, ped: c.pedido_num, era: c.data_entrega });
       (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})` + (c.data_entrega
         ? (c.data_entrega > hoje ? ` · chega ${_planDiaTxt(c.data_entrega)}`
           : prox && prox > hoje ? ` · resto chega ${_planDiaTxt(prox)}`
+          : resto ? ' · chegou parte hoje, o resto sem dia previsto (conta como hoje)'
           : c.data_entrega < hoje && !prox ? ` · pedido atrasado, era para ${_ddmm(c.data_entrega)} (conta como hoje)` : ' · chega hoje') : ''));
     }
     if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
@@ -7841,7 +7850,7 @@ function _pintarPlanTabela() {
 //   "+ 250 pedido atrasado"        a entrega já passou e ninguém recebeu nem dispensou;
 //                                  até _PLAN_ATRASO_DIAS conta como chegando hoje, depois sai da conta
 function _planCaminhoHtml(l, n1) {
-  const por = {}, ordem = { atrasado: 0, hoje: 1, semdata: 2, futuro: 3 };
+  const por = {}, ordem = { atrasado: 0, hoje: 1, resto: 2, semdata: 3, futuro: 4 };
   (l.pedidoChega || []).forEach(x => {
     const tipo = x.tipo || 'hoje', k = tipo + '|' + (tipo === 'futuro' ? x.dia : '');
     const g = (por[k] ||= { tipo, dia: x.dia, q: 0, peds: [] });
@@ -7853,6 +7862,7 @@ function _planCaminhoHtml(l, n1) {
   return Object.values(por).sort((a, b) => ((ordem[a.tipo] ?? -1) - (ordem[b.tipo] ?? -1)) || (a.dia || '').localeCompare(b.dia || '')).map(g => {
     if (g.tipo === 'futuro') return `<span class="plan-caminho" title="${esc(peds(g))}">+ ${n1(g.q)} a caminho · ${_planDiaTxt(g.dia)}</span>`;
     if (g.tipo === 'hoje') return `<span class="plan-caminho" title="${esc(peds(g))}">+ ${n1(g.q)} chega hoje</span>`;
+    if (g.tipo === 'resto') return `<span class="plan-caminho" title="${esc(peds(g))} · chegou parte hoje e o fornecedor não tem outro dia de entrega previsto: conta como se chegasse hoje">+ ${n1(g.q)} resto a caminho</span>`;
     if (g.tipo === 'semdata') return `<span class="plan-caminho" title="${esc(peds(g))} · sem data de entrega, conta como hoje">+ ${n1(g.q)} a caminho</span>`;
     if (g.tipo === 'atrasado') return `<span class="plan-caminho plan-atrasado" title="${esc(peds(g))}. Ninguém recebeu nem dispensou. Conta como chegando hoje até ${_PLAN_ATRASO_DIAS} dias de atraso.">+ ${n1(g.q)} pedido atrasado</span>`;
     return `<span class="plan-caminho plan-atrasado plan-vencido" title="${esc(peds(g))}. Atrasado há mais de ${_PLAN_ATRASO_DIAS} dias: não entra na conta até alguém receber ou dispensar.">+ ${n1(g.q)} pedido atrasado · fora da conta</span>`;
