@@ -7166,22 +7166,34 @@ async function _planCarregar() {
   const hoje = hojeLocal();
   const locaisSaida = [...new Set(Object.values(_PLAN_LOCAIS_SAIDA).flat())];
   const segunda = _isoMais(hoje, -((new Date(hoje + 'T12:00:00').getDay() + 6) % 7));
-  const idsQueda = (cProdutosFT || []).filter(x => _PLAN_CAT_QUEDA.has(x.categoria)).map(x => x.id);
-  const [vendas, saldos, fichas, ings, saidas, compras, recebSem, recebPed, quedas] = await Promise.all([
+  // Queda do estoque: carvão/lenha sempre; o resto do "Pelo uso" só quando não sai por pedido
+  // interno (10/11/2026). Em lotes de 100 ids: o .in() grande estoura a URL e volta vazio.
+  const idsQueda = (cProdutosFT || []).filter(x => _PLAN_CAT_QUEDA.has(x.categoria) || _PLAN_CAT_FORA.has(x.categoria)).map(x => x.id);
+  const _quedasEmLotes = async () => {
+    const out = [];
+    for (let i = 0; i < idsQueda.length; i += 100) out.push(...await _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data',
+      q => q.in('produto_id', idsQueda.slice(i, i + 100)).in('tipo', _PLAN_TIPOS_QUEDA).gte('data', vIni).lt('data', _isoMais(vFim, 1))));
+    return out;
+  };
+  const [vendas, saldos, fichas, ings, saidas, compras, recebSem, recebPed, quedas, devolConf] = await Promise.all([
     _metaSelect('prod_venda_item_dia', 'data,unidade,produto_id,quantidade', q => q.gte('data', vIni).lte('data', vFim)),
     _metaSelect('est_saldo_local', 'produto_id,local,saldo'),
     _metaSelect('est_fichas_tecnicas', 'id,produto_id,rendimento', q => q.eq('ativo', true)),
     _metaSelect('est_ficha_ingredientes', 'ficha_id,ingrediente_id,quantidade'),
-    _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data',
+    _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data,tipo,ref_id,motivo',
       q => q.eq('tipo', 'pedido_interno_saida').in('local', locaisSaida).gte('data', vIni).lt('data', _isoMais(vFim, 1))),
     _metaSelect('cmp_compras', 'data,data_entrega,pedido_num,produto_id,fornecedor_nome,fornecedor_id,categoria,custo_unit,quantidade,setor,unidade_uso,status_receb',
       q => q.gte('data', _isoMais(hoje, -180)).not('produto_id', 'is', null)),
     _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data', q => q.eq('tipo', 'recebimento').gte('data', segunda)),
     // dia do último recebimento de cada pedido: o resto de um parcial não "chega hoje" se já chegou parte hoje
     _metaSelect('cmp_recebimentos', 'pedido_num,data_receb', q => q.gte('data_receb', _isoMais(hoje, -_PLAN_PEDIDO_DIAS))),
-    idsQueda.length ? _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data',
-      q => q.in('produto_id', idsQueda).in('tipo', _PLAN_TIPOS_QUEDA).gte('data', vIni).lt('data', _isoMais(vFim, 1))) : [],
+    idsQueda.length ? _quedasEmLotes() : [],
+    // Devolução na confirmação do setor ("liberado 500, chegou 0,5"): volta ao estoque e
+    // desconta da saída (PED-4045, 10/11/2026: 500 L de álcool liberados, 0,5 chegou)
+    _metaSelect('est_movimentacoes', 'produto_id,local,quantidade,data,tipo,ref_id,motivo',
+      q => q.eq('tipo', 'ajuste').like('motivo', 'Diferença na confirmação%').in('local', locaisSaida).gte('data', vIni).lt('data', _isoMais(vFim, 1))),
   ]);
+  saidas.push(...devolConf);
   return { unidades, param, vendas, saldos, fichas, ings, saidas, compras, recebSem, recebPed, quedas, segunda, hoje, naLista: _planNaLista(listasRows.data), naListaCentro: _planListaCentro(listasRows.data) };
 }
 
@@ -7283,13 +7295,29 @@ function _planBase(un) {
   const nDow = [0, 0, 0, 0, 0, 0, 0];
   dias.forEach(d => { nDow[new Date(d + 'T12:00:00').getDay()]++; });
   // ── saída do estoque para os setores (quem nenhuma ficha usa) ──
-  const saida = {}, saidaSem = {};
+  // Cada linha de pedido interno conta pelo que chegou ao setor (saída − devolução na
+  // confirmação, juntas pelo ref_id). Saída fora do comum fica fora da conta, com a mesma
+  // regra da trava do pedido interno (608b7ed): 10 ou mais e acima de 20× a mediana do item
+  // (PED-4045: 500 L de álcool num item que sai 1 a 2,5 L por vez pedia 33 galões).
+  const saida = {}, saidaSem = {}, saidaIgn = {};
   const locSaida = _PLAN_LOCAIS_SAIDA[un] || [];
-  D.saidas.forEach(m => {
+  const grupoSai = {};
+  D.saidas.forEach((m, i) => {
     const d = String(m.data || '').slice(0, 10);
     if (!locSaida.includes(m.local) || d < p.ini || d > p.fim) return;
-    saida[m.produto_id] = (saida[m.produto_id] || 0) - (Number(m.quantidade) || 0);
-    (saidaSem[m.produto_id] ||= semanas.map(() => 0))[semDe(d)] -= Number(m.quantidade) || 0;
+    const g = ((grupoSai[m.produto_id] ||= {})[m.ref_id || 'm' + i] ||= { q: 0, d, ped: (String(m.motivo || '').match(/PED-\d+/) || [''])[0] });
+    g.q -= Number(m.quantidade) || 0;
+    if (m.tipo === 'pedido_interno_saida') g.d = d;
+  });
+  Object.entries(grupoSai).forEach(([pid, gs]) => {
+    const arr = Object.values(gs).filter(g => g.q > 1e-9);
+    const qs = arr.map(g => g.q).sort((a, b) => a - b);
+    const med = qs.length ? qs[Math.floor((qs.length - 1) / 2)] : 0;
+    arr.forEach(g => {
+      if (qs.length >= 3 && g.q >= 10 && g.q > 20 * med) { (saidaIgn[pid] ||= []).push(g); return; }
+      saida[pid] = (saida[pid] || 0) + g.q;
+      (saidaSem[pid] ||= semanas.map(() => 0))[semDe(g.d)] += g.q;
+    });
   });
   // ── tem agora: tudo da unidade (mesmos lugares da meta, _metaCarregar) ──
   // Soma com sinal, igual à tela de Saldo: negativo no Estoque da Loja é pedido interno
@@ -7354,7 +7382,10 @@ function _planBase(un) {
     const foraLista = ficha <= 0 && saiTudo > 0 && !D.naLista.has(pid);   // saída antiga de quem saiu das listas
     const sai = foraLista ? 0 : saiTudo;
     const pelaQueda = _PLAN_CAT_QUEDA.has(pr.categoria);
-    const base = pelaQueda ? ((queda[pid] || 0) > 0 ? 'queda' : null) : ficha > 0 ? 'ficha' : sai > 0 ? 'saida' : null;
+    // "Pelo uso" sem saída por pedido interno: conta pela queda do estoque da unidade, se o
+    // produto está em alguma lista (sai por contagem/ajuste; 10/11/2026: 372 de 477 no Centro)
+    const quedaUso = !pelaQueda && _PLAN_CAT_FORA.has(pr.categoria) && D.naLista.has(pid) && (queda[pid] || 0) > 0;
+    const base = pelaQueda ? ((queda[pid] || 0) > 0 ? 'queda' : null) : ficha > 0 ? 'ficha' : sai > 0 ? 'saida' : quedaUso ? 'queda' : null;
     // Vendido = o que a venda consumiu no período (sem a perda); a perda entra no Precisa
     const vendido = base === 'ficha' ? ficha : base === 'saida' ? sai : base === 'queda' ? queda[pid] : 0;
     const vendSem = base === 'ficha' ? consumoSem[pid] : base === 'saida' ? saidaSem[pid] : base === 'queda' ? quedaSem[pid] : null;
@@ -7366,7 +7397,7 @@ function _planBase(un) {
     return {
       consDow, chegou: chegou[pid] || {},
       ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [], pedidoAtrasado: pedidoAtrasado[pid] || [], pedidoVencido: pedidoVencido[pid] || [],
+      foraLista, saiTudo, saidaIgn: saidaIgn[pid] || [], comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [], pedidoAtrasado: pedidoAtrasado[pid] || [], pedidoVencido: pedidoVencido[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta, C });
@@ -7809,7 +7840,7 @@ function _pintarPlan() {
   como.classList.toggle('d-none', _planPainel !== 'como');
   document.getElementById('plan-como-btn').setAttribute('aria-expanded', String(_planPainel === 'como'));
   como.innerHTML = `<dl>
-    ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Carvão e lenha, limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem. Carvão e lenha contam pela queda do estoque da unidade (estoque do início + recebido − estoque do fim), porque quase não saem por pedido interno.</dd>` : ''}
+    ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Carvão e lenha, limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem, pelo que chegou ao setor (desconta a devolução na confirmação); uma saída fora do comum (10 ou mais e acima de 20× o normal do item) fica fora da conta e a linha avisa. Carvão e lenha, e o item que não sai por pedido interno, contam pela queda do estoque da unidade (estoque do início + recebido − estoque do fim, pelas contagens).</dd>` : ''}
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>A conta</dt><dd>A mesma do papel. O pedido feito hoje chega num dia (o "Chega" do topo, senão a próxima entrega do fornecedor em Cadastros &gt; Fornecedores, senão hoje + prazo; sem nada, conta como se chegasse hoje) e precisa durar até a próxima entrega (a "próxima entrega" do topo, senão a entrega seguinte do fornecedor, senão ${diasP} dias depois que chega).
       O dia da entrega ainda sai do estoque atual (pode chegar à tarde, pode dar problema, bebida precisa gelar): todo pedido, o novo e os já feitos, só conta a partir do dia seguinte à entrega.
@@ -7923,6 +7954,7 @@ function _planCaminhoHtml(l, n1) {
 function _planLinha(un, B, l, c, n1, porForn) {
   const unx = `<span class="plan-un">${esc(l.un)}</span>`;
   const tags = [];
+  if ((l.saidaIgn || []).length) tags.push(`<span class="plan-base plan-base-alerta" title="${esc(l.saidaIgn.map(g => `${g.ped || 'pedido'}: ${n1(g.q)} ${l.un} em ${_ddmm(g.d)}`).join(' · '))} ficou fora da conta: mais de 20× o que costuma sair. Se foi digitação, corrija o pedido.">saída fora do comum</span>`);
   if (l.base === 'queda') tags.push('<span class="plan-base plan-base-saida" title="Consumo pela queda do estoque da unidade no período: estoque do início + recebido − estoque do fim (contagens, ajustes e pedidos internos). Carvão e lenha quase não saem por pedido interno.">queda do estoque</span>');
   else if (l.base === 'saida') tags.push('<span class="plan-base plan-base-saida" title="Nenhuma ficha usa este produto: o consumo é a saída do estoque para os setores no período">saída</span>');
   else if (l.foraLista) tags.push(`<span class="plan-base plan-base-nada" title="Saíram ${n1(l.saiTudo)} ${esc(l.un)} para os setores no período, mas o produto não está em nenhuma lista de contagem: a saída não conta como consumo. Se ainda é usado, inclua na lista do setor.">fora da lista</span>`);
@@ -7992,7 +8024,8 @@ function _planDetalhe(un, B, l, c, n1) {
   const semHtml = mx > 0
     ? `<div class="plan-sem">${sems.map((w, i) => `<div title="${_ddmm(w.ini)} a ${_ddmm(w.fim)}: ${n1(vals[i])} ${unx}">${n1(vals[i])}<b style="height:${vals[i] / mx * 34}px"></b>${_ddmm(w.ini)}</div>`).join('')}</div>`
     : '<div class="vazio">Sem consumo no período.</div>';
-  const origem = l.base === 'queda' ? 'Queda do estoque da unidade (estoque do início + recebido − estoque do fim)' : l.base === 'saida' ? 'Saída do estoque para os setores' : l.base === 'ficha' ? 'Venda aberta pela ficha' : '';
+  const origem = (l.base === 'queda' ? 'Queda do estoque da unidade (estoque do início + recebido − estoque do fim)' : l.base === 'saida' ? 'Saída do estoque para os setores' : l.base === 'ficha' ? 'Venda aberta pela ficha' : '') +
+    ((l.saidaIgn || []).length ? `. Fora da conta, saída fora do comum (mais de 20× o normal do item): ${l.saidaIgn.map(g => `${esc(g.ped || 'pedido')} ${n1(g.q)} ${esc(l.un)} em ${_ddmm(g.d)}`).join(', ')}. Se foi digitação, corrija o pedido.` : '');
   const fora = l.temFora.length ? `<div class="mt-1 text-muted">Não conta: ${l.temFora.map(([loc, q]) => `${esc(_rotuloSemIcone(loc))} ${n1(q)} ${unx}`).join(', ')}. O produto não está em nenhuma lista de contagem do Centro, então esse saldo nunca é conferido (a tela de Saldo também não mostra).</div>` : '';
   const onde = (l.temDet.length ? l.temDet.map(([loc, q]) => lin(esc(_rotuloSemIcone(loc)), q < 0 ? `<span class="plan-falta">−${n1(-q)} ${unx}</span>` : `${n1(q)} ${unx}`)).join('') +
       lin('Conta como estoque', `${n1(l.tem)} ${unx}`, true) +
