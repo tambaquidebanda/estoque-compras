@@ -7489,6 +7489,18 @@ function _fornChegada(id, hoje = hojeLocal()) {
   const pz = Number(_fornCompra[id]?.prazo) || 0;
   return pz > 0 ? _isoMais(hoje, pz) : null;
 }
+// Último dia para fazer o pedido que chega em `chega` (Wagner, 10/11/2026: a Maré só entrega
+// terça e a tela mostrava o pedido da semana seguinte como se fosse para hoje). Véspera da
+// entrega, ou antes se o cadastro tiver prazo. Nunca antes de hoje.
+function _planPedirAte(fornId, chega, hoje = hojeLocal()) {
+  if (!chega) return null;
+  const pz = Math.max(1, Number(_fornCompra[fornId]?.prazo) || 0);
+  const d = _isoMais(chega, -pz);
+  return d < hoje ? hoje : d;
+}
+const _planPedirAteHtml = d => !d ? '' : d <= hojeLocal()
+  ? '<span class="meta-num-sub plan-pedir-hoje">pedir hoje</span>'
+  : `<span class="meta-num-sub plan-pedir-ate">pode pedir até ${_planDiaTxt(d)}</span>`;
 // Próxima entrega a partir de amanhã (o pedido de hoje não chega hoje)
 function _fornProxEntrega(id, hoje = hojeLocal()) {
   const dias = _fornCompra[id]?.dias || [];
@@ -7838,7 +7850,8 @@ function _pintarPlanTabela() {
     const arr = grupos[g];
     const mk = arr.filter(x => x.c.marcado);
     const fid = porForn ? arr[0].l.fornId : null;
-    const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornChegada(fid) ? `, próxima ${_ddmm(_fornChegada(fid))}` : ''}` : '';
+    const pAte = fid && _fornChegada(fid) ? _planPedirAte(fid, _fornChegada(fid)) : null;
+    const ent = fid && _fornDiasTxt(fid) ? ` · entrega ${_fornDiasTxt(fid)}${_fornChegada(fid) ? `, próxima ${_ddmm(_fornChegada(fid))}` : ''}${pAte ? (pAte <= _planD.hoje ? ' · pedir hoje' : ` · pode pedir até ${_planDiaTxt(pAte)}`) : ''}` : '';
     const cab = `<tr class="plan-grupo"><td colspan="8"><span class="plan-grupo-nome">${esc(g)}</span><span class="plan-grupo-sub">${arr.length} ${arr.length === 1 ? 'produto' : 'produtos'}${mk.length ? ` · ${mk.length} marcados · ${brl(mk.reduce((s, x) => s + x.c.total, 0))}` : ''}${esc(ent)}</span></td></tr>`;
     return cab + arr.map(({ l, c }) => _planLinha(un, B, l, c, n1, porForn)).join('');
   }).join('');
@@ -7924,7 +7937,7 @@ function _planLinha(un, B, l, c, n1, porForn) {
     <td class="text-end plan-num">${sobraHtml}</td>
     <td class="text-end plan-num">${precisaHtml}</td>
     <td><div class="plan-pedir${mudou ? ' plan-mudou' : ''}"><input type="number" class="form-control form-control-sm" min="0" step="any" value="${c.pedir || ''}" placeholder="0"
-         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span>${c.partes ? `<span class="meta-num-sub plan-partes" title="Sugestão de divisão pelas entregas de ${esc(l.forn || 'fornecedor')}: cada entrega cobre até a véspera da seguinte. O pedido continua um só; receba cada entrega como parcial.">${c.partes.map(x => `${_FORN_DIAS[new Date(x.dia + 'T12:00:00').getDay()].toLowerCase()} ${n1(x.q)}`).join(' · ')}</span>` : ''}</div></td>
+         title="${mudou ? `A conta dava ${n1(c.auto)}. Apague para voltar.` : 'Quantidade na unidade de compra'}" onchange="planPedirProd('${l.pid}', this.value)"><span class="plan-un">${emb}</span>${c.partes ? `<span class="meta-num-sub plan-partes" title="Sugestão de divisão pelas entregas de ${esc(l.forn || 'fornecedor')}: cada entrega cobre do dia seguinte a ela até o dia da seguinte. O pedido continua um só; receba cada entrega como parcial.">${c.partes.map(x => `${_FORN_DIAS[new Date(x.dia + 'T12:00:00').getDay()].toLowerCase()} ${n1(x.q)}`).join(' · ')}</span>` : ''}${c.pedir > 0 && c.chega && c.tipo !== 'prazo' ? _planPedirAteHtml(_planPedirAte(l.fornId, c.chega, _planD.hoje)) : ''}</div></td>
     <td class="text-end plan-total">${c.pedir > 0 && l.custo > 0 ? brl(c.total) : '<span class="text-muted fw-normal">—</span>'}</td>
   </tr>`;
   return aberta ? linha + _planDetalhe(un, B, l, c, n1) : linha;
