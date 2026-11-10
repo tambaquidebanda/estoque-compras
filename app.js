@@ -7067,8 +7067,8 @@ const _PLAN_LOCAIS_SAIDA = { 'Centro': ['ESTOQUE_LOJA', 'CENTRAL'], 'Delivery P1
 const _PLAN_LOCAIS_A_PARTE = { 'Centro': ['CENTRAL', 'PRODUCAO'], 'Delivery P10': ['PRODUCAO P10'] };
 const _PLAN_TIPOS_COMPRA = new Set(['MP', 'MC']);
 // Categorias que não vêm da venda (Wagner, 26/10/2026): ficam na aba "Pelo uso" (28/10/2026),
-// que conta pela saída do estoque para os setores
-const _PLAN_CAT_FORA = new Set(['MC DESCARTÁVEIS/EMBALAGENS', 'MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
+// que conta pela saída do estoque para os setores. Carvão/lenha desde 10/11/2026 (Wagner).
+const _PLAN_CAT_FORA = new Set(['MC CARVÃO/LENHA', 'MC DESCARTÁVEIS/EMBALAGENS', 'MC GÁS/COMBUSTÍVEL', 'MC LIMPEZA', 'MC REFEIÇÃO FUNCIONÁRIOS', 'MC SALÃO',
   'MU ESCRITÓRIO', 'MU UNIFORMES', 'MU UTENSÍLIOS', 'Comida Funcionário']);   // nome antigo de REFEIÇÃO FUNCIONÁRIOS
 const _planEhCompra = p => !!p && (_PLAN_TIPOS_COMPRA.has(p.tipo) || /^(MP|MC|MU) /.test(p.categoria || ''));
 
@@ -7737,7 +7737,7 @@ function _pintarPlan() {
   const nModo = uso => B.linhas.filter(l => l.uso === uso && _planConta(un, l).auto > 0).length;
   const modo = (k, rot, sub, n) => `<button type="button" role="tab" aria-selected="${_planModo === k}" class="plan-modo${_planModo === k ? ' ativo' : ''}" onclick="planModo('${k}')">${rot}${n ? `<span class="plan-uni-n">${n}</span>` : ''}<small>${sub}</small></button>`;
   document.getElementById('plan-modo').innerHTML = modo('venda', 'Pela venda', 'comida e bebida, pela ficha', nModo(false)) +
-    modo('uso', 'Pelo uso', 'limpeza, embalagem, utensílios, pela saída', nModo(true));
+    modo('uso', 'Pelo uso', 'carvão, limpeza, embalagem, utensílios, pela saída', nModo(true));
   const margem = Math.round(_planMargem(un) * 100);
   const diasP = _planUCfg(un).dias ?? _PLAN_DIAS_PADRAO;
   // parâmetros resumidos num botão; o painel de ajuste abre por ele
@@ -7771,7 +7771,7 @@ function _pintarPlan() {
   como.classList.toggle('d-none', _planPainel !== 'como');
   document.getElementById('plan-como-btn').setAttribute('aria-expanded', String(_planPainel === 'como'));
   como.innerHTML = `<dl>
-    ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
+    ${_planModo === 'uso' ? `<dt>Pelo uso</dt><dd>Carvão e lenha, limpeza, embalagem, descartável, gás, salão, escritório, uniforme, utensílio e refeição de funcionário não saem pela venda: o consumo é a saída do estoque para os setores (pedido interno) no mesmo período. Só conta a saída de produto que está em alguma lista de contagem.</dd>` : ''}
     <dt>Consumo</dt><dd>O que a venda de ${_ddmm(p.ini)} a ${_ddmm(p.fim)} (${B.nDias} dias; o padrão são as 4 últimas semanas fechadas, de segunda a domingo) gastou de cada produto, abrindo a ficha até a MP. Produto que nenhuma ficha usa conta pela saída do estoque para os setores (etiqueta <span class="plan-base plan-base-saida">saída</span>). Guarnição: quando o cliente escolhe baião no PDV, o arroz da ficha do prato vira baião do mesmo peso (o mix troca metade).</dd>
     <dt>A conta</dt><dd>A mesma do papel. O pedido feito hoje chega num dia (o "Chega" do topo, senão a próxima entrega do fornecedor em Cadastros &gt; Fornecedores, senão hoje + prazo; sem nada, conta como se chegasse hoje) e precisa durar até a próxima entrega (a "próxima entrega" do topo, senão a entrega seguinte do fornecedor, senão ${diasP} dias depois que chega).
       O dia da entrega ainda sai do estoque atual (pode chegar à tarde, pode dar problema, bebida precisa gelar): todo pedido, o novo e os já feitos, só conta a partir do dia seguinte à entrega.
