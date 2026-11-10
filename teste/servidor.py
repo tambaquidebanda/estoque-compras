@@ -414,6 +414,43 @@ def _rpc(nome, corpo):
         cont[nome] = n
         _salvar_estado()
         return f'{pre}-{n:04d}'
+    if nome == 'cmp_desmembrar_pedido':   # mesma regra do SQL_DESMEMBRAR_PEDIDO.sql
+        ped, itens = str(corpo.get('p_pedido') or ''), corpo.get('p_itens') or []
+        if not re.match(r'^#\d+(/\d+)?$', ped):
+            raise Erro(400, 'P0001', f'Número de pedido inválido: {ped}')
+        if not itens:
+            raise Erro(400, 'P0001', 'Nenhum item para desmembrar')
+        if (any(l.get('numero_pedido') == ped for l in DB.get('lancamentos', []))
+                or any(r.get('pedido_num') == ped for r in DB.get('lancamentos_rascunho', []))
+                or any(c.get('pedido_num') == ped and (c.get('lancamento_id') or c.get('adiantamento_lancamento_id'))
+                       for c in DB.get('cmp_contas_pagar', []))):
+            raise Erro(400, 'P0001', f'O pedido {ped} já está no financeiro (adiantamento ou lançamento): não dá para desmembrar.')
+        base = ped.split('/')[0]
+        n = max([int(str(c.get('pedido_num')).split('/')[1]) for c in DB['cmp_compras']
+                 if str(c.get('pedido_num') or '').startswith(base + '/')] + [0]) + 1
+        novo = f'{base}/{n}'
+        linhas = []
+        for it in itens:   # confere tudo antes de mexer (tudo ou nada)
+            r = next((c for c in DB['cmp_compras'] if c.get('id') == it.get('id') and c.get('pedido_num') == ped
+                      and c.get('status_receb') == 'pendente'), None)
+            q = float(it.get('qtd') or 0)
+            if not r or q <= 0:
+                raise Erro(400, 'P0001', f'Um item não está mais pendente no pedido {ped}. Atualize a tela.')
+            linhas.append((r, q))
+        mapa = {}
+        for r, q in linhas:
+            if q < float(r.get('quantidade') or 0) - 0.0001:
+                nr = dict(r)
+                nr.update(id=str(uuid.uuid4()), pedido_num=novo, quantidade=q,
+                          total=round(q * float(r.get('custo_unit') or 0), 2), acrescimo=0)
+                DB['cmp_compras'].append(nr)
+                r['quantidade'] = float(r['quantidade']) - q
+                r['total'] = round(r['quantidade'] * float(r.get('custo_unit') or 0), 2)
+                mapa[r['id']] = nr['id']
+            else:
+                r['pedido_num'], r['acrescimo'] = novo, 0
+        _salvar('cmp_compras')
+        return {'novo': novo, 'mapa': mapa}
     raise Erro(404, 'PGRST202', f'funcao {nome} nao existe no ambiente de teste')
 
 

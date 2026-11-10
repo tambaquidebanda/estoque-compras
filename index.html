@@ -3872,6 +3872,14 @@
               onblur="moedaBlur(this);calcTotalReceb()">
           </div>
         </div>
+        <!-- Nota dividida (10/11/2026): os itens desta NF viram #pedido/N -->
+        <div class="form-check mb-3 p-2 ps-5 rounded" style="background:#f1f5f9">
+          <input class="form-check-input" type="checkbox" id="receb-desmembrar" onchange="_togDesmembrarDesk()">
+          <label class="form-check-label" for="receb-desmembrar">
+            <b>📑 Esta NF é só uma parte do pedido</b>
+            <span id="receb-desm-txt" class="small text-muted d-block">O fornecedor dividiu em mais de uma nota: os itens marcados viram um pedido à parte, com esta NF, valor e vencimento.</span>
+          </label>
+        </div>
         <!-- Parcelamento: só aparece quando o pedido é em mais de 1x -->
         <div id="receb-parc-box" class="d-none mb-3 p-2 rounded" style="background:#fff7ed;border:1px solid #fed7aa">
           <div class="row g-2">

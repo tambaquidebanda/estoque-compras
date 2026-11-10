@@ -8277,7 +8277,8 @@ async function _gerarNumeroPedido() {
     .not('pedido_num', 'is', null)
     .order('pedido_num', { ascending: false })
     .limit(1);
-  const ultimo = data?.[0]?.pedido_num || '#00000';
+  // Só o número antes da barra: '#02195/1' (parte de nota dividida) daria 21951
+  const ultimo = (data?.[0]?.pedido_num || '#00000').split('/')[0];
   const num    = (parseInt(ultimo.replace(/\D/g, '')) || 0) + 1;
   return '#' + String(num).padStart(5, '0');
 }
@@ -8493,6 +8494,8 @@ async function abrirModalReceber(pedido_num) {
   renderPreviewParcelas();
   document.getElementById('receb-responsavel').value       = '';
   document.getElementById('receb-nf').value                = '';
+  document.getElementById('receb-desmembrar').checked      = false;
+  _togDesmembrarDesk();
   setMoeda('receb-acrescimo', parseFloat(itens[0]?.acrescimo) || 0);
   document.getElementById('alerta-diverg').style.display   = 'none';
 
@@ -8889,8 +8892,56 @@ function _atalhoVenc(idCampo, dias, idBase) {
   else preparar();
 })();
 
+// ── NOTA DIVIDIDA: desmembrar o pedido no recebimento (Wagner, 10/11/2026) ──
+// AMBEV e Coca às vezes dividem o pedido em várias notas e só se descobre na entrega. O
+// estoquista marca "Esta NF é só uma parte do pedido": os itens marcados viram #02021/1
+// (depois /2...), recebido com a NF, o valor e o vencimento desta nota, e cada parte vai ao
+// financeiro como um pedido comum. O resto fica no pedido. A separação é a função do banco
+// cmp_desmembrar_pedido (tudo ou nada; SQL_DESMEMBRAR_PEDIDO.sql). Mesmo bloco no recebimento.html.
+const _baseDoPedido = pn => String(pn || '').split('/')[0];
+async function _proximaParte(pn) {
+  const base = _baseDoPedido(pn);
+  const { data } = await sb.from('cmp_compras').select('pedido_num').like('pedido_num', base + '/%');
+  const n = Math.max(0, ...(data || []).map(r => parseInt(r.pedido_num.split('/')[1], 10) || 0)) + 1;
+  return `${base}/${n}`;
+}
+async function _togDesmembrarDesk() {
+  const on  = document.getElementById('receb-desmembrar')?.checked;
+  const txt = document.getElementById('receb-desm-txt');
+  const pn  = document.getElementById('receb-pedido-num-hidden')?.value;
+  if (!txt) return;
+  if (!on || !pn) { txt.innerHTML = 'O fornecedor dividiu em mais de uma nota: os itens marcados viram um pedido à parte, com esta NF, valor e vencimento.'; return; }
+  const prox = await _proximaParte(pn);
+  txt.innerHTML = `Os itens marcados viram o pedido <b>${esc(prox)}</b>, com esta NF, valor e vencimento. O que não veio nesta nota fica no ${esc(pn)}. Preencha o nº da NF.`;
+}
+// Separa no banco os itens desta nota. Devolve { novo, mapa } ou null (já avisou).
+async function _desmembrarPedido(pedido_num, itensReceb) {
+  const itens = itensReceb.map(i => ({ id: i.compra_id, qtd: Number(i.qtd_recebida) || 0 }));
+  if (itens.some(i => !(i.qtd > 0))) { toast('Na nota dividida, todo item marcado precisa ter quantidade recebida.', 'erro'); return null; }
+  const { data, error } = await sb.rpc('cmp_desmembrar_pedido', { p_pedido: pedido_num, p_itens: itens });
+  if (error || !data?.novo) { toast('Não deu para desmembrar: ' + (error?.message || 'sem resposta'), 'erro'); return null; }
+  return data;
+}
+// Pedido de onde saiu a parte: se não sobrou nada pendente e ele já tinha recebimento
+// (a 1ª nota recebida sem desmembrar), fecha e manda ao financeiro como o normal faria.
+async function _finalizarBaseDesmembrada(base, ref, unidade_id) {
+  const { data: rest } = await sb.from('cmp_compras').select('id').eq('pedido_num', base)
+    .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
+  if (rest?.length) return;
+  const { data: rec } = await sb.from('cmp_compras').select('id').eq('pedido_num', base).eq('status_receb', 'recebido').limit(1);
+  if (!rec?.length) return;
+  const { data: conta } = await sb.from('cmp_contas_pagar')
+    .select('id,adiantamento_lancamento_id,lancamento_id,vencimento,parcelas,parcela_intervalo,nf_numero').eq('pedido_num', base).maybeSingle();
+  if (!conta || conta.lancamento_id) return;
+  if (isCompExterna(ref?.fornecedor_nome)) await _executarFinalizarCompExt(base, conta, ref, unidade_id, conta.nf_numero || null);
+  else await _executarFinalizarRegular(base, conta, ref, unidade_id, conta.nf_numero || null);
+}
+
 async function confirmarRecebimento() {
-  const pedido_num  = document.getElementById('receb-pedido-num-hidden').value;
+  let pedido_num    = document.getElementById('receb-pedido-num-hidden').value;
+  const _pedidoBase = pedido_num;
+  const _desm       = !!document.getElementById('receb-desmembrar')?.checked;
+  const _idOrig     = {};   // id da linha nova (parte) -> id da linha que estava na tela
   const dataRec     = document.getElementById('receb-data-rec').value;
   const responsavel = (document.getElementById('receb-responsavel').value || '').trim();
   const vencimento  = document.getElementById('receb-vencimento').value;
@@ -8945,6 +8996,18 @@ async function confirmarRecebimento() {
       `Se for bonificação, cancele e marque a coluna "Bonificado" — assim o produto mantém o custo real ` +
       `e não gera conta a pagar.\n\nContinuar mesmo assim?`
     )) return;
+  }
+
+  // Nota dividida: os itens desta nota viram o pedido #.../N antes de gravar o recebimento
+  if (_desm) {
+    if (!(document.getElementById('receb-nf')?.value || '').trim()) { toast('Nota dividida: informe o nº da NF desta parte.', 'erro'); return; }
+    const _d = await _desmembrarPedido(pedido_num, itensReceb);
+    if (!_d) return;
+    pedido_num = _d.novo;
+    itensReceb.forEach(i => {
+      const novoId = _d.mapa?.[i.compra_id];
+      if (novoId) { _idOrig[novoId] = i.compra_id; i.compra_id = novoId; i.qtd_pedida = i.qtd_recebida; }
+    });
   }
 
   // Bonificado fica FORA do total: é o número que vira cmp_contas_pagar.valor e o
@@ -9004,7 +9067,7 @@ async function confirmarRecebimento() {
 
   // Salva itens — se falhar, remove o cabeçalho para não deixar recebimento órfão,
   // que inflaria o valor da conta (soma de TODOS os cmp_recebimentos do pedido).
-  const _usoDoItem  = cid => _recebItensAbertos.find(o => o.id === cid)?.unidade_uso || '';
+  const _usoDoItem  = cid => _recebItensAbertos.find(o => o.id === (_idOrig[cid] || cid))?.unidade_uso || '';
   const _localItem  = it => _localDoItemReceb(_usoDoItem(it.compra_id), localReceb);
   const { error: errItens } = await sb.from('cmp_recebimento_itens').insert(itensReceb.map(it => {
     const l = _localItem(it);
@@ -9033,14 +9096,14 @@ async function confirmarRecebimento() {
   if (contaExist) {
     await sb.from('cmp_contas_pagar').update({
       recebimento_id: receb.id, data_receb: dataRec, vencimento, valor: totalAcumulado,
-      parcelas, parcela_intervalo: parcelaInt,
+      parcelas, parcela_intervalo: parcelaInt, ...(nf ? { nf_numero: nf } : {}),
     }).eq('id', contaExist.id);
   } else {
     await sb.from('cmp_contas_pagar').insert([{
       pedido_num, recebimento_id: receb.id,
       fornecedor: ref?.fornecedor_nome || '',
       data_receb: dataRec, vencimento, valor: totalAcumulado, status: 'pendente',
-      parcelas, parcela_intervalo: parcelaInt,
+      parcelas, parcela_intervalo: parcelaInt, nf_numero: nf,
     }]);
   }
 
@@ -9087,7 +9150,7 @@ async function confirmarRecebimento() {
     }
   }
   // Persiste acréscimo atualizado
-  if (acrescimo !== (parseFloat(_recebItensAbertos[0]?.acrescimo) || 0)) {
+  if (_desm || acrescimo !== (parseFloat(_recebItensAbertos[0]?.acrescimo) || 0)) {
     await sb.from('cmp_compras').update({ acrescimo }).eq('pedido_num', pedido_num);
   }
 
@@ -9107,6 +9170,8 @@ async function confirmarRecebimento() {
       toast(`✅ Pedido ${pedido_num} finalizado e enviado ao financeiro!`, 'ok');
     }
   }
+  // Nota dividida: o pedido de onde a parte saiu pode ter ficado sem nada pendente
+  if (_desm) await _finalizarBaseDesmembrada(_pedidoBase, ref, unidade_id).catch(e => console.error('fechar pedido de origem:', e));
 
   // Aumentar o saldo do lugar que recebeu (localReceb). Casa por produto_id (vínculo
   // por código); só cai no match por nome como fallback para pedidos antigos sem id.
