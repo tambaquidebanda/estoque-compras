@@ -9820,7 +9820,17 @@ async function imprimirTodosPedidosForn() {
 // ═══════════════════════════════════════════════════════════════
 // COMPRAS — LISTA DE PEDIDOS
 // ═══════════════════════════════════════════════════════════════
+// Busca do pedido dispara a cada tecla (Wagner, 10/11/2026: "nunca vai de primeira, tenho que
+// apertar duas vezes"): digitando 2001 saem 4 buscas, e a do "2" (quase tudo) chegava por último e
+// cobria a do "2001". Cada chamada leva um número; a que não é a mais nova para sem desenhar.
+let _cpsSeq = 0, _cpsTimer = null;
+function carregarComprasDigitando() {
+  clearTimeout(_cpsTimer);
+  _cpsTimer = setTimeout(carregarCompras, 300);
+}
 async function carregarCompras() {
+  clearTimeout(_cpsTimer);
+  const seq = ++_cpsSeq;
   const ini     = document.getElementById('cps-ini')?.value || '';
   const fim     = document.getElementById('cps-fim')?.value || '';
   const fornSel = document.getElementById('cps-forn')?.value || '';
@@ -9845,7 +9855,7 @@ async function carregarCompras() {
       return q;
     }
   );
-  if (!rows) return;
+  if (!rows || seq !== _cpsSeq) return;
 
   // Agrupa por pedido_num
   const grupos = {};
@@ -9888,6 +9898,7 @@ async function carregarCompras() {
       sb.from('cmp_contas_pagar').select('pedido_num,lancamento_id,adiantamento_lancamento_id,valor').in('pedido_num', numeros),
       sb.from('cmp_recebimentos').select('pedido_num,total_recebido').in('pedido_num', numeros),
     ]);
+    if (seq !== _cpsSeq) return;
     (resLanc.data   || []).forEach(l => lancSet.add(l.numero_pedido));
     (resRasc.data   || []).forEach(r => rascunhoSet.add(r.pedido_num));
 
@@ -9909,6 +9920,7 @@ async function carregarCompras() {
       if (error) { checagemOk = false; break; }
       (vivos || []).forEach(l => idsVivos.add(l.id));
     }
+    if (seq !== _cpsSeq) return;
     (resContas.data || []).forEach(c => {
       contaSet.add(c.pedido_num);
       if (c.lancamento_id) {
