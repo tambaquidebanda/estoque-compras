@@ -2060,7 +2060,7 @@
           <div class="plan-chega" id="plan-chega-box" title="Quando chega o pedido que você está montando agora e quando é a entrega seguinte. Vale para todos os produtos desta unidade, só hoje. Vazio = pelo cadastro do fornecedor.">
             <i class="bi bi-truck"></i><label for="plan-chega">Chega</label>
             <input type="date" id="plan-chega" onchange="planChega(this.value)">
-            <label for="plan-ate" title="Até quando a compra de hoje precisa durar (cobre até a véspera)">próxima entrega</label>
+            <label for="plan-ate" title="Dia da próxima entrega: a compra de hoje cobre até ele, inclusive (a próxima só conta no dia seguinte)">próxima entrega</label>
             <input type="date" id="plan-ate" onchange="planAte(this.value)">
             <span id="plan-chega-txt"></span>
             <button type="button" id="plan-chega-x" class="d-none" onclick="planChega('')" title="Voltar ao dia de entrega de cada fornecedor" aria-label="Voltar ao cadastro do fornecedor">×</button>
@@ -2130,8 +2130,8 @@
                 <th>Produto</th>
                 <th class="text-end" title="Média por semana do que a venda consumiu, aberta pela ficha até a MP">Consumo / semana</th>
                 <th class="text-end" title="O que a unidade tem agora (e, embaixo, o que já foi pedido e ainda não chegou)">Tem agora</th>
-                <th class="text-end" id="plan-th-sobra" title="O que sobra no dia que o pedido chega: tem agora + o que chega até lá − consumo até a véspera. Vermelho = acaba antes de chegar">Sobra na chegada</th>
-                <th class="text-end" id="plan-th-precisa" title="Consumo do período (Comprar para), a partir do dia que chega, + margem. O período de cada produto aparece embaixo do número.">Precisa</th>
+                <th class="text-end" id="plan-th-sobra" title="O que sobra no fim do dia que o pedido chega: tem agora + o que chega até lá − consumo até o dia da entrega (o pedido só conta no dia seguinte). Vermelho = acaba antes">Sobra na chegada</th>
+                <th class="text-end" id="plan-th-precisa" title="Consumo do período (Comprar para), a partir do dia seguinte à entrega, + margem. O período de cada produto aparece embaixo do número.">Precisa</th>
                 <th class="text-center">Pedir</th>
                 <th class="text-end">Total</th>
               </tr>
