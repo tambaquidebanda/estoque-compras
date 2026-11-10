@@ -1252,6 +1252,24 @@ function hojeLocal() {
   }).format(new Date());
 }
 
+// Data da contagem nunca é futura (Wagner, 10/11/2026): de 01/10 a 09/11, 206 de 289 pedidos
+// do Kevin (BAR) e dezenas da cozinha saíram com a data do dia seguinte, porque o campo de
+// data da tela estava com amanhã (trocado à mão, "o pedido é para amanhã", ou tela antiga
+// aberta). A emergência da mesma noite, que pega hojeLocal() na hora, saiu certa. A noite
+// contada sumia do histórico e o dia seguinte ficava com duas contagens. Data passada segue
+// liberada (quem conta de manhã a noite anterior).
+function _dataContagem() {
+  const el = document.getElementById('data-inv');
+  const hoje = hojeLocal();
+  let d = el?.value || '';
+  if (d && d > hoje) {
+    el.value = hoje;
+    toast(`A data da contagem é a noite em que contou: ${d.split('-').reverse().join('/')} virou hoje, ${hoje.split('-').reverse().join('/')}.`, 'err');
+    d = hoje;
+  }
+  return d;
+}
+
 function mostrarModal(id) { document.getElementById(id).style.display = 'flex'; }
 function fecharModal(id)  { document.getElementById(id).style.display = 'none'; }
 function fecharSePano(e, id) { if (e.target.id === id) fecharModal(id); }
@@ -1261,6 +1279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   sb   = supabase.createClient(SB_URL, SB_KEY);
   _dia = DIAS_SEM[new Date().getDay()];
   document.getElementById('data-inv').value = hojeLocal();
+  document.getElementById('data-inv').max = hojeLocal();   // sem data futura (ver _dataContagem)
   document.getElementById('data-inv').addEventListener('change', _pintarContexto);
   atualizarBtnsDia();
   const { data: { session } } = await sb.auth.getSession();
@@ -1839,7 +1858,7 @@ async function salvarSaldoContagem() {
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
 
   const resp  = (user?.user_metadata?.nome || user?.email?.split('@')[0] || '').trim();
-  const data  = document.getElementById('data-inv').value;
+  const data  = _dataContagem();
   const agora = new Date().toISOString();
   const T     = _telaAgora();   // a tela pode mudar enquanto grava
 
@@ -2236,7 +2255,7 @@ async function enviarPedido() {
 
 async function _enviarPedido() {
   if (!_setor || !_grupo) { toast('Selecione setor e grupo.', 'err'); return; }
-  const data = document.getElementById('data-inv').value;
+  const data = _dataContagem();
   if (!data) { toast('Selecione a data.', 'err'); return; }
   // Tudo da tela é lido AGORA, antes do primeiro await: quem conta pode tocar em
   // outro grupo enquanto grava (ver _telaAgora)

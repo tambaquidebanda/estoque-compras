@@ -231,7 +231,7 @@ function ir(nome, el) {
   if (nome === 'cmv')         carregarCMV();
   if (nome === 'historico')   carregarHistorico();
   if (nome === 'cadastros')   { irCad('produtos', document.querySelector('#tabs-cad .nav-link')); }
-  if (nome === 'inventario')    { setHoje('inv-data'); carregarInventario(); }
+  if (nome === 'inventario')    { setHoje('inv-data'); document.getElementById('inv-data').max = hojeLocal(); carregarInventario(); }
   if (nome === 'saldo')         carregarSaldo();
   if (nome === 'perdas')        carregarPerdas();
   if (nome === 'devolucoes')    carregarDevolucoes();
@@ -452,6 +452,24 @@ function mesCurto(mesStr) {
 // ═══════════════════════════════════════════════════════════════
 // TOAST
 // ═══════════════════════════════════════════════════════════════
+// Data da contagem nunca é futura (Wagner, 10/11/2026): de 01/10 a 09/11, 206 de 289 pedidos
+// do Kevin (BAR) e dezenas da cozinha saíram com a data do dia seguinte, porque o campo de
+// data da tela estava com amanhã (trocado à mão, "o pedido é para amanhã", ou tela antiga
+// aberta). A emergência da mesma noite, que pega hojeLocal() na hora, saiu certa. A noite
+// contada sumia do histórico e o dia seguinte ficava com duas contagens. Data passada segue
+// liberada (quem conta de manhã a noite anterior).
+function _dataContagemDesk() {
+  const el = document.getElementById('inv-data');
+  const hoje = hojeLocal();
+  let d = el?.value || '';
+  if (d && d > hoje) {
+    el.value = hoje;
+    toast(`A data da contagem é a noite em que contou: ${d.split('-').reverse().join('/')} virou hoje, ${hoje.split('-').reverse().join('/')}.`, 'erro');
+    d = hoje;
+  }
+  return d;
+}
+
 function toast(msg, tipo = '') {
   const box = document.getElementById('toast-box');
   const el  = document.createElement('div');
@@ -3874,7 +3892,7 @@ function _copiarPadraoDia(origem, destinos) {
 
 async function salvarInventario() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de salvar.', 'erro'); return; }
-  const data = document.getElementById('inv-data').value;
+  const data = _dataContagemDesk();
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
 
@@ -4500,7 +4518,7 @@ function _fatorDe(produto_id) {
 
 async function _enviarPedidoInterno() {
   if (!_invSetor || !_invGrupo) { toast('Selecione setor e grupo antes de enviar.', 'erro'); return; }
-  const data = document.getElementById('inv-data').value;
+  const data = _dataContagemDesk();
   if (!data) { toast('Selecione a data da contagem.', 'erro'); return; }
   if (!_invProds.length) { toast('Nenhum produto no grupo.', 'erro'); return; }
   // Tudo da tela é lido AGORA, antes do primeiro await (ver _invTelaAgora)
@@ -4599,7 +4617,7 @@ async function _substituirPendentesAntigos(T, novoPedId) {
 async function salvarSaldoContagemDesktop() {
   if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
   if (_contagemFechada(_invLocal, 'ESTOQUE DA LOJA')) { toast(_MSG_EL_FECHADO, 'erro'); return; }
-  const data = document.getElementById('inv-data').value;
+  const data = _dataContagemDesk();
   const resp = (document.getElementById('inv-resp').value || '').trim();
   const btn  = document.getElementById('inv-btn-salvar-saldo');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
@@ -4644,7 +4662,7 @@ async function salvarSaldoInicialSetor() {
   if (!_invSetor || !_invGrupo || !_invProds.length) { toast('Selecione grupo antes de salvar.', 'erro'); return; }
   if (_LOCAIS_SEM_CONTAGEM.includes(_localDaContagem(_invLocal, _invSetor))) { toast('O saldo inicial do Estoque da Loja não pode ser lançado: use a contagem com a senha de liberação.', 'erro'); return; }
   if (!confirm(`Salvar saldo inicial de ${_invSetor} / ${_invGrupo}?\nIsso define o estoque de partida do setor.`)) return;
-  const data = document.getElementById('inv-data').value;
+  const data = _dataContagemDesk();
   const resp = (document.getElementById('inv-resp').value || '').trim();
   const btn  = document.getElementById('inv-btn-saldo-inicial');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
