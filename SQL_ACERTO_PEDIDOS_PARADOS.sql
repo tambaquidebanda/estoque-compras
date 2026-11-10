@@ -576,3 +576,34 @@ WHERE criado_em > now() - interval '15 minutes' AND tipo = 'recebimento';
 -- #01938 Bonna Vitta R$ 339,96 e #01787 Alberta R$ 66,00, pelo botão
 -- "Enviar Financeiro" na aba Compras, com o vencimento certo do boleto/Pix.
 -- ---------------------------------------------------------------------
+
+
+-- ---------------------------------------------------------------------
+-- PASSO 8 - DISPENSA O #01323 (Pescado, 100 tambaquis do P10, R$ 5.500).
+-- Decisão do Wagner em 10/11: o Pescado faturou #01000, #01260 e #01463
+-- (100 tambaquis cada) e nunca este; o #01463, feito 10 dias depois para o
+-- P10, foi recebido. Era o mesmo pedido refeito. Sem conta, sem lançamento.
+-- Pode rodar a qualquer momento, antes ou depois dos outros passos.
+-- Esperado: DO e COMMIT.
+-- ---------------------------------------------------------------------
+BEGIN;
+
+DO $$
+DECLARE v_n int; v_movs0 int;
+BEGIN
+  SELECT count(*) INTO v_movs0 FROM est_movimentacoes;
+  ASSERT (SELECT count(*) FROM cmp_compras WHERE pedido_num = '#01323') = 1, '#01323: esperava 1 item';
+  ASSERT NOT EXISTS (SELECT 1 FROM cmp_recebimentos WHERE pedido_num = '#01323'), '#01323: já tem recebimento';
+  ASSERT NOT EXISTS (SELECT 1 FROM cmp_contas_pagar WHERE pedido_num = '#01323'), '#01323: já tem conta';
+  ASSERT NOT EXISTS (SELECT 1 FROM lancamentos WHERE numero_pedido = '#01323' OR descricao ILIKE '%#01323%'), '#01323: já tem lançamento';
+  UPDATE cmp_compras SET status_receb = 'dispensado'
+   WHERE id = '2d6d39db-b497-42c9-998d-64b4765c489d' AND pedido_num = '#01323' AND status_receb = 'pendente';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  ASSERT v_n = 1, format('#01323: dispensou %s, esperava 1', v_n);
+  ASSERT (SELECT count(*) FROM est_movimentacoes) = v_movs0, 'algo mexeu no estoque - nada foi gravado';
+END $$;
+
+COMMIT;
+
+-- Conferência: deve vir 'dispensado'.
+SELECT pedido_num, produto, quantidade, status_receb FROM cmp_compras WHERE pedido_num = '#01323';
