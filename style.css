@@ -607,6 +607,7 @@ h1 {
 .plan-base-margem { background: var(--pl-teal-claro); color: var(--pl-teal); }
 .plan-parte { display: block; font-size: .72rem; color: #7c3aed; white-space: nowrap; }
 .plan-caminho { display: block; font-size: .72rem; color: var(--pl-teal); white-space: nowrap; }
+.plan-caminho.plan-atrasado { color: var(--pl-vermelho); font-weight: 600; }
 .saldo-caminho { display: block; font-size: .7rem; font-weight: 500; color: #0e6b68; white-space: nowrap; }
 /* colunas Tem agora / Sobra / Precisa no padrão da Meta (06/11/2026) */
 .plan-num { white-space: nowrap; }

@@ -7298,7 +7298,7 @@ function _planBase(un) {
   });
   // ── compras: já pedido, último fornecedor/preço/categoria ──
   const C = _planCompras(D.compras, un, D.hoje, p);
-  const { pedido, pedidoDet, pedidoChega, pedidoAtrasado, comprado } = C;
+  const { pedido, pedidoDet, pedidoChega, pedidoAtrasado, pedidoVencido, comprado } = C;
   // ── linhas ──
   const ids = new Set(cProdutosFT.filter(_planEhCompra).map(x => x.id));
   Object.keys(consumo).forEach(pid => { if (_PLAN_TIPOS_COMPRA.has(prodFT(pid)?.tipo)) ids.add(pid); });
@@ -7326,7 +7326,7 @@ function _planBase(un) {
     return {
       consDow, chegou: chegou[pid] || {},
       ..._planCompraDe(pid, C, _planFornTroca[un]?.[pid]), uso: _PLAN_CAT_FORA.has(pr.categoria), cat: pr.categoria || 'SEM CATEGORIA', un: pr.unidade_uso || 'UN', base, consDia, vendido, vendSem, perda,
-      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [], pedidoAtrasado: pedidoAtrasado[pid] || [],
+      foraLista, saiTudo, comprado: comprado[pid] || 0, tem: tem[pid] || 0, temTela: temTela[pid] || 0, temParte: temParte[pid] || 0, temDet: temDet[pid] || [], temFora: temFora[pid] || [], pedido: pedido[pid] || 0, pedidoDet: pedidoDet[pid] || [], pedidoChega: pedidoChega[pid] || [], pedidoAtrasado: pedidoAtrasado[pid] || [], pedidoVencido: pedidoVencido[pid] || [],
     };
   }).filter(Boolean).sort((a, b) => a.cat.localeCompare(b.cat) || a.nome.localeCompare(b.nome));
   return (D.base[un] = { linhas, nDias, nCal, p, semanas, daMeta, C });
@@ -7341,6 +7341,7 @@ function _planCompras(compras, un, hoje, p) {
   const limiteUso = _isoMais(hoje, -_PLAN_FORN_USO_DIAS);
   const limiteAtraso = _isoMais(hoje, -_PLAN_ATRASO_DIAS);
   const pedidoAtrasado = {};   // { pid: ['#01998 (28/10) · era para 30/10'] } vencido, fora da conta
+  const pedidoVencido = {};    // { pid: [{ q, ped, era }] } os mesmos, com a quantidade (aviso na linha)
   // Pedido da semana dividido em entregas (Wagner, 09/11/2026): a data_entrega do pedido é a
   // da 1ª entrega; o resto chega nos outros dias do fornecedor dentro do período. Pedido que
   // já teve recebimento parcial também segue "a caminho" até o fim do período. O atraso conta
@@ -7370,6 +7371,8 @@ function _planCompras(compras, un, hoje, p) {
     const ultPed = minha && c.status_receb === 'pendente' ? ultimaPed(c) : null;
     if (ultPed && ultPed < limiteAtraso) {
       (pedidoAtrasado[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)}) · era para ${_ddmm(ultPed)}`);
+      const qv = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
+      if (qv > 0) (pedidoVencido[pid] ||= []).push({ q: qv, ped: c.pedido_num, era: ultPed });
     } else if (minha && c.status_receb === 'pendente' && c.data >= limitePed) {
       const q = (Number(c.quantidade) || 0) * (prodFT(pid)?.fator_conversao || 1);
       pedido[pid] = (pedido[pid] || 0) + q;
@@ -7377,11 +7380,14 @@ function _planCompras(compras, un, hoje, p) {
       // (pedido da semana dividido) ou hoje (atrasado / sem data)
       const prox = c.data_entrega && c.data_entrega <= hoje ? entregasPed(c).find(d => d >= hoje) : null;
       const dia = c.data_entrega && c.data_entrega > hoje ? c.data_entrega : prox || hoje;
-      if (q > 0) (pedidoChega[pid] ||= []).push({ dia, q });
+      // tipo do aviso na linha (Wagner, 10/11/2026): a caminho (dia futuro) · chega hoje ·
+      // pedido atrasado (entrega já passou e ninguém recebeu nem dispensou) · sem data
+      const tipo = !c.data_entrega ? 'semdata' : dia > hoje ? 'futuro' : c.data_entrega < hoje && !prox ? 'atrasado' : 'hoje';
+      if (q > 0) (pedidoChega[pid] ||= []).push({ dia, q, tipo, ped: c.pedido_num, era: c.data_entrega });
       (pedidoDet[pid] ||= []).push(`${c.pedido_num} (${_ddmm(c.data)})` + (c.data_entrega
         ? (c.data_entrega > hoje ? ` · chega ${_planDiaTxt(c.data_entrega)}`
           : prox && prox > hoje ? ` · resto chega ${_planDiaTxt(prox)}`
-          : c.data_entrega < hoje && !prox ? ` · era para ${_ddmm(c.data_entrega)}, conta como hoje` : ' · chega hoje') : ''));
+          : c.data_entrega < hoje && !prox ? ` · pedido atrasado, era para ${_ddmm(c.data_entrega)} (conta como hoje)` : ' · chega hoje') : ''));
     }
     if (p && minha && c.status_receb !== 'dispensado' && c.data >= p.ini && c.data <= p.fim)
       comprado[pid] = (comprado[pid] || 0) + (Number(c.custo_unit) || 0) * (Number(c.quantidade) || 0);
@@ -7401,7 +7407,7 @@ function _planCompras(compras, un, hoje, p) {
   });
   const catDaCategoria = {};
   Object.entries(catVotos).forEach(([cn, v]) => { catDaCategoria[cn] = Object.keys(v).sort((a, b) => v[b] - v[a])[0]; });
-  return { pedido, pedidoDet, pedidoChega, pedidoAtrasado, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
+  return { pedido, pedidoDet, pedidoChega, pedidoAtrasado, pedidoVencido, ultimo, ultimoOutra, catDaCategoria, comprado, uso, historico };
 }
 
 // Fornecedor sugerido de um produto (Wagner, 28/10/2026: o último fornecedor errava quando
@@ -7814,11 +7820,28 @@ function _pintarPlanTabela() {
   }).join('');
 }
 
-// "+ 300 chega qui 05/11" — o já pedido aparece no dia em que chega (atrasado/sem data: "a caminho")
+// Aviso do já pedido na coluna Tem agora (Wagner, 10/11/2026), sempre com a quantidade:
+//   "+ 300 a caminho · qui 13/11"  entrega num dia que ainda vem
+//   "+ 300 chega hoje"             entrega hoje (ou a parte de hoje de um pedido dividido)
+//   "+ 250 pedido atrasado"        a entrega já passou e ninguém recebeu nem dispensou;
+//                                  até _PLAN_ATRASO_DIAS conta como chegando hoje, depois sai da conta
 function _planCaminhoHtml(l, n1) {
-  const hoje = _planD.hoje, por = {};
-  (l.pedidoChega || []).forEach(x => { por[x.dia] = (por[x.dia] || 0) + x.q; });
-  return Object.keys(por).sort().map(d => `<span class="plan-caminho">+ ${n1(por[d])} ${d > hoje ? 'chega ' + _planDiaTxt(d) : 'a caminho'}</span>`).join('');
+  const por = {}, ordem = { atrasado: 0, hoje: 1, semdata: 2, futuro: 3 };
+  (l.pedidoChega || []).forEach(x => {
+    const tipo = x.tipo || 'hoje', k = tipo + '|' + (tipo === 'futuro' ? x.dia : '');
+    const g = (por[k] ||= { tipo, dia: x.dia, q: 0, peds: [] });
+    g.q += x.q; g.peds.push(x.ped + (x.era && tipo === 'atrasado' ? ' (era para ' + _ddmm(x.era) + ')' : ''));
+  });
+  const venc = l.pedidoVencido || [];
+  if (venc.length) por['vencido|'] = { tipo: 'vencido', q: venc.reduce((s, x) => s + x.q, 0), peds: venc.map(x => x.ped + ' (era para ' + _ddmm(x.era) + ')') };
+  const peds = g => [...new Set(g.peds)].join(', ');
+  return Object.values(por).sort((a, b) => ((ordem[a.tipo] ?? -1) - (ordem[b.tipo] ?? -1)) || (a.dia || '').localeCompare(b.dia || '')).map(g => {
+    if (g.tipo === 'futuro') return `<span class="plan-caminho" title="${esc(peds(g))}">+ ${n1(g.q)} a caminho · ${_planDiaTxt(g.dia)}</span>`;
+    if (g.tipo === 'hoje') return `<span class="plan-caminho" title="${esc(peds(g))}">+ ${n1(g.q)} chega hoje</span>`;
+    if (g.tipo === 'semdata') return `<span class="plan-caminho" title="${esc(peds(g))} · sem data de entrega, conta como hoje">+ ${n1(g.q)} a caminho</span>`;
+    if (g.tipo === 'atrasado') return `<span class="plan-caminho plan-atrasado" title="${esc(peds(g))}. Ninguém recebeu nem dispensou. Conta como chegando hoje até ${_PLAN_ATRASO_DIAS} dias de atraso.">+ ${n1(g.q)} pedido atrasado</span>`;
+    return `<span class="plan-caminho plan-atrasado plan-vencido" title="${esc(peds(g))}. Atrasado há mais de ${_PLAN_ATRASO_DIAS} dias: não entra na conta até alguém receber ou dispensar.">+ ${n1(g.q)} pedido atrasado · fora da conta</span>`;
+  }).join('');
 }
 
 function _planLinha(un, B, l, c, n1, porForn) {
