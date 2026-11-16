@@ -2533,7 +2533,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
   document.getElementById('ft-ing-nome').value = '';
   document.getElementById('ft-ing-id').value   = '';
   document.getElementById('ft-ing-qtd').value  = '1';
-  document.getElementById('ft-ing-un').value   = 'UN';
+  document.getElementById('ft-ing-un').value   = '';
   document.getElementById('ft-ing-info').textContent = '';
 
   if (prodId) {
@@ -2580,7 +2580,7 @@ async function abrirModalFicha(prodId = '', fichaId = '') {
             nome:       prod.nome,
             tipo:       prod.tipo,
             quantidade: ing.quantidade,
-            unidade:    ing.unidade,
+            unidade:    _unFicha(prod),
             custo_uso:  custoEfetivo,
           });
         }
@@ -2683,6 +2683,13 @@ function acIngrediente(val) {
   lista.classList.add('aberta');
 }
 
+// Unidade do ingrediente na ficha = SEMPRE a Unidade (de uso) do cadastro do produto.
+// A quantidade da ficha é lida em unidade de uso por tudo (custo, baixa do PDV, meta);
+// a unidade era um campo de texto livre e a importação de junho deixou 254 linhas com
+// outra unidade escrita ("0,01 Pacote" de pasta de alho que é KG). Wagner, 16/11/2026.
+// O banco também força isso (SQL_FICHA_UNIDADE_DO_CADASTRO.sql).
+function _unFicha(prod) { return (prod?.unidade_uso || '').trim(); }
+
 function selecionarIngrediente(id) {
   const p = cProdutosFT.find(x => x.id === id);
   if (!p) return;
@@ -2695,7 +2702,7 @@ function selecionarIngrediente(id) {
 
   document.getElementById('ft-ing-id').value   = id;
   document.getElementById('ft-ing-nome').value = p.nome;
-  document.getElementById('ft-ing-un').value   = uuso;
+  document.getElementById('ft-ing-un').value   = _unFicha(p);
   document.getElementById('ft-ing-info').textContent =
     `1 ${ucmp} = ${fator} ${uuso}` +
     (perda > 0 ? ` | Perda: ${perda}%` : '') +
@@ -2707,8 +2714,6 @@ function selecionarIngrediente(id) {
 function addIngrediente() {
   const id  = document.getElementById('ft-ing-id').value;
   const qtd = parseFloat(document.getElementById('ft-ing-qtd').value);
-  const un  = document.getElementById('ft-ing-un').value.trim();
-
   if (!id || !qtd || qtd <= 0) {
     toast('Selecione um ingrediente e informe a quantidade.', 'erro'); return;
   }
@@ -2737,11 +2742,12 @@ function addIngrediente() {
     nome:       prod.nome,
     tipo:       prod.tipo,
     quantidade: qtd,
-    unidade:    un,
+    unidade:    _unFicha(prod),
     custo_uso:  custoEfetivo,
   });
 
   document.getElementById('ft-ing-nome').value       = '';
+  document.getElementById('ft-ing-un').value         = '';
   document.getElementById('ft-ing-id').value         = '';
   document.getElementById('ft-ing-qtd').value        = '1';
   document.getElementById('ft-ing-info').textContent = '';
@@ -2778,12 +2784,7 @@ function renderIngredientes() {
           oninput="atualizarIngrediente(${idx},'quantidade',this.value)"
           style="width:90px;display:inline-block">
       </td>
-      <td style="width:80px">
-        <input type="text" class="form-control form-control-sm text-center"
-          value="${esc(ing.unidade)}"
-          oninput="atualizarIngrediente(${idx},'unidade',this.value)"
-          style="width:65px;display:inline-block">
-      </td>
+      <td style="width:80px" class="text-center text-muted" title="Unidade do cadastro do produto">${esc(_unFicha(prodFT(ing.prod_id)) || ing.unidade)}</td>
       <td class="text-muted">${brl(ing.custo_uso)}</td>
       <td class="fw-semibold" id="ft-sub-${idx}">${brl(subtotal)}</td>
       <td>
@@ -2897,7 +2898,7 @@ async function _salvarFichaCore() {
     ficha_id:       targetFichaId,
     ingrediente_id: i.prod_id,
     quantidade:     i.quantidade,
-    unidade:        i.unidade,
+    unidade:        _unFicha(prodFT(i.prod_id)) || i.unidade,
   }));
 
   const { error: errIng } = await sb.from('est_ficha_ingredientes').insert(ings);
@@ -11289,7 +11290,7 @@ async function carregarFichaProduto() {
       return `<tr>
         <td>${esc(prod?.nome || ing.ingrediente_id)}</td>
         <td><span class="badge-tipo badge-${(prod?.tipo||'').toLowerCase()}">${prod?.tipo||'—'}</span></td>
-        <td class="text-center">${ing.quantidade} ${ing.unidade}</td>
+        <td class="text-center">${ing.quantidade} ${esc(_unFicha(prod) || ing.unidade || '')}</td>
         <td class="text-center text-muted">${custoUnit > 0 ? brl(custoUnit) : '—'}</td>
         <td class="text-center">${brl(subtotal)}</td>
       </tr>`;
