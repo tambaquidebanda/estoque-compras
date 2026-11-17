@@ -1473,7 +1473,10 @@ async function finalizarPedido() {
 
   // Item que veio do Planejamento entrou sem a pessoa passar pelo cabeçalho: vale o
   // fornecedor, a data e o comprador que estão na tela agora.
-  if (_pedidoItens.some(it => it.doPlan)) {
+  // Na EDIÇÃO também: cada item guardava o fornecedor carregado do banco e o da tela
+  // era ignorado — o #02310 (Comprador Externo pago no cartão de crédito) não trocava
+  // para a loja de jeito nenhum (17/11/2026). Pedido é de um fornecedor só.
+  if (_pedidoEditando || _pedidoItens.some(it => it.doPlan)) {
     const fornNome = document.getElementById('c-forn').value.trim();
     const idTela   = document.getElementById('c-forn-id').value || null;
     const fornId   = cForn.find(f => f.id === idTela && norm(f.nome) === norm(fornNome))?.id
@@ -1487,7 +1490,7 @@ async function finalizarPedido() {
     const dataTela = document.getElementById('c-data').value;
     const compTela = document.getElementById('c-comp')?.value;
     _pedidoItens.forEach(it => {
-      if (!it.doPlan) return;
+      if (!it.doPlan && !_pedidoEditando) return;
       it.fornNome = fornNome; it.fornId = fornId;
       if (dataTela) it.data = dataTela;
       if (compTela) it.comp = compTela;
@@ -1561,6 +1564,13 @@ async function finalizarPedido() {
   btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Finalizar Pedido';
 
   if (error) { toast('Erro ao salvar pedido: ' + error.message, 'erro'); return; }
+
+  // Conta a pagar que já existia (ex.: criada no "Enviar Financeiro") leva o nome do
+  // fornecedor em texto; sem isto ela continuava "COMPRADOR EXTERNO" depois da troca.
+  if (_pedidoEditando && rows[0]?.fornecedor_nome) {
+    await sb.from('cmp_contas_pagar').update({ fornecedor: rows[0].fornecedor_nome })
+      .eq('pedido_num', pedido_num).neq('fornecedor', rows[0].fornecedor_nome);
+  }
 
   const total = _pedidoItens.reduce((s, it) => s + it.total, 0);
   const acao  = _pedidoEditando ? 'atualizado' : 'finalizado';
