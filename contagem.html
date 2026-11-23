@@ -329,6 +329,9 @@
     .ped-table th:first-child, .ped-table td:first-child { padding-left: .85rem; text-align: left; }
     .ped-table th:last-child, .ped-table td:last-child { padding-right: .85rem; }
     .ped-table th:not(:first-child), .ped-table td:not(:first-child) { text-align: right; white-space: nowrap; }
+    .un-tag { display: inline-block; margin-left: .3rem; padding: 0 .3rem; border-radius: 4px;
+      font-size: .62rem; font-weight: 700; letter-spacing: .03em; color: var(--txt2);
+      border: 1px solid var(--borda); vertical-align: 1px; white-space: nowrap; }
     .ped-acoes { display: flex; gap: .5rem; align-items: center; padding: .55rem .85rem .8rem; }
     .btn-liberar, .btn-receber, .btn-editar {
       width: calc(100% - 1.7rem); margin: .55rem .85rem .8rem; display: block;
@@ -2399,6 +2402,7 @@ async function carregarPedidosEstoque() {
   const el = document.getElementById('lst-pedidos-estoque');
   if (!peds?.length) { el.innerHTML = blocoTransf + '<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
+  await _garantirUnid(itens);
   el.innerHTML = blocoTransf + peds.map(ped => _cardPedEstoque(ped, (itens||[]).filter(it=>it.pedido_id===ped.id))).join('');
 }
 
@@ -2419,11 +2423,12 @@ async function _blocoTransfMob() {
     .order('criado_em',{ascending:true}).limit(20);
   if (!peds?.length) return '';
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
+  await _garantirUnid(itens);
   const q = v => _fmtQtd(v);
   return `<div style="margin:.5rem 0 1rem"><div style="font-weight:700;color:#60a5fa;margin:0 .25rem .4rem">🔄 Chegando do Estoque Central (${peds.length})</div>` +
     peds.map(p => {
       const its = (itens||[]).filter(it => it.pedido_id === p.id);
-      const rows = its.map(it => `<tr><td>${esc(it.nome)}</td><td>${q(it.qtd_liberada)}</td>
+      const rows = its.map(it => `<tr><td>${_nomeUn(it)}</td><td>${q(it.qtd_liberada)}</td>
         <td><input type="number" inputmode="decimal" min="0" step="any" data-transf-recebida-mob="${it.id}" value="${it.qtd_liberada == null ? '' : _q2(it.qtd_liberada)}"
           style="width:70px;padding:.3rem;border-radius:6px;border:1px solid #475569;background:#0f172a;color:#fff;text-align:right"></td></tr>`).join('');
       return `<div class="ped-card" data-transf-card-mob="${p.id}" style="border:2px solid #3b82f6">
@@ -2641,11 +2646,37 @@ async function confirmarChegadaTransfMob(pedidoId) {
   } finally { _transfMobEmVoo = false; }
 }
 
+// ─── UNIDADE AO LADO DO NOME (pedidos, liberação, recebimento) — 23/11/2026 ───
+// Pedido do time: "12 / 14,5" sem dizer se é KG ou UN. Mesmo rótulo da tela de
+// contagem: unidade de USO do cadastro (ou a de compra, se não tiver). Produto
+// inativo não está em _todosProdutos — busca no banco, em lotes de 100.
+const _unidCache = {};
+async function _garantirUnid(itens) {
+  const ids = [...new Set((itens || []).map(i => i.produto_id).filter(id => id && !(id in _unidCache)))];
+  const falta = [];
+  ids.forEach(id => {
+    const p = (_todosProdutos || []).find(x => x.id === id);
+    if (p) _unidCache[id] = p.unidade_uso || p.unidade_comp || '';
+    else falta.push(id);
+  });
+  try {
+    for (let i = 0; i < falta.length; i += 100) {
+      const { data, error } = await sb.from('est_produtos').select('id,unidade_uso,unidade_comp').in('id', falta.slice(i, i + 100));
+      if (error) break;
+      (data || []).forEach(p => { _unidCache[p.id] = p.unidade_uso || p.unidade_comp || ''; });
+    }
+  } catch (e) { console.error('_garantirUnid (segue sem unidade):', e); }
+}
+function _nomeUn(it) {
+  const u = it?.produto_id ? _unidCache[it.produto_id] : '';
+  return esc(it?.nome || '') + (u ? ` <span class="un-tag">${esc(u)}</span>` : '');
+}
+
 function _cardPedEstoque(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
   const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">Emergência</span>' : '';
-  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td></tr>`).join('');
+  const rows = its.map(it=>`<tr><td>${_nomeUn(it)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
       <div>
@@ -2680,6 +2711,7 @@ async function carregarMeusPedidos() {
   const { data: peds } = await q;
   if (!peds?.length) { el.innerHTML='<div class="vazio">Nenhum pedido.</div>'; return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').in('pedido_id', peds.map(p=>p.id));
+  await _garantirUnid(itens);
   el.innerHTML = peds.map(ped => _cardMeusPedidos(ped, (itens||[]).filter(it=>it.pedido_id===ped.id))).join('');
 }
 
@@ -2687,7 +2719,7 @@ function _cardMeusPedidos(ped, its) {
   const cor  = STATUS_COR[ped.status] || '#6c757d';
   const txt  = STATUS_TXT[ped.status] || ped.status;
   const tipo = ped.tipo==='emergencia' ? '<span class="badge-emerg">Emergência</span>' : '';
-  const rows = its.map(it=>`<tr><td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td><td>${_fmtQtd(it.qtd_recebida)}</td></tr>`).join('');
+  const rows = its.map(it=>`<tr><td>${_nomeUn(it)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td><td>${_fmtQtd(it.qtd_recebida)}</td></tr>`).join('');
   return `<div class="ped-card">
     <div class="ped-card-header">
       <div>
@@ -2733,7 +2765,7 @@ async function abrirLiberarPedido(id) {
     return val !== undefined ? val : '—';
   };
 
-  const saldoLoja = await _saldoOrigemMob((itens||[]).map(it => it.produto_id), ped?.local);
+  const [saldoLoja] = await Promise.all([_saldoOrigemMob((itens||[]).map(it => it.produto_id), ped?.local), _garantirUnid(itens)]);
   const rows = (itens||[]).map(it => {
     const est = estoqueMap[it.nome?.trim().toUpperCase()];
     const pad = getPad(it.nome||'');
@@ -2741,7 +2773,7 @@ async function abrirLiberarPedido(id) {
     const estFmt = _fmtQtd(est);
     const estCor = est !== undefined && est <= 0 ? 'color:#dc3545;font-weight:700' : 'color:#fd7e14;font-weight:700';
     return `<tr>
-      <td style="font-size:.8rem">${esc(it.nome)}</td>
+      <td style="font-size:.8rem">${_nomeUn(it)}</td>
       <td style="text-align:center;color:#6c757d;font-size:.8rem">${typeof pad === 'number' ? _fmtQtd(pad) : pad}</td>
       <td style="text-align:center;font-size:.8rem;${sl.neg ? 'color:#dc3545;font-weight:700' : 'color:#6c757d'}">${sl.txt}</td>
       <td style="text-align:center;font-size:.8rem;${estCor}">${estFmt}</td>
@@ -2902,8 +2934,9 @@ async function abrirEditarPedidoMob(id) {
   const { data: ped   } = await sb.from('pedidos_internos').select('*').eq('id',id).single();
   if (!_meusSetorLiberado(ped?.setor)) { _pedEditarMobId = null; pedirPinMeus(ped.setor); return; }
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
+  await _garantirUnid(itens);
   const rows = (itens||[]).map(it=>`<tr>
-    <td>${esc(it.nome)}</td>
+    <td>${_nomeUn(it)}</td>
     <td><input type="number" class="inp-modal" id="editm-${it.id}" value="${_q2(it.qtd_pedida??0)}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-editar-mob-body').innerHTML = `
@@ -2936,8 +2969,9 @@ async function abrirReceberPedido(id) {
   _pedReceberSetor = ped?.setor || null;
   _pedReceberLocal = ped?.local || null;
   const { data: itens } = await sb.from('pedidos_internos_itens').select('*').eq('pedido_id',id);
+  await _garantirUnid(itens);
   const rows = (itens||[]).map(it=>`<tr>
-    <td>${esc(it.nome)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td>
+    <td>${_nomeUn(it)}</td><td>${_fmtQtd(it.qtd_pedida)}</td><td>${_fmtQtd(it.qtd_liberada)}</td>
     <td><input type="number" class="inp-modal" id="rec-${it.id}" value="${_q2(it.qtd_liberada??0)}" min="0" step="any" inputmode="decimal"></td>
   </tr>`).join('');
   document.getElementById('modal-receber-body').innerHTML = `
