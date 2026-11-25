@@ -504,7 +504,7 @@ function _pcCardHTML(p) {
   const tags = (p._rev ? '<span class="pc-tag dir">REVENDA</span>' : '') +
     (!p._ficha && !p._rev ? '<span class="pc-tag esq" title="Custo vem do cadastro (compra), não de ficha técnica">SEM FICHA</span>' : '');
   const hero = p.foto_url
-    ? `<div class="pc-hero" style="background-image:url('${_pcUrlCss(p.foto_url)}')" role="img" aria-label="Foto de ${esc(p.nome)}">${tags}</div>`
+    ? `<div class="pc-hero" style="background-image:url('${_pcUrlCss(p.foto_url)}'),${_pcGrad(p.nome)}" role="img" aria-label="Foto de ${esc(p.nome)}">${tags}</div>`
     : `<div class="pc-hero" style="background:${_pcGrad(p.nome)}" aria-hidden="true">${tags}${esc(_pcIniciais(p.nome))}</div>`;
   const caixa = `
       <div class="pc-preco" data-k="box">
@@ -978,7 +978,7 @@ function _pcRenderConfig() {
         const conhecido = _pc.sets.conhecidos.has(p.id);
         const algumVisivel = _PC_CANAIS.some(ch => _pcGrupoNoCanal(g, ch) && _pcProdNoCanal(p, ch));
         const thumb = p.foto_url
-          ? `<span class="pc-thumb" style="background-image:url('${_pcUrlCss(p.foto_url)}')" role="img" aria-label="Foto"></span>`
+          ? `<span class="pc-thumb" style="background-image:url('${_pcUrlCss(p.foto_url)}'),${_pcGrad(p.nome)}" role="img" aria-label="Foto"></span>`
           : `<span class="pc-thumb" style="background:${_pcGrad(p.nome)}" aria-hidden="true">${esc(_pcIniciais(p.nome))}</span>`;
         const pv = p.preco_venda > _PC_CORTESIA ? brl(p.preco_venda) : (p.preco_venda > 0 ? 'cortesia' : 'sem venda no PDV');
         return `<tr class="pc-prod-tr${algumVisivel ? '' : ' oculto'}">
