@@ -16,14 +16,14 @@ ORDER BY p.nome;
 -- ═══ PASSO 2 — GRAVAR ══════════════════════════════════════════════════════════════
 DO $$
 DECLARE
-  nome text;
+  v_nome text;   -- não pode se chamar "nome": a tabela tem coluna nome e o Postgres não sabe qual é
   n int;
 BEGIN
-  FOREACH nome IN ARRAY ARRAY['PUDIM DE LEITE', 'PUDIM DE LEITE DELIVERY', 'PUDIM DE LEITE DELIVERY C/ DESCONTO'] LOOP
+  FOREACH v_nome IN ARRAY ARRAY['PUDIM DE LEITE', 'PUDIM DE LEITE DELIVERY', 'PUDIM DE LEITE DELIVERY C/ DESCONTO'] LOOP
     SELECT count(*) INTO n FROM est_produtos p
-     WHERE upper(trim(p.nome)) = nome AND p.tipo = 'VENDA' AND p.ativo;
+     WHERE upper(trim(p.nome)) = v_nome AND p.tipo = 'VENDA' AND p.ativo;
     IF n <> 1 THEN
-      RAISE EXCEPTION 'Nada gravado: "%" existe em % produtos de venda ativos (precisa ser 1).', nome, n;
+      RAISE EXCEPTION 'Nada gravado: "%" existe em % produtos de venda ativos (precisa ser 1).', v_nome, n;
     END IF;
   END LOOP;
 
