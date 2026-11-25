@@ -679,11 +679,80 @@ async function pcAplicarPdv(id) {
   toast(`Preço de ${p.nome} atualizado no cadastro.`, 'ok');
 }
 
+// Produto com ficha: abre a ficha numa janela por cima, só para conferir (igual ao rascunho).
+// Editar é no Estoque, pelo botão da janela. Sem ficha: vai direto ao cadastro.
+let _pcFichaVez = 0;
 async function pcVerFicha(id) {
   const p = _pc.porId.get(id);
+  if (!p?._ficha) return _pcIrCadastro(id, false);
+  const vez = ++_pcFichaVez;
+  const el = document.getElementById('modal-pc-ficha');
+  document.getElementById('pc-ficha-nome').textContent = p.nome;
+  document.getElementById('pc-ficha-sub').textContent = (p._grupo || 'Sem grupo') + ' · ficha técnica · conferência';
+  document.getElementById('pc-ficha-corpo').innerHTML = '<div class="pc-ficha-msg">Carregando a ficha…</div>';
+  document.getElementById('pc-ficha-abrir').onclick = () => _pcIrCadastro(id, true);
+  bootstrap.Modal.getOrCreateInstance(el).show();
+  try {
+    const html = await _pcFichaHTML(p);
+    if (vez === _pcFichaVez) document.getElementById('pc-ficha-corpo').innerHTML = html;
+  } catch (e) {
+    if (vez === _pcFichaVez) document.getElementById('pc-ficha-corpo').innerHTML =
+      `<div class="pc-ficha-msg erro">Não consegui ler a ficha: ${esc(_msgErroBanco(e))}</div>`;
+  }
+}
+
+async function _pcFichaHTML(p) {
+  const { data: fichas, error: e1 } = await sb.from('est_fichas_tecnicas')
+    .select('id,rendimento,unidade_rendimento').eq('produto_id', p.id).eq('ativo', true).order('id').limit(1);
+  if (e1) throw e1;
+  const ficha = fichas?.[0];
+  if (!ficha) return '<div class="pc-ficha-msg">Este produto não tem ficha ativa.</div>';
+  const { data: ings, error: e2 } = await sb.from('est_ficha_ingredientes')
+    .select('ingrediente_id,quantidade').eq('ficha_id', ficha.id);
+  if (e2) throw e2;
+  const ids = [...new Set((ings || []).map(i => i.ingrediente_id))];
+  let insumos = [];
+  if (ids.length) {
+    const { data, error: e3 } = await sb.from('est_produtos')
+      .select('id,nome,unidade_uso,fator_conversao,perda,custo_comp,custo_uso').in('id', ids);
+    if (e3) throw e3;
+    insumos = data || [];
+  }
+  const porIns = new Map(insumos.map(x => [x.id, x]));
+  // Mesma conta da ficha no Estoque: custo de compra ÷ conversão ÷ (1 − perda).
+  const efetivo = x => {
+    const r = 1 - (Number(x.perda) || 0) / 100;
+    return r > 0 ? (Number(x.custo_comp) || Number(x.custo_uso) || 0) / (Number(x.fator_conversao) || 1) / r : 0;
+  };
+  const linhas = (ings || []).map(i => {
+    const x = porIns.get(i.ingrediente_id);
+    const qtd = Number(i.quantidade) || 0;
+    return { nome: x?.nome || 'Insumo não encontrado', un: (x?.unidade_uso || '').trim(), qtd, valor: x ? qtd * efetivo(x) : 0 };
+  }).sort((a, b) => b.valor - a.valor);
+  const total = linhas.reduce((s, l) => s + l.valor, 0);
+  const rend = Number(ficha.rendimento) || 1;
+  const porcao = total / rend;
+  const qtdTxt = l => `${l.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}${l.un ? ' ' + esc(l.un) : ''}`;
+  const rendTxt = rend !== 1
+    ? `<div class="pc-ficha-lin sub"><span>Custo total · rende ${_pcNum(rend, rend % 1 ? 2 : 0)} ${esc(ficha.unidade_rendimento || 'porções')}</span><b>R$ ${_pcNum(total)}</b></div>` : '';
+  const dif = Math.abs(porcao - p._custo) > 0.01
+    ? `<div class="pc-ficha-msg">O card usa o custo gravado no cadastro (R$ ${_pcNum(p._custo)}). A diferença vem de preço de insumo que mudou depois; ela se acerta quando a ficha for salva de novo no Estoque.</div>` : '';
+  return `<div class="pc-ficha-lista">${linhas.map(l => `
+      <div class="pc-ficha-lin"><span>${esc(l.nome)} <small>${qtdTxt(l)}</small></span><b>R$ ${_pcNum(l.valor)}</b></div>`).join('')
+      || '<div class="pc-ficha-msg">A ficha está sem ingredientes.</div>'}
+    </div>
+    ${rendTxt}
+    <div class="pc-ficha-lin tot"><span>Custo da ficha${rend !== 1 ? ' (por porção)' : ''}</span><b>R$ ${_pcNum(porcao)}</b></div>
+    ${dif}
+    <div class="pc-ficha-nota"><i class="bi bi-search"></i> Só para conferir. A ficha é a mesma do Estoque; editar os insumos é lá.</div>`;
+}
+
+async function _pcIrCadastro(id, abaFicha) {
+  const el = document.getElementById('modal-pc-ficha');
+  bootstrap.Modal.getInstance(el)?.hide();
   document.getElementById('nav-precificacao')?.classList.remove('ativo');   // senão o menu fica com 2 itens acesos
   await abrirProduto(id);
-  if (p?._ficha) irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
+  if (abaFicha) irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
 }
 
 // ── composição (parâmetros do markup) ───────────────────────────────────────

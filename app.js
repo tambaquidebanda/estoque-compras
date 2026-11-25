@@ -11388,6 +11388,9 @@ async function duplicarProduto() {
 async function carregarFichaProduto() {
   if (!_prodAtual) return;
   const cont = document.getElementById('prod-ficha-conteudo');
+  // Nome e custo dos insumos vêm do cache de produtos. Chegando direto no produto (pela
+  // Precificação ou F5 no link do produto) ele está vazio e a tabela mostrava código e R$ 0.
+  await carregarProdutosFT();
 
   const { data: fichas } = await sb.from('est_fichas_tecnicas')
     .select('id,rendimento,unidade_rendimento,custo_total,custo_por_porcao')
