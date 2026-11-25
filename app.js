@@ -134,6 +134,7 @@ function entrarNoSistema() {
   });
   mostrarTela('principal');
   document.getElementById('sb-usuario').textContent = user.email;
+  document.getElementById('nav-precificacao')?.classList.toggle('d-none', !_temAcessoPrecif());
   setHoje('c-data');
   setHoje('f-data');
   setMes('f-filtro-mes');
@@ -166,9 +167,17 @@ function restaurarPagina(hash) {
   }
 }
 
+// Precificação é tela restrita: só abre para quem tem user_metadata.precificacao = true
+// (marcado em Configurações › Usuários › Permissões). Usado no menu, no ir() e no restaurar.
+function _temAcessoPrecif() {
+  return user?.user_metadata?.precificacao === true;
+}
+
 async function sair() {
   await sb.auth.signOut();
   user = null;
+  document.getElementById('nav-precificacao')?.classList.add('d-none');
+  if (typeof pcLimpar === 'function') pcLimpar();   // não deixa preço/margem do usuário anterior na página
   document.getElementById('login-email').value = '';
   document.getElementById('login-senha').value = '';
   mostrarTela('login');
@@ -192,6 +201,12 @@ function salvarNav(chave) {
 }
 
 function ir(nome, el) {
+  // Tela restrita: sem a permissão, nem abre (vale para clique, link salvo e recarregar a página).
+  if (nome === 'precificacao' && !_temAcessoPrecif()) {
+    toast('Você não tem acesso à Precificação.', 'erro');
+    nome = 'dashboard';
+    el = document.querySelector('.nav-sb a');
+  }
   salvarNav(nome);
   document.querySelectorAll('.pagina').forEach(p => p.classList.remove('ativa'));
   document.querySelectorAll('.nav-sb a:not(.nav-em-breve), .nav-grupo-btn').forEach(a => a.classList.remove('ativo'));
@@ -225,6 +240,7 @@ function ir(nome, el) {
 
   if (nome === 'dashboard')   carregarDashboard();
   if (nome === 'bi')          carregarBI();
+  if (nome === 'precificacao') carregarPrecificacao();
   if (nome === 'pedido')      prepararFormCompra();
   if (nome === 'compras')     carregarCompras();
   if (nome === 'faturamento') { setHoje('f-data'); carregarFaturamento(); }
@@ -10736,6 +10752,112 @@ async function abrirProduto(prodId) {
   setUnSel('prod-un-comp', p.unidade_comp || 'UN');
   setUnSel('prod-un-uso',  p.unidade_uso  || 'UN');
   atualizarCustoEfetivo();
+  _carregarCamposPrecif(p.id);
+}
+
+// ── Campos da Precificação no cadastro: foto_url e is_revenda ─────────────────
+// Lidos numa consulta SEPARADA e tolerante. Se o SQL_PRECIFICACAO.sql ainda não
+// rodou, as colunas não existem: um select com elas quebraria a tela do produto
+// inteira. Assim, sem as colunas, os dois campos ficam travados com aviso e o
+// resto do cadastro (abrir/salvar) segue normal. O codigo pode ir ao ar antes do SQL.
+let _prodColsPrecif = null;   // as colunas existem? (null = ainda nao sei)
+let _prodPrecifId   = null;   // produto cujos campos ja foram lidos (trava o salvar no meio da leitura)
+const _FOTO_BUCKET  = 'produtos';
+
+async function _carregarCamposPrecif(prodId) {
+  const chk = document.getElementById('prod-revenda');
+  const btn = document.getElementById('prod-foto-btn');
+  // Zera ANTES de ler: senão o check mostra o valor do produto anterior e um
+  // salvar rápido gravaria esse valor no produto novo.
+  _prodPrecifId = null;
+  chk.checked = false; chk.disabled = true; btn.disabled = true;
+  _mostrarFotoProduto(null);
+
+  const { data, error } = await sb.from('est_produtos')
+    .select('foto_url,is_revenda').eq('id', prodId).maybeSingle();
+  if (document.getElementById('prod-id').value !== prodId) return;   // trocou de produto no meio
+  _prodColsPrecif = !error;
+  if (error) {
+    document.getElementById('prod-foto-hint').textContent = 'Indisponível até rodar o SQL_PRECIFICACAO.sql.';
+    return;
+  }
+  if (_prodAtual?.id === prodId) {
+    _prodAtual.foto_url   = data?.foto_url || null;
+    _prodAtual.is_revenda = !!data?.is_revenda;
+  }
+  chk.checked  = !!data?.is_revenda;
+  chk.disabled = false; btn.disabled = false;
+  _prodPrecifId = prodId;
+  document.getElementById('prod-foto-hint').textContent = 'Salva na hora. Aparece no card da Precificação.';
+  _mostrarFotoProduto(data?.foto_url || null);
+}
+
+function _mostrarFotoProduto(url) {
+  const prev = document.getElementById('prod-foto-prev');
+  prev.style.backgroundImage = url ? `url("${encodeURI(url)}")` : 'none';
+  prev.textContent = url ? '' : 'sem foto';
+  document.getElementById('prod-foto-rem').classList.toggle('d-none', !url);
+  document.getElementById('prod-foto-btn-txt').textContent = url ? 'Trocar foto' : 'Enviar foto';
+}
+
+// Caminho do arquivo dentro do bucket, a partir da URL pública gravada no produto.
+function _caminhoFotoStorage(url) {
+  const marca = `/object/public/${_FOTO_BUCKET}/`;
+  const i = url ? url.indexOf(marca) : -1;
+  return i < 0 ? null : decodeURIComponent(url.slice(i + marca.length).split('?')[0]);
+}
+
+function _apagarFotoAntiga(url) {
+  const path = _caminhoFotoStorage(url);
+  if (!path) return;
+  sb.storage.from(_FOTO_BUCKET).remove([path])
+    .then(({ error }) => { if (error) console.warn('foto antiga ficou no storage:', error.message); });
+}
+
+async function enviarFotoProduto(input) {
+  const arq = input.files && input.files[0];
+  input.value = '';                                   // deixa escolher o mesmo arquivo de novo
+  const id = document.getElementById('prod-id').value;
+  if (!arq || !id || _prodPrecifId !== id) return;
+  if (!/^image\//.test(arq.type)) { toast('Escolha um arquivo de imagem.', 'erro'); return; }
+  if (arq.size > 5 * 1024 * 1024) { toast('Foto muito grande (máximo 5 MB).', 'erro'); return; }
+
+  const btn = document.getElementById('prod-foto-btn');
+  btn.disabled = true;
+  document.getElementById('prod-foto-btn-txt').textContent = 'Enviando…';
+  try {
+    const ext  = ((arq.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '')) || 'jpg';
+    const path = `${id}/${Date.now()}.${ext}`;       // nome novo a cada envio: navegador não mostra foto velha do cache
+    const { error: eUp } = await sb.storage.from(_FOTO_BUCKET)
+      .upload(path, arq, { contentType: arq.type, upsert: false });
+    if (eUp) throw eUp;
+    const url = sb.storage.from(_FOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+    const anterior = _prodAtual?.id === id ? _prodAtual.foto_url : null;
+    const { error: eDb } = await sb.from('est_produtos').update({ foto_url: url }).eq('id', id);
+    if (eDb) { await sb.storage.from(_FOTO_BUCKET).remove([path]); throw eDb; }
+    if (_prodAtual?.id === id) _prodAtual.foto_url = url;
+    _apagarFotoAntiga(anterior);
+    if (document.getElementById('prod-id').value === id) _mostrarFotoProduto(url);
+    toast('Foto salva.', 'ok');
+  } catch (e) {
+    toast('Não foi possível enviar a foto: ' + (e.message || e), 'erro');
+    if (document.getElementById('prod-id').value === id) _mostrarFotoProduto(_prodAtual?.foto_url || null);
+  } finally {
+    if (document.getElementById('prod-id').value === id) btn.disabled = false;
+  }
+}
+
+async function removerFotoProduto() {
+  const id = document.getElementById('prod-id').value;
+  if (!id || _prodPrecifId !== id || !_prodAtual?.foto_url) return;
+  if (!confirm('Remover a foto deste produto?')) return;
+  const anterior = _prodAtual.foto_url;
+  const { error } = await sb.from('est_produtos').update({ foto_url: null }).eq('id', id);
+  if (error) { toast('Erro ao remover a foto: ' + error.message, 'erro'); return; }
+  _prodAtual.foto_url = null;
+  _apagarFotoAntiga(anterior);
+  _mostrarFotoProduto(null);
+  toast('Foto removida.', 'ok');
 }
 
 function atualizarCustoEfetivo() {
@@ -10771,6 +10893,11 @@ async function salvarDadosProduto() {
     estoque_min:     parseFloat(document.getElementById('prod-est-min').value)      || 0,
     ativo:           document.getElementById('prod-ativo').checked,
   };
+  // is_revenda só entra quando a coluna existe E já foi lida para ESTE produto
+  // (ver _carregarCamposPrecif). foto_url não entra aqui: é gravada na hora do envio.
+  if (_prodColsPrecif && _prodPrecifId === id) {
+    dados.is_revenda = document.getElementById('prod-revenda').checked;
+  }
 
   // Produtos COM ficha técnica têm o custo definido pela ficha (custo_por_porcao).
   // O campo "Custo de Compra" do formulário não vale para eles — salvar por cima
@@ -11371,10 +11498,12 @@ async function carregarUsuarios() {
           : '<span class="badge bg-success me-1">Financeiro</span>'
         ).join('')
       : '<span class="badge bg-secondary">Todos</span>';
+    const precif = u.user_metadata?.precificacao === true;
+    const precifBadge = precif ? '<span class="badge me-1" style="background:#0e6b68">Precificação</span>' : '';
     const metaNome = encodeURIComponent(nome);
     const btnPerm = !isAdmin
       ? `<button class="btn btn-sm btn-outline-secondary me-1" title="Permissões"
-           onclick="abrirPermissoes('${u.id}','${esc(u.email)}','${metaNome}',${JSON.stringify(sistemas||null)})">
+           onclick="abrirPermissoes('${u.id}','${esc(u.email)}','${metaNome}',${esc(JSON.stringify(sistemas||null))},${precif})">
            <i class="bi bi-shield-lock"></i>
          </button>`
       : '';
@@ -11387,7 +11516,7 @@ async function carregarUsuarios() {
       <td class="fw-semibold">${esc(nome)}</td>
       <td>${esc(u.email)}</td>
       <td>${perfil}</td>
-      <td>${sisBadges}</td>
+      <td>${sisBadges}${precifBadge}</td>
       <td>${dt}</td>
       <td class="text-end">${btnPerm}${btnDel}</td>
     </tr>`;
@@ -11415,10 +11544,11 @@ async function convidarFuncionario() {
     return;
   }
 
+  const precificacao = document.getElementById('inv-precificacao').checked;
   const { error } = await sbAdmin.auth.admin.createUser({
     email,
     password: senha,
-    user_metadata: { nome, sistemas },
+    user_metadata: { nome, sistemas, precificacao },
     email_confirm: true,
   });
 
@@ -11434,6 +11564,7 @@ async function convidarFuncionario() {
   document.getElementById('inv-nome').value  = '';
   document.getElementById('inv-email').value = '';
   document.getElementById('inv-senha').value = '';
+  document.getElementById('inv-precificacao').checked = false;
 
   setTimeout(() => {
     bootstrap.Modal.getInstance(document.getElementById('modal-convidar'))?.hide();
@@ -11450,12 +11581,13 @@ async function excluirUsuario(id, email) {
   carregarUsuarios();
 }
 
-function abrirPermissoes(id, email, metaNome, sistemas) {
+function abrirPermissoes(id, email, metaNome, sistemas, precificacao) {
   document.getElementById('perm-user-id').value        = id;
   document.getElementById('perm-user-meta-nome').value = decodeURIComponent(metaNome);
   document.getElementById('perm-user-nome').textContent = `${decodeURIComponent(metaNome)} (${email})`;
   document.getElementById('perm-sys-estoque').checked   = !sistemas || sistemas.includes('estoque');
   document.getElementById('perm-sys-financeiro').checked = !sistemas || sistemas.includes('financeiro');
+  document.getElementById('perm-precificacao').checked  = precificacao === true;
   document.getElementById('perm-msg').textContent = '';
   new bootstrap.Modal(document.getElementById('modal-perm')).show();
 }
@@ -11475,8 +11607,10 @@ async function salvarPermissoes() {
     return;
   }
 
+  // nome, sistemas e precificacao vão SEMPRE juntos: nenhum apaga o outro.
+  const precificacao = document.getElementById('perm-precificacao').checked;
   const { error } = await sbAdmin.auth.admin.updateUserById(id, {
-    user_metadata: { nome, sistemas }
+    user_metadata: { nome, sistemas, precificacao }
   });
 
   if (error) { msg.textContent = error.message; msg.className = 'text-danger small'; return; }
