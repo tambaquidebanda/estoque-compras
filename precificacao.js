@@ -955,7 +955,7 @@ async function _pcRenderDespesas() {
   }[canal];
   const rotCampo = Object.fromEntries(_PC_CAMPOS[canal].map(([k, rot]) => [k, rot]));
   const origemTxt = { rateio_faturamento: 'rateado pelo faturamento', derivado: 'calculado pelo Financeiro',
-    estimado: 'estimativa pela taxa do contrato (o custo real ainda não é lido do extrato da Getnet)' };
+    estimado: 'estimada pela taxa da cessão ao Santander, conferida com o extrato do banco' };
 
   const linhas = _PC_GRUPOS_DESP.map(([g, rot]) => {
     const tot = r.soma(g);
