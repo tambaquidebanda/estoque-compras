@@ -23,8 +23,15 @@ BASE = os.path.join(AQUI, 'base')
 
 _src = open(os.path.join(RAIZ, 'supabase.js'), encoding='utf-8').read()
 URL = re.search(r"SB_URL\s*=\s*'([^']+)'", _src).group(1)
-_K = re.search(r"SB_SERVICE_KEY\s*=\s*'([^']+)'", _src).group(1)   # nunca imprimir
-H = {'apikey': _K, 'Authorization': 'Bearer ' + _K}
+# chave de servico: variavel SUPABASE_SERVICE_KEY ou arquivo ~/.supabase_service_key
+# (nunca no repositorio: supabase.js vai para o navegador). Nunca imprimir.
+_K = os.environ.get('SUPABASE_SERVICE_KEY') or (
+    open(os.path.expanduser('~/.supabase_service_key')).read().strip()
+    if os.path.isfile(os.path.expanduser('~/.supabase_service_key')) else '')
+if not _K:
+    sys.exit('Defina SUPABASE_SERVICE_KEY ou crie ~/.supabase_service_key com a chave de servico.')
+# chave nova (sb_secret_...) so no apikey; a antiga (JWT) nos dois
+H = {'apikey': _K, **({'Authorization': 'Bearer ' + _K} if _K.startswith('eyJ') else {})}
 
 HOJE = dt.date.today()
 DESDE_7 = (HOJE - dt.timedelta(days=7)).isoformat()

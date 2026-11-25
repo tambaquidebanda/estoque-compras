@@ -64,7 +64,9 @@ UNIDADE_PDV= env('BAIXA_UNIDADE_PDV', 'Tambaqui de Banda Loja Centro')
 START_DATE = env('BAIXA_START_DATE', '2026-08-15')
 DAYS_BACK  = int(env('BAIXA_DAYS_BACK', '1'))
 BASE       = f'{SB_URL}/rest/v1'
-HDR        = {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}
+# Chave nova (sb_secret_...) vai SO no apikey: como Bearer o Supabase recusa ("Invalid JWT").
+# A antiga (JWT, eyJ...) continua indo nos dois, como sempre.
+HDR        = {'apikey': SB_KEY, **({'Authorization': 'Bearer ' + SB_KEY} if SB_KEY.startswith('eyJ') else {})}
 MANAUS     = timezone(timedelta(hours=-4))
 # modos que gravam no livro-razao. So o 'apply' encosta no saldo.
 ESCREVE    = ('apply', 'razao')

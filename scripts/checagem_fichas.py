@@ -3,7 +3,11 @@ import os,re,json,importlib.util,unicodedata,collections
 RAIZ='/Users/wagnercarvalho/Documents/GitHub/estoque-compras'
 src=open(os.path.join(RAIZ,'supabase.js')).read()
 os.environ['SUPABASE_URL']=re.search(r"SB_URL\s*=\s*'([^']+)'",src).group(1)
-os.environ['SUPABASE_SERVICE_KEY']=re.search(r"SB_SERVICE_KEY\s*=\s*'([^']+)'",src).group(1)
+# chave de servico: variavel SUPABASE_SERVICE_KEY ou arquivo ~/.supabase_service_key (nunca no repositorio)
+if not os.environ.get('SUPABASE_SERVICE_KEY'):
+    _arq=os.path.expanduser('~/.supabase_service_key')
+    if not os.path.isfile(_arq): raise SystemExit('Defina SUPABASE_SERVICE_KEY ou crie ~/.supabase_service_key')
+    os.environ['SUPABASE_SERVICE_KEY']=open(_arq).read().strip()
 spec=importlib.util.spec_from_file_location('bx',os.path.join(RAIZ,'scripts','baixa_estoque_pdv.py'))
 bx=importlib.util.module_from_spec(spec); spec.loader.exec_module(bx)
 mapa,fpp,ipf,P,contado,setor_de,ambiguos,sem_setor=bx.carregar()

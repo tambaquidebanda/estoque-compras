@@ -4,7 +4,6 @@
 // STATE
 // ═══════════════════════════════════════════════════════════════
 let sb      = null;   // supabase client (anon)
-let sbAdmin = null;   // supabase client (service_role)
 let user = null;   // logged-in user
 
 // caches
@@ -129,9 +128,6 @@ function entrarNoSistema() {
     return;
   }
 
-  sbAdmin = supabase.createClient(SB_URL, SB_SERVICE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  });
   mostrarTela('principal');
   document.getElementById('sb-usuario').textContent = user.email;
   document.getElementById('nav-precificacao')?.classList.toggle('d-none', !_temAcessoPrecif());
@@ -11466,28 +11462,48 @@ async function carregarFichaProduto() {
 // ═══════════════════════════════════════════════════════════════
 // USUÁRIOS
 // ═══════════════════════════════════════════════════════════════
+// A gestão de usuários passa pela Edge Function "admin-usuarios"
+// (supabase/functions/admin-usuarios): a chave de serviço fica só no servidor
+// e a função só atende quem tem app_metadata.admin = true (SQL_ADMIN_USUARIOS.sql).
+// Devolve { data, error } com error.message já em texto legível.
+async function _adminUsuarios(acao, dados = {}) {
+  try {
+    const { data, error } = await sb.functions.invoke('admin-usuarios', { body: { acao, ...dados } });
+    if (error) {
+      let message = error.message;
+      try {
+        const corpo = await error.context?.json();
+        if (corpo?.error) message = corpo.error;
+      } catch (_) { /* resposta sem JSON */ }
+      return { data: null, error: { message } };
+    }
+    if (data?.error) return { data: null, error: { message: data.error } };
+    return { data, error: null };
+  } catch (e) {
+    return { data: null, error: { message: 'Erro de conexão: ' + (e.message || e) } };
+  }
+}
+
 async function carregarUsuarios() {
   const tbody = document.getElementById('tb-usuarios');
   tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Carregando...</td></tr>';
 
-  const { data, error } = await sbAdmin.auth.admin.listUsers();
+  // "Meu usuário" vem da própria sessão: aparece mesmo para quem não é admin
+  document.getElementById('cfg-user-nome').textContent  = user?.user_metadata?.nome || user?.email || '';
+  document.getElementById('cfg-user-email').textContent = user?.email || '';
+
+  const { data, error } = await _adminUsuarios('listar');
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small py-3">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger small py-3">${esc(error.message)}</td></tr>`;
     return;
   }
 
   const users = (data?.users || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-  const me = users.find(u => u.id === user?.id);
-  if (me) {
-    document.getElementById('cfg-user-nome').textContent  = me.user_metadata?.nome || me.email;
-    document.getElementById('cfg-user-email').textContent = me.email;
-  }
-
   tbody.innerHTML = users.map(u => {
     const nome    = u.user_metadata?.nome || '—';
-    const isAdmin = u.id === user?.id;
-    const perfil  = isAdmin
+    const souEu   = u.id === user?.id;
+    const perfil  = u.app_metadata?.admin === true
       ? '<span class="text-danger fw-bold">Administrador</span>'
       : 'Funcionário';
     const dt      = new Date(u.created_at).toLocaleDateString('pt-BR');
@@ -11501,13 +11517,13 @@ async function carregarUsuarios() {
     const precif = u.user_metadata?.precificacao === true;
     const precifBadge = precif ? '<span class="badge me-1" style="background:#0e6b68">Precificação</span>' : '';
     const metaNome = encodeURIComponent(nome);
-    const btnPerm = !isAdmin
+    const btnPerm = !souEu
       ? `<button class="btn btn-sm btn-outline-secondary me-1" title="Permissões"
            onclick="abrirPermissoes('${u.id}','${esc(u.email)}','${metaNome}',${esc(JSON.stringify(sistemas||null))},${precif})">
            <i class="bi bi-shield-lock"></i>
          </button>`
       : '';
-    const btnDel = !isAdmin
+    const btnDel = !souEu
       ? `<button class="btn btn-sm btn-danger" onclick="excluirUsuario('${u.id}','${esc(u.email)}')">
            <i class="bi bi-trash"></i>
          </button>`
@@ -11545,12 +11561,7 @@ async function convidarFuncionario() {
   }
 
   const precificacao = document.getElementById('inv-precificacao').checked;
-  const { error } = await sbAdmin.auth.admin.createUser({
-    email,
-    password: senha,
-    user_metadata: { nome, sistemas, precificacao },
-    email_confirm: true,
-  });
+  const { error } = await _adminUsuarios('criar', { email, senha, nome, sistemas, precificacao });
 
   if (error) {
     msg.textContent = error.message;
@@ -11575,7 +11586,7 @@ async function convidarFuncionario() {
 
 async function excluirUsuario(id, email) {
   if (!confirm(`Excluir o usuário ${email}?`)) return;
-  const { error } = await sbAdmin.auth.admin.deleteUser(id);
+  const { error } = await _adminUsuarios('excluir', { id });
   if (error) { toast(error.message, 'erro'); return; }
   toast('Usuário excluído.', 'ok');
   carregarUsuarios();
@@ -11607,11 +11618,9 @@ async function salvarPermissoes() {
     return;
   }
 
-  // nome, sistemas e precificacao vão SEMPRE juntos: nenhum apaga o outro.
+  // a função mescla com o metadata atual; precificacao vai junto porque é editada neste modal
   const precificacao = document.getElementById('perm-precificacao').checked;
-  const { error } = await sbAdmin.auth.admin.updateUserById(id, {
-    user_metadata: { nome, sistemas, precificacao }
-  });
+  const { error } = await _adminUsuarios('atualizar', { id, nome, sistemas, precificacao });
 
   if (error) { msg.textContent = error.message; msg.className = 'text-danger small'; return; }
 

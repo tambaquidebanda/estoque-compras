@@ -1,0 +1,8 @@
+# Configuração das Edge Functions deste repositório.
+# Só é usada pelo Supabase CLI (supabase functions deploy).
+
+[functions.admin-usuarios]
+# A função confere o login de quem chama no próprio código (getUser + app_metadata.admin).
+# A checagem automática do gateway fica desligada porque ela só entende as chaves
+# antigas (JWT); com as chaves novas (sb_publishable_/sb_secret_) ela recusaria tudo.
+verify_jwt = false
