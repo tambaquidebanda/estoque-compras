@@ -58,15 +58,13 @@ const _pc = {
 function _pcPadrao() {
   return {
     salao: { imp: 4.8, com: 0, tax: 3.0, var: 2.6, fix: 56.9, luc: 6.7 },
-    deliv: { fix: 26.9, ci: 8.3, com: 13.1, luc: 30, eg: 10, fg: 5, tk: 72.73 },
+    deliv: { fix: 26.9, var: 0, ci: 8.3, com: 13.1, luc: 30, eg: 10, fg: 5, tk: 72.73 },
     revcmv: 40,
     grupos: {},                         // nome -> { salao, deliv }; fora daqui = grupo novo = desligado
     conhecidos: [],                     // produto_id já revisados; fora daqui = novo = oculto
     ocultos: { salao: [], deliv: [] },  // produto_id escondidos de propósito, por canal
     isca: { salao: [], deliv: [] },     // abaixo do mínimo de propósito, por canal
     proposto: {},                       // produto_id -> preço em estudo (um preço por produto, igual ao PDV)
-    unidadesFat: { salao: ['Centro'], deliv: ['P10'] },
-    despesaFixa: { salao: null, deliv: null },   // R$/mês, provisório até o planejamento do Financeiro
     iniciado: false,
     avisoInicial: false,
   };
@@ -88,8 +86,6 @@ function _pcMesclar(v) {
     ocultos: porCanal(v.ocultos, p.ocultos),
     isca: porCanal(v.isca, p.isca),
     proposto: { ...(v.proposto || {}) },
-    unidadesFat: { salao: [...(v.unidadesFat?.salao || p.unidadesFat.salao)], deliv: [...(v.unidadesFat?.deliv || p.unidadesFat.deliv)] },
-    despesaFixa: { ...p.despesaFixa, ...(v.despesaFixa || {}) },
   };
 }
 
@@ -283,7 +279,7 @@ function _pcCalc(p, preco, canal = _pc.canal) {
     minimo = custo * mk;
     if (P > 0) mc = (1 - varTot / 100 - custo / P) * 100;
   } else {
-    const d = c.deliv, div = 1 - (d.fix + d.ci) / 100 - d.luc / 100;
+    const d = c.deliv, div = 1 - (d.fix + d.var + d.ci + d.luc) / 100;
     minimo = p._rev ? (rcmv > 0 ? custo / rcmv : Infinity) : (div > 0 ? custo / div : Infinity);
     const coef = d.tk > 0 ? (d.eg + d.fg) / d.tk : 0, com = d.com / 100;
     if (P > 0) {
@@ -528,8 +524,8 @@ function _pcCardHTML(p) {
       <div class="pc-linhas">
         <div class="l"><span class="k">${p._ficha ? 'Custo da ficha' : 'Custo (cadastro)'}</span><span class="v">${p._custo > 0 ? brl(p._custo) : '—'}</span></div>
         <div class="l"><span class="k">Preço mínimo${deliv ? ' (próprio)' : ''}${rev}</span><span class="v min" data-k="min"></span></div>
-        ${deliv ? `<div class="l"><span class="k">Entrega grátis embutida</span><span class="v" data-k="eg"></span></div>
-        <div class="l"><span class="k">Campanha Inteligente embutida</span><span class="v" data-k="ci"></span></div>` : ''}
+        ${deliv ? `<div class="l"><span class="k">Entrega embutida</span><span class="v" data-k="eg"></span></div>
+        <div class="l"><span class="k">Campanha embutida</span><span class="v" data-k="ci"></span></div>` : ''}
         <div class="l"><span class="k">CMV${deliv ? ' (sobre o próprio)' : ''}</span><span class="v" data-k="cmv"></span></div>
         ${deliv ? '' : '<div class="l"><span class="k">Margem de contribuição</span><span class="v" data-k="mc"></span></div>'}
       </div>
@@ -759,8 +755,8 @@ async function _pcIrCadastro(id, abaFicha) {
 const _PC_CAMPOS = {
   salao: [['imp', 'Impostos', '%'], ['com', 'Comissão', '%'], ['tax', 'Taxas de cartão', '%'],
           ['var', 'Variável / perdas', '%'], ['fix', 'Custos fixos', '%'], ['luc', 'Lucro', '%']],
-  deliv: [['fix', 'Custo fixo (delivery)', '%'], ['ci', 'Cartão + imposto', '%'], ['com', 'Comissão iFood (log. própria)', '%'],
-          ['luc', 'Lucro', '%'], ['eg', 'Entrega grátis', 'R$'], ['fg', 'Campanha Inteligente (CI)', 'R$'], ['tk', 'Ticket médio', 'R$']],
+  deliv: [['fix', 'Custo fixo (delivery)', '%'], ['var', 'Variável (embalagem, gás…)', '%'], ['ci', 'Cartão + imposto', '%'], ['com', 'Comissão do app', '%'],
+          ['luc', 'Lucro', '%'], ['eg', 'Entrega por pedido', 'R$'], ['fg', 'Campanha por pedido', 'R$'], ['tk', 'Ticket médio', 'R$']],
 };
 
 function _pcCompChip() {
@@ -817,12 +813,12 @@ function _pcCompResumo() {
       <dt>Variáveis</dt><dd>${_pcPct(varTot)} (impostos + comissão + cartão + perdas)</dd>
       <dt>Markup</dt><dd>${alvo ? _pcNum(100 / alvo) : '—'} → CMV alvo ${_pcPct(alvo)}. Mínimo = custo da ficha × markup.</dd>
       ${revTxt}
-      <dt>De onde vem</dt><dd>Valores iniciais das planilhas antigas. O fixo real da unidade sai da aba <b>Despesas</b>. CMV entra pela ficha, não some no fixo.</dd></dl>`;
+      <dt>De onde vem</dt><dd>A aba <b>Despesas</b> traz os % reais do Financeiro (botão "Usar estes números"). O lucro é decisão sua. CMV entra pela ficha, não soma no fixo.</dd></dl>`;
   } else {
     const d = c.deliv;
     el.innerHTML = `<dl>
-      <dt>%MNT</dt><dd>${_pcPct(d.fix + d.ci)} (fixo + cartão/imposto). Mínimo do próprio = custo ÷ (1 − %MNT − lucro).</dd>
-      <dt>Coeficiente</dt><dd>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)} = (entrega grátis + Campanha Inteligente) ÷ ticket médio.</dd>
+      <dt>%MNT</dt><dd>${_pcPct(d.fix + d.var + d.ci)} (fixo + variável + cartão/imposto). Mínimo do próprio = custo ÷ (1 − %MNT − lucro).</dd>
+      <dt>Coeficiente</dt><dd>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)} = (entrega por pedido + campanha por pedido) ÷ ticket médio.</dd>
       <dt>iFood</dt><dd>(próprio + próprio × coeficiente) ÷ (1 − comissão).</dd>
       ${revTxt}</dl>`;
   }
@@ -841,109 +837,192 @@ async function pcComp(grupo, k, txt, salvar) {
 }
 
 // ── tela: Despesas ──────────────────────────────────────────────────────────
-async function _pcLerFaturamento() {
-  const [y, m] = hojeLocal().split('-').map(Number);
-  const ini = new Date(Date.UTC(y, m - 1 - 3, 1)).toISOString().slice(0, 10);   // 3 meses fechados
-  const fim = new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);       // último dia do mês passado
-  const rows = await _faturamentoDias(ini, fim);
-  const meses = {}, unis = new Set();
-  rows.forEach(r => {
-    const mes = String(r.data).slice(0, 7);
-    unis.add(r.unidade);
-    meses[mes] = meses[mes] || {};
-    meses[mes][r.unidade] = (meses[mes][r.unidade] || 0) + r.valor;
+// Fonte: vw_precificacao_mensal, feita e mantida pelo Financeiro (classificação do plano de
+// contas, rateio, competência = vencimento). Aqui só se lê e se converte em % da composição.
+// Salão = unidade Centro; Delivery = unidade P10 (nomes curtos já traduzidos pela view).
+const _PC_UNI = { salao: 'Centro', deliv: 'P10' };
+const _pcMesNome = mes => { const [y, m] = mes.split('-'); return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m - 1] + '/' + y.slice(2); };
+const _PC_GRUPOS_DESP = [
+  ['imposto_venda', 'Impostos sobre venda'],
+  ['taxa_cartao', 'Taxa de cartão'],
+  ['comissao_venda', 'Comissão sobre venda'],
+  ['variavel', 'Variável (embalagem, gás, limpeza…)'],
+  ['fixo', 'Fixo (pessoal, aluguel, energia…)'],
+  ['delivery_comissao', 'App de delivery (comissão + campanha)'],
+  ['delivery_entrega', 'Entrega (motoboy)'],
+  ['delivery_campanha', 'Campanha no app'],
+  ['cmv', 'CMV realizado'],
+  ['fora', 'Fora da operação'],
+];
+
+async function _pcLerDespesas() {
+  const { data, error } = await sb.from('vw_precificacao_mensal')
+    .select('mes,unidade,grupo,valor,fechado,tipo,origem').eq('tipo', 'realizado').order('mes');
+  if (error) throw error;
+  const meses = new Map();   // mes -> { fechado, porUni: { Centro: {grupo: valor} } }
+  (data || []).forEach(r => {
+    const mes = String(r.mes).slice(0, 7);
+    const m = meses.get(mes) || { mes, fechado: false, porUni: {}, origem: {} };
+    m.fechado = m.fechado || r.fechado === true;
+    (m.porUni[r.unidade] = m.porUni[r.unidade] || {})[r.grupo] = Number(r.valor) || 0;
+    if (r.origem) (m.origem[r.unidade] = m.origem[r.unidade] || {})[r.grupo] = r.origem;
+    meses.set(mes, m);
   });
-  _pc.fat = { ini, fim, unidades: [...unis].filter(Boolean).sort(), meses: Object.keys(meses).sort().map(mes => ({ mes, porUni: meses[mes] })) };
+  _pc.fat = { meses: [...meses.values()].sort((x, y) => x.mes.localeCompare(y.mes)) };
 }
 
-const _pcMesNome = mes => { const [y, m] = mes.split('-'); return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m - 1] + '/' + y.slice(2); };
+// Soma dos meses fechados ÷ faturamento dos mesmos meses (média ponderada, não média de %).
+function _pcDespResumo(canal) {
+  const u = _PC_UNI[canal];
+  const fech = (_pc.fat?.meses || []).filter(m => m.fechado && m.porUni[u]?.faturamento > 0);
+  const soma = g => fech.reduce((s, m) => s + (m.porUni[u][g] || 0), 0);
+  const fat = soma('faturamento'), ped = soma('pedidos');
+  const pct = g => fat > 0 ? soma(g) / fat * 100 : null;
+  return { u, fech, fat, ped, n: fech.length, pct, soma,
+    fatMes: fech.length ? fat / fech.length : 0, ticket: ped > 0 ? fat / ped : null,
+    porPedido: g => ped > 0 ? soma(g) / ped : null };
+}
+
+// O que a view sugere para cada campo da composição. O lucro fica de fora: é decisão do dono.
+function _pcDespPropostas(canal) {
+  const r = _pcDespResumo(canal);
+  if (!r.n) return null;
+  const p1 = v => v == null ? null : Math.round(v * 10) / 10, r2 = v => v == null ? null : Math.round(v * 100) / 100;
+  if (canal === 'salao') return {
+    imp: p1(r.pct('imposto_venda')), tax: p1(r.pct('taxa_cartao')), com: p1(r.pct('comissao_venda')),
+    var: p1(r.pct('variavel')), fix: p1(r.pct('fixo')),
+  };
+  return {
+    fix: p1(r.pct('fixo')), var: p1(r.pct('variavel')),
+    ci: p1((r.pct('taxa_cartao') || 0) + (r.pct('imposto_venda') || 0)),
+    eg: r2(r.porPedido('delivery_entrega')), fg: r2(r.porPedido('delivery_campanha')), tk: r2(r.ticket),
+  };
+}
+
+// Quantos produtos do canal mudam de situação se a composição virar `nova`.
+function _pcDespImpacto(canal, nova) {
+  const prods = _pc.prods.filter(p => _pcNoCanal(p, canal));
+  const antes = _pc.cfg[canal];
+  const medir = () => {
+    let abaixo = 0, somaMin = 0, n = 0;
+    prods.forEach(p => {
+      const k = _pcCalc(p, _pcPreco(p), canal);
+      if (k.semCusto || k.semPreco || !isFinite(k.minimo)) return;
+      n++; somaMin += k.minimo;
+      if (k.adic < 0 && !_pc.sets.isca[canal].has(p.id)) abaixo++;
+    });
+    return { abaixo, minMedio: n ? somaMin / n : 0 };
+  };
+  const a = medir();
+  let d;
+  _pc.cfg[canal] = { ...antes, ...nova };
+  try { d = medir(); } finally { _pc.cfg[canal] = antes; }
+  return { antes: a, depois: d };
+}
 
 async function _pcRenderDespesas() {
   const el = document.getElementById('pc-view-despesas');
   if (!_pc.fat) {
-    el.innerHTML = '<div class="pc-vazio">Lendo o faturamento do PDV…</div>';
-    try { await _pcLerFaturamento(); }
-    catch (e) { el.innerHTML = `<div class="pc-aviso">Não deu para ler o faturamento: ${esc(_msgErroBanco(e))}</div>`; return; }
+    el.innerHTML = '<div class="pc-vazio">Lendo as despesas do Financeiro…</div>';
+    try { await _pcLerDespesas(); }
+    catch (e) {
+      el.innerHTML = `<div class="pc-aviso">Não deu para ler as despesas do Financeiro (vw_precificacao_mensal): ${esc(_msgErroBanco(e))}</div>`;
+      return;
+    }
     if (_pc.aba !== 'despesas') return;
   }
-  const canal = _pc.canal, c = _pc.cfg, f = _pc.fat;
-  const unisCanal = c.unidadesFat[canal].filter(u => f.unidades.includes(u));
-  const totMes = f.meses.map(x => unisCanal.reduce((s, u) => s + (x.porUni[u] || 0), 0));
-  const media = totMes.length ? totMes.reduce((s, v) => s + v, 0) / totMes.length : 0;
-  const desp = Number(c.despesaFixa[canal]) || 0;
-  const pct = media > 0 && desp > 0 ? desp / media * 100 : null;
-  const usado = c[canal].fix;
+  const canal = _pc.canal, c = _pc.cfg, r = _pcDespResumo(canal), nome = _PC_NOME_CANAL[canal];
+  if (!r.n) {
+    el.innerHTML = `<div class="pc-aviso">O Financeiro ainda não tem mês fechado para a unidade ${esc(r.u)}.</div>`;
+    return;
+  }
+  const prop = _pcDespPropostas(canal);
+  const r0 = v => 'R$ ' + Math.round(v || 0).toLocaleString('pt-BR');
+  const fora = r.pct('fora');
+  const periodo = r.fech.map(m => _pcMesNome(m.mes)).join(' + ');
+  const abertos = _pc.fat.meses.filter(m => !m.fechado && m.porUni[r.u]).map(m => _pcMesNome(m.mes));
 
-  const r0 = v => 'R$ ' + Math.round(v || 0).toLocaleString('pt-BR');   // mês inteiro: centavo só alarga a coluna
-  const linhas = f.meses.map((x, i) => `<tr>
-      <td>${_pcMesNome(x.mes)}</td>
-      ${f.unidades.map(u => `<td class="text-end${unisCanal.includes(u) ? '' : ' text-muted'}">${r0(x.porUni[u])}</td>`).join('')}
-      <td class="text-end fw-bold">${r0(totMes[i])}</td></tr>`).join('');
-  const periodo = f.meses.length ? `${_pcMesNome(f.meses[0].mes)} a ${_pcMesNome(f.meses[f.meses.length - 1].mes)}` : 'sem meses fechados';
+  // destino de cada grupo na composição deste canal
+  const destino = canal === 'salao'
+    ? { imposto_venda: 'imp', taxa_cartao: 'tax', comissao_venda: 'com', variavel: 'var', fixo: 'fix' }
+    : { imposto_venda: 'ci', taxa_cartao: 'ci', variavel: 'var', fixo: 'fix', delivery_entrega: 'eg', delivery_campanha: 'fg' };
+  const notaGrupo = {
+    salao: { delivery_comissao: 'pedido de app do Centro: não entra no salão', delivery_entrega: 'idem', delivery_campanha: 'idem',
+             cmv: 'só referência: o preço usa a ficha', fora: 'o lucro precisa cobrir' },
+    deliv: { delivery_comissao: 'a comissão do app é % do preço do app: ajuste à mão', comissao_venda: 'zero na casa',
+             cmv: 'só referência: o preço usa a ficha', fora: 'o lucro precisa cobrir' },
+  }[canal];
+  const rotCampo = Object.fromEntries(_PC_CAMPOS[canal].map(([k, rot]) => [k, rot]));
+  const origemTxt = { rateio_faturamento: 'rateado pelo faturamento', derivado: 'calculado pelo Financeiro' };
+
+  const linhas = _PC_GRUPOS_DESP.map(([g, rot]) => {
+    const tot = r.soma(g);
+    const meses = r.fech.map(m => { const f = m.porUni[r.u].faturamento; return f > 0 ? (m.porUni[r.u][g] || 0) / f * 100 : null; });
+    const orig = r.fech.map(m => m.origem[r.u]?.[g]).find(Boolean);
+    const dest = destino[g], nota = notaGrupo[g] || (dest ? '→ ' + rotCampo[dest] : '');
+    const ref = g === 'cmv' || g === 'fora';
+    return `<tr${ref ? ' class="text-muted"' : ''}>
+      <td>${rot}${orig && origemTxt[orig] ? `<div class="small text-muted">${origemTxt[orig]}</div>` : ''}</td>
+      ${meses.map(v => `<td class="text-end">${_pcPct(v)}</td>`).join('')}
+      <td class="text-end fw-bold">${_pcPct(r.pct(g))}</td>
+      <td class="text-end text-nowrap">${r0(tot / r.n)}</td>
+      <td class="small">${esc(nota)}</td></tr>`;
+  }).join('');
+
+  // comparação campo a campo com o que está na composição hoje
+  const fmt = (k, v) => v == null ? '—' : (['eg', 'fg', 'tk'].includes(k) ? brl(v) : _pcPct(v));
+  const muda = Object.entries(prop).filter(([k, v]) => v != null && Math.abs(v - c[canal][k]) >= (['eg', 'fg', 'tk'].includes(k) ? 0.005 : 0.05));
+  const imp = muda.length ? _pcDespImpacto(canal, Object.fromEntries(muda)) : null;
+  // mesmo cálculo com o lucro cobrindo o que está fora da operação (decisão de 25/11)
+  const lucFora = fora != null ? Math.round(fora * 10) / 10 : null;
+  const impFora = imp && lucFora != null && lucFora > c[canal].luc + 0.05
+    ? _pcDespImpacto(canal, { ...Object.fromEntries(muda), luc: lucFora }) : null;
+  const comp = Object.entries(prop).map(([k, v]) => `<tr${muda.some(x => x[0] === k) ? ' class="fw-bold"' : ''}>
+      <td>${rotCampo[k]}</td><td class="text-end">${fmt(k, c[canal][k])}</td><td class="text-end">${fmt(k, v)}</td></tr>`).join('');
+  const lucro = c[canal].luc;
 
   el.innerHTML = `
     <div class="pc-desp-res">
-      <div class="pc-kpi"><div class="rot">Faturamento médio / mês</div><div class="val">${media > 0 ? brl(media) : '—'}</div><div class="sub">${periodo} · PDV ${unisCanal.length ? unisCanal.map(esc).join(' + ') : '(nenhuma unidade)'}</div></div>
-      <div class="pc-kpi"><div class="rot">Despesa fixa / mês</div>
-        <div class="val"><span class="input-group input-group-sm" style="max-width:190px"><span class="input-group-text">R$</span>
-          <input type="text" inputmode="decimal" class="form-control text-end fw-bold" id="pc-desp-fixa" value="${desp > 0 ? _pcNum(desp) : ''}" placeholder="0,00"
-            aria-label="Despesa fixa mensal do ${_PC_NOME_CANAL[canal]}" onchange="pcDespesa(this.value)"></span></div>
-        <div class="sub">provisório: vai vir do planejamento do Financeiro</div></div>
-      <div class="pc-kpi"><div class="rot">% fixo calculado</div><div class="val" style="color:#1e40af">${_pcPct(pct)}</div><div class="sub">despesa ÷ faturamento médio</div></div>
-      <div class="pc-kpi"><div class="rot">Usado hoje na composição</div><div class="val">${_pcPct(usado)}</div>
-        <div class="sub">${pct != null && Math.abs(pct - usado) >= 0.05
-          ? `<button type="button" class="btn btn-sm btn-primary pc-mini mt-1" onclick="pcUsarFixo(${Math.round(pct * 10) / 10})">Usar ${_pcPct(pct)} no ${_PC_NOME_CANAL[canal]}</button>`
-          : (pct != null ? 'igual ao calculado' : 'preencha a despesa fixa')}</div></div>
+      <div class="pc-kpi"><div class="rot">Faturamento médio / mês</div><div class="val">${r0(r.fatMes)}</div><div class="sub">${esc(r.u)} · ${periodo}</div></div>
+      <div class="pc-kpi"><div class="rot">Pedidos / mês · ticket</div><div class="val">${Math.round(r.ped / r.n).toLocaleString('pt-BR')}</div><div class="sub">ticket médio ${r.ticket ? brl(r.ticket) : '—'}</div></div>
+      <div class="pc-kpi"><div class="rot">Custos da operação</div><div class="val">${_pcPct(['imposto_venda', 'taxa_cartao', 'comissao_venda', 'variavel', 'fixo', ...(canal === 'deliv' ? ['delivery_comissao', 'delivery_entrega', 'delivery_campanha'] : [])].reduce((s, g) => s + (r.pct(g) || 0), 0))}</div><div class="sub">do faturamento, sem CMV</div></div>
+      <div class="pc-kpi${fora != null && lucro < fora ? ' alerta' : ''}"><div class="rot">Fora da operação × lucro</div><div class="val">${_pcPct(fora)}</div>
+        <div class="sub">parcelamento, empréstimos, distribuição. Lucro alvo hoje: ${_pcPct(lucro)}${fora != null && lucro < fora ? ' (não cobre)' : ''}</div></div>
     </div>
     <div class="row g-3">
-      <div class="col-lg-7">
+      <div class="col-xl-8">
         <div class="plan-lista" style="overflow-x:auto"><table class="table plan-tabela mb-0">
-          <thead><tr><th>Mês</th>${f.unidades.map(u => `<th class="text-end">${esc(u)}</th>`).join('')}<th class="text-end">${_PC_NOME_CANAL[canal]}</th></tr></thead>
-          <tbody>${linhas || `<tr><td colspan="${f.unidades.length + 2}" class="text-muted">Sem faturamento no período.</td></tr>`}</tbody>
+          <thead><tr><th>% do faturamento · ${esc(r.u)}</th>${r.fech.map(m => `<th class="text-end">${_pcMesNome(m.mes)}</th>`).join('')}<th class="text-end">Média</th><th class="text-end">R$ / mês</th><th>Na composição</th></tr></thead>
+          <tbody>${linhas}</tbody>
         </table></div>
+        <div class="small text-muted mt-2">Só meses fechados pelo Financeiro${abertos.length ? ` (fora: ${abertos.join(', ')}, ainda aberto ou com faturamento sem unidade)` : ''}. Média = soma dos meses ÷ faturamento dos mesmos meses.</div>
       </div>
-      <div class="col-lg-5">
+      <div class="col-xl-4">
         <div class="plan-painel">
-          <span class="plan-painel-rot">Unidades do PDV que formam o ${_PC_NOME_CANAL[canal]}</span>
-          <div class="d-flex flex-wrap gap-3 mb-2">
-            ${f.unidades.map(u => `<div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="pc-uni-${esc(u)}" ${c.unidadesFat[canal].includes(u) ? 'checked' : ''}
-                onchange="pcUnidadeFat(${f.unidades.indexOf(u)}, this.checked)"><label class="form-check-label" for="pc-uni-${esc(u)}">${esc(u)}</label></div>`).join('') || '<span class="text-muted small">nenhuma unidade com venda</span>'}
-          </div>
-          <div class="plan-como"><dl>
-            <dt>Centro</dt><dd>salão do Tambaqui de Banda</dd>
-            <dt>P10</dt><dd>Parque 10 = Delivery (é o mesmo corte do Painel Delivery do Financeiro)</dd>
-            <dt>Não entra aqui</dt><dd>custo de mercadoria (entra pela ficha) e impostos (são % na composição)</dd>
-            <dt>Depois</dt><dd>a despesa fixa por unidade vai vir pronta do planejamento do Financeiro, no lugar do campo provisório</dd></dl></div>
+          <span class="plan-painel-rot">Composição do ${nome}: hoje × Financeiro</span>
+          <table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">Hoje</th><th class="text-end">Financeiro</th></tr></thead><tbody>${comp}</tbody></table>
+          ${imp ? `<div class="small mb-2">Se usar: preço mínimo médio ${brl(imp.antes.minMedio)} → <b>${brl(imp.depois.minMedio)}</b>; abaixo do mínimo ${imp.antes.abaixo} → <b>${imp.depois.abaixo}</b> produtos.${impFora
+              ? `<br>Com lucro de ${_pcPct(lucFora)} (o que está fora da operação): mínimo médio <b>${brl(impFora.depois.minMedio)}</b>, abaixo do mínimo <b>${impFora.depois.abaixo}</b>.` : ''}</div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="pcUsarDespesas()">Usar estes números no ${nome}</button>`
+            : '<div class="small text-muted">A composição já está igual ao Financeiro.</div>'}
+          <div class="plan-como mt-2"><dl>
+            <dt>Lucro</dt><dd>não vem do Financeiro: é decisão sua, no painel de composição da aba Preços. Ele precisa cobrir o que está fora da operação.</dd>
+            ${canal === 'deliv' ? '<dt>Comissão do app</dt><dd>não muda aqui. A view traz o valor em R$, e a composição usa % sobre o preço do app (o Financeiro mede no agregado: comissão + entrega do app + campanha juntas).</dd>' : ''}
+            <dt>Provisório</dt><dd>Central de Produção, Estoque Central e administrativo estão lançados no Centro. O fixo do salão está mais alto e o do delivery mais baixo do que o real, até o Financeiro separar a retaguarda.</dd>
+          </dl></div>
         </div>
       </div>
     </div>`;
 }
 
-async function pcDespesa(txt) {
-  const v = _pcLerNum(txt);
-  const valor = isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null;
-  const canal = _pc.canal;
-  await _pcSalvar(c => { c.despesaFixa[canal] = valor; });
-  _pcRenderDespesas();
-}
-
-async function pcUnidadeFat(i, on) {
-  const u = _pc.fat?.unidades[i];
-  if (u == null) return;
-  const canal = _pc.canal;
-  await _pcSalvar(c => {
-    c.unidadesFat[canal] = c.unidadesFat[canal].filter(x => x !== u);
-    if (on) c.unidadesFat[canal].push(u);
-  });
-  _pcRenderDespesas();
-}
-
-async function pcUsarFixo(pct) {
-  const canal = _pc.canal;
-  if (!confirm(`Usar ${_pcPct(pct)} de custo fixo na composição do ${_PC_NOME_CANAL[canal]}?\nTodos os preços mínimos desse canal mudam.`)) return;
-  if (await _pcSalvar(c => { c[canal].fix = pct; })) {
+async function pcUsarDespesas() {
+  const canal = _pc.canal, prop = _pcDespPropostas(canal);
+  if (!prop) return;
+  const novo = Object.fromEntries(Object.entries(prop).filter(([, v]) => v != null));
+  if (!confirm(`Usar na composição do ${_PC_NOME_CANAL[canal]} os números do Financeiro?\nTodos os preços mínimos desse canal mudam. O lucro não muda.`)) return;
+  if (await _pcSalvar(c => { Object.assign(c[canal], novo); })) {
     document.getElementById('pc-comp').dataset.canal = '';
-    toast(`${_PC_NOME_CANAL[canal]} agora usa ${_pcPct(pct)} de custo fixo.`, 'ok');
+    toast(`${_PC_NOME_CANAL[canal]} agora usa os números do Financeiro.`, 'ok');
     _pcRenderDespesas();
   }
 }
