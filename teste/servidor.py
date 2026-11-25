@@ -481,7 +481,7 @@ def _usuario_do_token(h):
 
 # ───────────────────────── telas ─────────────────────────
 SUPABASE_JS = ("// AMBIENTE DE TESTE: o 'banco' e o servidor local (teste/servidor.py)\n"
-               "const SB_URL = location.origin;\nconst SB_KEY = 'teste';\nconst SB_SERVICE_KEY = 'teste';\n")
+               "const SB_URL = location.origin;\nconst SB_KEY = 'teste';\n")
 
 TROCA_HOJE = ("function hojeLocal() { if (window.__HOJE_TESTE__) return window.__HOJE_TESTE__; return _hojeLocalReal(); }\n"
               "function _hojeLocalReal(")
@@ -592,6 +592,8 @@ class H(BaseHTTPRequestHandler):
                     return self._rest(u)
             if u.path.startswith('/auth/v1/'):
                 return self._auth(u)
+            if u.path == '/functions/v1/admin-usuarios':
+                return self._admin_usuarios()
             if u.path.startswith('/__teste__/'):
                 return self._controle(u)
             if u.path.startswith('/realtime/') or u.path.startswith('/storage/'):
@@ -677,6 +679,22 @@ class H(BaseHTTPRequestHandler):
                 return self._env(200, {'users': [_sessao(x)['user'] for x in USUARIOS], 'aud': 'authenticated'})
             return self._env(400, {'msg': 'Usuarios nao podem ser alterados no ambiente de teste'})
         return self._env(404, {'msg': 'nao existe no teste'})
+
+    # ── imitacao da Edge Function admin-usuarios (supabase/functions/admin-usuarios)
+    def _admin_usuarios(self):
+        if self.command == 'OPTIONS':
+            return self._env(200, {'ok': True})
+        c = self._corpo() or {}   # le o corpo antes de recusar (senao sobra no keep-alive)
+        us = _usuario_do_token(self.headers.get('Authorization'))
+        if not us:
+            return self._env(401, {'error': 'Sessão expirada. Entre de novo no sistema.'})
+        if (us.get('app_metadata') or {}).get('admin') is not True:
+            return self._env(403, {'error': 'Apenas administradores podem gerenciar usuários.'})
+        if c.get('acao') == 'listar':
+            return self._env(200, {'ok': True, 'users': [
+                dict(_sessao(x)['user'], app_metadata={'admin': (x.get('app_metadata') or {}).get('admin') is True})
+                for x in USUARIOS]})
+        return self._env(400, {'error': 'Usuarios nao podem ser alterados no ambiente de teste'})
 
     # ── banco
     def _rest(self, u):
