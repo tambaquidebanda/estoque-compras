@@ -30,6 +30,8 @@ const _PC_CFG = 'precificacao_config';
 const _PC_CORTESIA = 0.02;   // R$ 0,01 = comp de músico/guia/cantor: não é preço de verdade
 const _PC_CANAIS = ['salao', 'deliv'];
 const _PC_NOME_CANAL = { salao: 'Salão', deliv: 'Delivery' };
+// Painel de composição aberto por padrão (markup, CMV alvo e a conta ficam à vista).
+function _pcCompPref() { try { return localStorage.getItem('pc-comp-fechado') !== '1'; } catch (e) { return true; } }
 
 const _pc = {
   cfg: null,
@@ -45,7 +47,7 @@ const _pc = {
   sit: 'todos',
   ordem: 'nome',
   filtroGrupos: new Set(),
-  compAberta: false,
+  compAberta: _pcCompPref(),
   abertosCfg: new Set(),
   fat: null,
   carregando: null,
@@ -249,7 +251,7 @@ async function carregarPrecificacao() {
 
 function pcLimpar() {
   Object.assign(_pc, { cfg: null, sets: null, prods: [], porId: new Map(), grupos: [], chips: [], fat: null, erro: null,
-                       busca: '', sit: 'todos', ordem: 'nome', compAberta: false });
+                       busca: '', sit: 'todos', ordem: 'nome', compAberta: _pcCompPref() });
   _pc.filtroGrupos.clear();
   _pc.abertosCfg.clear();
   ['pc-kpis', 'pc-cards', 'pc-grupos', 'pc-sit', 'pc-comp', 'pc-aviso', 'pc-view-despesas', 'pc-view-config', 'pc-comp-chip']
@@ -761,13 +763,14 @@ const _PC_CAMPOS = {
 
 function _pcCompChip() {
   const c = _pc.cfg, chip = document.getElementById('pc-comp-chip');
-  const rev = `<span class="sep"></span>Revenda <b>÷${_pcNum(c.revcmv / 100)}</b>`;
+  const rev = `<span class="sep"></span>Revenda <b>÷${_pcNum(c.revcmv / 100)}</b>`
+    + `<span class="sep"></span><span class="pc-comp-acao">${_pc.compAberta ? 'Fechar' : 'Ver a conta'} <i class="bi bi-chevron-${_pc.compAberta ? 'up' : 'down'}"></i></span>`;
   if (_pc.canal === 'salao') {
     const alvo = _pcCmvAlvoSalao();
-    chip.innerHTML = `<i class="bi bi-sliders"></i> Markup <b>${alvo ? _pcNum(100 / alvo) : '—'}</b><span class="sep"></span>CMV alvo <b>${_pcPct(alvo)}</b>${rev}`;
+    chip.innerHTML = `<i class="bi bi-sliders"></i> <span class="pc-comp-tit">Composição do preço</span> Markup <b>${alvo ? _pcNum(100 / alvo) : '—'}</b><span class="sep"></span>CMV alvo <b>${_pcPct(alvo)}</b>${rev}`;
   } else {
     const d = c.deliv;
-    chip.innerHTML = `<i class="bi bi-sliders"></i> Coef. entrega <b>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)}</b><span class="sep"></span>Comissão <b>${_pcPct(d.com)}</b>${rev}`;
+    chip.innerHTML = `<i class="bi bi-sliders"></i> <span class="pc-comp-tit">Composição do preço</span> Coef. entrega <b>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)}</b><span class="sep"></span>Comissão <b>${_pcPct(d.com)}</b>${rev}`;
   }
   chip.setAttribute('aria-expanded', String(_pc.compAberta));
 }
@@ -775,6 +778,7 @@ function _pcCompChip() {
 function pcToggleComp() {
   if (!_pc.cfg) return;
   _pc.compAberta = !_pc.compAberta;
+  try { localStorage.setItem('pc-comp-fechado', _pc.compAberta ? '0' : '1'); } catch (e) { /* sem storage: só não lembra */ }
   const painel = document.getElementById('pc-comp');
   painel.classList.toggle('d-none', !_pc.compAberta);
   if (_pc.compAberta) _pcCompPainel();
@@ -811,15 +815,18 @@ function _pcCompResumo() {
     const s = c.salao, varTot = s.imp + s.com + s.tax + s.var, alvo = _pcCmvAlvoSalao();
     el.innerHTML = `<dl>
       <dt>Variáveis</dt><dd>${_pcPct(varTot)} (impostos + comissão + cartão + perdas)</dd>
-      <dt>Markup</dt><dd>${alvo ? _pcNum(100 / alvo) : '—'} → CMV alvo ${_pcPct(alvo)}. Mínimo = custo da ficha × markup.</dd>
+      <dt>Markup</dt><dd>1 ÷ (1 − (variáveis ${_pcPct(varTot)} + fixos ${_pcPct(s.fix)} + lucro ${_pcPct(s.luc)})) = 1 ÷ ${alvo ? _pcNum(alvo / 100, 3) : '—'} = <b>${alvo ? _pcNum(100 / alvo) : '—'}</b></dd>
+      <dt>CMV alvo</dt><dd>o que sobra para a comida: ${_pcPct(alvo)} do preço (= 1 ÷ markup).</dd>
+      <dt>Mínimo</dt><dd>custo da ficha × markup. Ex.: ficha de R$ 20,00 → mínimo ${alvo ? brl(20 * 100 / alvo) : '—'}.</dd>
       ${revTxt}
       <dt>De onde vem</dt><dd>A aba <b>Despesas</b> traz os % reais do Financeiro (botão "Usar estes números"). O lucro é decisão sua. CMV entra pela ficha, não soma no fixo.</dd></dl>`;
   } else {
     const d = c.deliv;
     el.innerHTML = `<dl>
-      <dt>%MNT</dt><dd>${_pcPct(d.fix + d.var + d.ci)} (fixo + variável + cartão/imposto). Mínimo do próprio = custo ÷ (1 − %MNT − lucro).</dd>
+      <dt>%MNT</dt><dd>${_pcPct(d.fix + d.var + d.ci)} (fixo + variável + cartão/imposto).</dd>
+      <dt>Próprio</dt><dd>mínimo = custo ÷ (1 − (%MNT ${_pcPct(d.fix + d.var + d.ci)} + lucro ${_pcPct(d.luc)})) = custo ÷ ${_pcNum(1 - (d.fix + d.var + d.ci + d.luc) / 100, 3)} → markup <b>${(1 - (d.fix + d.var + d.ci + d.luc) / 100) > 0 ? _pcNum(1 / (1 - (d.fix + d.var + d.ci + d.luc) / 100)) : '—'}</b></dd>
       <dt>Coeficiente</dt><dd>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)} = (entrega por pedido + campanha por pedido) ÷ ticket médio.</dd>
-      <dt>iFood</dt><dd>(próprio + próprio × coeficiente) ÷ (1 − comissão).</dd>
+      <dt>App</dt><dd>(próprio + próprio × coeficiente) ÷ (1 − comissão ${_pcPct(d.com)}) = próprio × <b>${d.com < 100 ? _pcNum((1 + (d.tk > 0 ? (d.eg + d.fg) / d.tk : 0)) / (1 - d.com / 100)) : '—'}</b></dd>
       ${revTxt}</dl>`;
   }
 }
@@ -982,6 +989,16 @@ async function _pcRenderDespesas() {
   const comp = Object.entries(prop).map(([k, v]) => `<tr${muda.some(x => x[0] === k) ? ' class="fw-bold"' : ''}>
       <td>${rotCampo[k]}</td><td class="text-end">${fmt(k, c[canal][k])}</td><td class="text-end">${fmt(k, v)}</td></tr>`).join('');
   const lucro = c[canal].luc;
+  const conta = x => {   // markup e CMV alvo de uma composição (mesma conta do _pcCalc)
+    if (canal === 'salao') { const b = (x.imp + x.com + x.tax + x.var + x.fix + x.luc) / 100; return b < 1 ? { a: 1 / (1 - b), b: (1 - b) * 100 } : null; }
+    const div = 1 - (x.fix + x.var + x.ci + x.luc) / 100, coef = x.tk > 0 ? (x.eg + x.fg) / x.tk : 0;
+    return div > 0 ? { a: 1 / div, b: x.com < 100 ? (1 + coef) / (1 - x.com / 100) : null } : null;
+  };
+  const cHoje = conta(c[canal]), cFin = conta({ ...c[canal], ...Object.fromEntries(Object.entries(prop).filter(([, v]) => v != null)) });
+  const linhaConta = canal === 'salao'
+    ? [['Markup', x => x ? _pcNum(x.a) : '—'], ['CMV alvo', x => x ? _pcPct(x.b) : '—']]
+    : [['Markup do próprio', x => x ? _pcNum(x.a) : '—'], ['Preço do app = próprio ×', x => x && x.b ? _pcNum(x.b) : '—']];
+  const resultado = linhaConta.map(([rot, f]) => `<tr class="pc-desp-conta"><td>${rot}</td><td class="text-end">${f(cHoje)}</td><td class="text-end">${f(cFin)}</td></tr>`).join('');
 
   el.innerHTML = `
     <div class="pc-desp-res">
@@ -1002,7 +1019,7 @@ async function _pcRenderDespesas() {
       <div class="col-xl-4">
         <div class="plan-painel">
           <span class="plan-painel-rot">Composição do ${nome}: hoje × Financeiro</span>
-          <table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">Hoje</th><th class="text-end">Financeiro</th></tr></thead><tbody>${comp}</tbody></table>
+          <table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">Hoje</th><th class="text-end">Financeiro</th></tr></thead><tbody>${comp}${resultado}</tbody></table>
           <div class="pc-desp-luc mb-2">
             <label for="pc-desp-luc" class="fw-bold">Lucro alvo do ${nome}</label>
             <span class="input-group input-group-sm" style="width:110px">

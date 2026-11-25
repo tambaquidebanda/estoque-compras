@@ -789,3 +789,6 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .pc-ficha-btn { background: var(--pl-teal); color: #fff; font-weight: 700; }
 .pc-ficha-btn:hover, .pc-ficha-btn:focus-visible { background: #0b5653; color: #fff; }
 #pg-precificacao .pc-desp-luc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 8px; background: var(--pl-teal-claro); }
+#pg-precificacao .pc-comp-tit { font-weight: 700; margin-right: 6px; }
+#pg-precificacao .pc-comp-acao { font-weight: 600; text-decoration: underline; }
+#pg-precificacao tr.pc-desp-conta td { background: var(--pl-teal-claro); font-weight: 700; color: var(--pl-teal); }
