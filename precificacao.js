@@ -844,7 +844,8 @@ const _PC_UNI = { salao: 'Centro', deliv: 'P10' };
 const _pcMesNome = mes => { const [y, m] = mes.split('-'); return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m - 1] + '/' + y.slice(2); };
 const _PC_GRUPOS_DESP = [
   ['imposto_venda', 'Impostos sobre venda'],
-  ['taxa_cartao', 'Taxa de cartão'],
+  ['taxa_cartao', 'Taxa de cartão (maquininha)'],
+  ['antecipacao_cartao', 'Antecipação do cartão'],
   ['comissao_venda', 'Comissão sobre venda'],
   ['variavel', 'Variável (embalagem, gás, limpeza…)'],
   ['fixo', 'Fixo (pessoal, aluguel, energia…)'],
@@ -889,12 +890,12 @@ function _pcDespPropostas(canal) {
   if (!r.n) return null;
   const p1 = v => v == null ? null : Math.round(v * 10) / 10, r2 = v => v == null ? null : Math.round(v * 100) / 100;
   if (canal === 'salao') return {
-    imp: p1(r.pct('imposto_venda')), tax: p1(r.pct('taxa_cartao')), com: p1(r.pct('comissao_venda')),
+    imp: p1(r.pct('imposto_venda')), tax: p1((r.pct('taxa_cartao') || 0) + (r.pct('antecipacao_cartao') || 0)), com: p1(r.pct('comissao_venda')),
     var: p1(r.pct('variavel')), fix: p1(r.pct('fixo')),
   };
   return {
     fix: p1(r.pct('fixo')), var: p1(r.pct('variavel')),
-    ci: p1((r.pct('taxa_cartao') || 0) + (r.pct('imposto_venda') || 0)),
+    ci: p1((r.pct('taxa_cartao') || 0) + (r.pct('antecipacao_cartao') || 0) + (r.pct('imposto_venda') || 0)),
     eg: r2(r.porPedido('delivery_entrega')), fg: r2(r.porPedido('delivery_campanha')), tk: r2(r.ticket),
   };
 }
@@ -944,8 +945,8 @@ async function _pcRenderDespesas() {
 
   // destino de cada grupo na composição deste canal
   const destino = canal === 'salao'
-    ? { imposto_venda: 'imp', taxa_cartao: 'tax', comissao_venda: 'com', variavel: 'var', fixo: 'fix' }
-    : { imposto_venda: 'ci', taxa_cartao: 'ci', variavel: 'var', fixo: 'fix', delivery_entrega: 'eg', delivery_campanha: 'fg' };
+    ? { imposto_venda: 'imp', taxa_cartao: 'tax', antecipacao_cartao: 'tax', comissao_venda: 'com', variavel: 'var', fixo: 'fix' }
+    : { imposto_venda: 'ci', taxa_cartao: 'ci', antecipacao_cartao: 'ci', variavel: 'var', fixo: 'fix', delivery_entrega: 'eg', delivery_campanha: 'fg' };
   const notaGrupo = {
     salao: { delivery_comissao: 'pedido de app do Centro: não entra no salão', delivery_entrega: 'idem', delivery_campanha: 'idem',
              cmv: 'só referência: o preço usa a ficha', fora: 'o lucro precisa cobrir' },
@@ -953,12 +954,13 @@ async function _pcRenderDespesas() {
              cmv: 'só referência: o preço usa a ficha', fora: 'o lucro precisa cobrir' },
   }[canal];
   const rotCampo = Object.fromEntries(_PC_CAMPOS[canal].map(([k, rot]) => [k, rot]));
-  const origemTxt = { rateio_faturamento: 'rateado pelo faturamento', derivado: 'calculado pelo Financeiro' };
+  const origemTxt = { rateio_faturamento: 'rateado pelo faturamento', derivado: 'calculado pelo Financeiro',
+    estimado: 'estimativa pela taxa do contrato (o custo real ainda não é lido do extrato da Getnet)' };
 
   const linhas = _PC_GRUPOS_DESP.map(([g, rot]) => {
     const tot = r.soma(g);
     const meses = r.fech.map(m => { const f = m.porUni[r.u].faturamento; return f > 0 ? (m.porUni[r.u][g] || 0) / f * 100 : null; });
-    const orig = r.fech.map(m => m.origem[r.u]?.[g]).find(Boolean);
+    const orig = g === 'antecipacao_cartao' ? 'estimado' : r.fech.map(m => m.origem[r.u]?.[g]).find(Boolean);
     const dest = destino[g], nota = notaGrupo[g] || (dest ? '→ ' + rotCampo[dest] : '');
     const ref = g === 'cmv' || g === 'fora';
     return `<tr${ref ? ' class="text-muted"' : ''}>
@@ -985,7 +987,7 @@ async function _pcRenderDespesas() {
     <div class="pc-desp-res">
       <div class="pc-kpi"><div class="rot">Faturamento médio / mês</div><div class="val">${r0(r.fatMes)}</div><div class="sub">${esc(r.u)} · ${periodo}</div></div>
       <div class="pc-kpi"><div class="rot">Pedidos / mês · ticket</div><div class="val">${Math.round(r.ped / r.n).toLocaleString('pt-BR')}</div><div class="sub">ticket médio ${r.ticket ? brl(r.ticket) : '—'}</div></div>
-      <div class="pc-kpi"><div class="rot">Custos da operação</div><div class="val">${_pcPct(['imposto_venda', 'taxa_cartao', 'comissao_venda', 'variavel', 'fixo', ...(canal === 'deliv' ? ['delivery_comissao', 'delivery_entrega', 'delivery_campanha'] : [])].reduce((s, g) => s + (r.pct(g) || 0), 0))}</div><div class="sub">do faturamento, sem CMV</div></div>
+      <div class="pc-kpi"><div class="rot">Custos da operação</div><div class="val">${_pcPct(['imposto_venda', 'taxa_cartao', 'antecipacao_cartao', 'comissao_venda', 'variavel', 'fixo', ...(canal === 'deliv' ? ['delivery_comissao', 'delivery_entrega', 'delivery_campanha'] : [])].reduce((s, g) => s + (r.pct(g) || 0), 0))}</div><div class="sub">do faturamento, sem CMV</div></div>
       <div class="pc-kpi${fora != null && lucro < fora ? ' alerta' : ''}"><div class="rot">Fora da operação × lucro</div><div class="val">${_pcPct(fora)}</div>
         <div class="sub">parcelamento, empréstimos, distribuição. Lucro alvo hoje: ${_pcPct(lucro)}${fora != null && lucro < fora ? ' (não cobre)' : ''}</div></div>
     </div>
