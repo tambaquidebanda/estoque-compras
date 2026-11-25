@@ -704,7 +704,7 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .pc-kpi.alerta .val { color: var(--pl-vermelho); }
 .pc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
 .pc-card { background: #fff; border: 1px solid var(--pl-linha); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-.pc-hero { height: 96px; position: relative; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 800;
+.pc-hero { aspect-ratio: 4 / 3; position: relative; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 800;
   color: rgba(255,255,255,.92); letter-spacing: .04em; background-size: cover; background-position: center; }
 .pc-tag { position: absolute; top: 8px; font-size: .62rem; font-weight: 800; letter-spacing: .05em; padding: 2px 7px; border-radius: 6px; }
 .pc-tag.esq { left: 8px; background: rgba(0,0,0,.42); color: #fff; }
