@@ -254,6 +254,8 @@ function pcLimpar() {
                        busca: '', sit: 'todos', ordem: 'nome', compAberta: _pcCompPref() });
   _pc.filtroGrupos.clear();
   _pc.abertosCfg.clear();
+  _pcReaj.aberto = false;
+  document.getElementById('pc-reaj')?.classList.add('d-none');
   ['pc-kpis', 'pc-cards', 'pc-grupos', 'pc-sit', 'pc-comp', 'pc-aviso', 'pc-view-despesas', 'pc-view-config', 'pc-comp-chip']
     .forEach(id => { const e = document.getElementById(id); if (e) e.innerHTML = ''; });
   const b = document.getElementById('pc-busca');
@@ -412,6 +414,7 @@ function _pcRenderPrecos() {
   const painel = document.getElementById('pc-comp');
   painel.classList.toggle('d-none', !_pc.compAberta);
   if (_pc.compAberta && painel.dataset.canal !== _pc.canal) _pcCompPainel();
+  _pcReajPainel();
   _pcRenderCards(lista);
 }
 
@@ -751,6 +754,110 @@ async function _pcIrCadastro(id, abaFicha) {
   document.getElementById('nav-precificacao')?.classList.remove('ativo');   // senão o menu fica com 2 itens acesos
   await abrirProduto(id);
   if (abaFicha) irAba('ficha', document.querySelectorAll('#tabs-prod .nav-link')[1]);
+}
+
+// ── reajuste geral ──────────────────────────────────────────────────────────
+// Aplica um % sobre o preço do PDV de todos os produtos do canal (ou dos grupos filtrados)
+// e grava o resultado como PREÇO PROPOSTO, igual a uma edição à mão: o cadastro só muda
+// no "Já mudei no PDV". O último reajuste fica guardado para poder ser desfeito.
+const _pcReaj = { aberto: false, pct: 5, noventa: true, refazer: false };
+
+function pcToggleReaj() {
+  if (!_pc.cfg) return;
+  _pcReaj.aberto = !_pcReaj.aberto;
+  document.getElementById('pc-reaj-btn').setAttribute('aria-expanded', String(_pcReaj.aberto));
+  document.getElementById('pc-reaj').classList.toggle('d-none', !_pcReaj.aberto);
+  if (_pcReaj.aberto) _pcReajPainel();
+}
+
+function _pcReajAlvo() {
+  const grupos = _pc.filtroGrupos;
+  return _pc.prods.filter(p => _pcNoCanal(p) && p.preco_venda > 0 && (!grupos.size || grupos.has(p._grupo)));
+}
+
+function _pcReajCalc() {
+  const pct = _pcReaj.pct, todos = _pcReajAlvo();
+  const comProposta = todos.filter(p => _pcTemProposta(p));
+  const alvo = _pcReaj.refazer ? todos : todos.filter(p => !_pcTemProposta(p));
+  const itens = alvo.map(p => {
+    const bruto = p.preco_venda * (1 + pct / 100);
+    const novo = _pcReaj.noventa ? _pcSnap90(bruto) : Math.round(bruto * 100) / 100;
+    return { p, de: p.preco_venda, para: novo };
+  }).filter(x => x.para > 0 && Math.abs(x.para - x.de) >= 0.005);
+  const somaDe = itens.reduce((s, x) => s + x.de, 0), somaPara = itens.reduce((s, x) => s + x.para, 0);
+  return { itens, todos, comProposta, efetivo: somaDe > 0 ? (somaPara / somaDe - 1) * 100 : null };
+}
+
+function _pcReajPainel() {
+  const el = document.getElementById('pc-reaj');
+  if (!el || !_pcReaj.aberto) return;
+  const r = _pcReajCalc(), ult = _pc.cfg.reajuste;
+  const grupos = _pc.filtroGrupos.size ? [..._pc.filtroGrupos].join(', ') : null;
+  const ex = [...r.itens].sort((a, b) => b.de - a.de).slice(0, 4)
+    .map(x => `<li>${esc(x.p.nome)}: ${brl(x.de)} → <b>${brl(x.para)}</b></li>`).join('');
+  const ultTxt = ult && ult.ids && Object.keys(ult.ids).length
+    ? `<div class="small mt-2">Último reajuste: <b>${_pcPct(ult.pct)}</b> em ${esc(String(ult.em || '').split('-').reverse().join('/'))} no ${esc(_PC_NOME_CANAL[ult.canal] || '')}, ${Object.keys(ult.ids).length} produtos.
+        <button type="button" class="btn btn-link btn-sm p-0 align-baseline" onclick="pcDesfazerReaj()">Desfazer</button>
+        <span class="text-muted">(volta só os que ainda estão com o preço do reajuste)</span></div>` : '';
+  el.innerHTML = `
+    <div class="d-flex flex-wrap gap-3 align-items-end">
+      <label class="d-block mb-0"><span class="plan-painel-rot">Aumento</span>
+        <span class="input-group input-group-sm" style="width:120px">
+          <input type="text" inputmode="decimal" class="form-control text-end fw-bold" id="pc-reaj-pct" value="${_pcNum(_pcReaj.pct, 1)}" oninput="pcReajCampo('pct', this.value)">
+          <span class="input-group-text">%</span></span></label>
+      <div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="pc-reaj-90" ${_pcReaj.noventa ? 'checked' : ''} onchange="pcReajCampo('noventa', this.checked)">
+        <label class="form-check-label" for="pc-reaj-90">Arredondar para ,90 acima</label></div>
+      ${r.comProposta.length ? `<div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="pc-reaj-ref" ${_pcReaj.refazer ? 'checked' : ''} onchange="pcReajCampo('refazer', this.checked)">
+        <label class="form-check-label" for="pc-reaj-ref">Refazer também ${r.comProposta.length === 1 ? 'o 1 que já tem' : `os ${r.comProposta.length} que já têm`} preço proposto</label></div>` : ''}
+    </div>
+    <div class="small mt-2">Vale para <b>${r.itens.length}</b> produtos do ${_PC_NOME_CANAL[_pc.canal]}${grupos ? ` nos grupos <b>${esc(grupos)}</b>` : ' (todos os grupos visíveis)'}, a partir do preço do PDV.
+      ${r.comProposta.length && !_pcReaj.refazer ? (r.comProposta.length === 1 ? ' O 1 que já tem preço proposto fica como está.' : ` Os ${r.comProposta.length} que já têm preço proposto ficam como estão.`) : ''}
+      ${r.efetivo != null ? ` Aumento real médio: <b>${_pcPct(r.efetivo)}</b>${_pcReaj.noventa ? ' (o arredondamento para ,90 puxa para cima, mais nos preços baixos)' : ''}.` : ''}</div>
+    ${ex ? `<ul class="small mb-2 mt-1">${ex}</ul>` : ''}
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <button type="button" class="btn btn-sm btn-primary" ${r.itens.length ? '' : 'disabled'} onclick="pcAplicarReaj()">Criar ${r.itens.length} preços propostos</button>
+      <span class="small text-muted">Não muda o PDV nem o cadastro. Depois, o filtro <b>Propostos</b> mostra o que alterar no iComanda.</span>
+    </div>${ultTxt}`;
+}
+
+function pcReajCampo(k, v) {
+  if (k === 'pct') { const n = _pcLerNum(v); if (!isFinite(n) || n <= -50 || n > 100) return; _pcReaj.pct = n; }
+  else _pcReaj[k] = !!v;
+  // redesenha sem tirar o foco do campo de %
+  const foco = document.activeElement?.id, pos = document.activeElement?.selectionStart;
+  _pcReajPainel();
+  if (foco) { const e = document.getElementById(foco); if (e) { e.focus(); if (pos != null && e.setSelectionRange) try { e.setSelectionRange(pos, pos); } catch (x) { /* checkbox */ } } }
+}
+
+async function pcAplicarReaj() {
+  const r = _pcReajCalc(), canal = _pc.canal, pct = _pcReaj.pct;
+  if (!r.itens.length) return;
+  if (!confirm(`Criar ${r.itens.length} preços propostos com aumento de ${_pcPct(pct)} no ${_PC_NOME_CANAL[canal]}?\n\nO PDV e o cadastro não mudam. Dá para desfazer depois.`)) return;
+  const ids = Object.fromEntries(r.itens.map(x => [x.p.id, x.para]));
+  const ok = await _pcSalvar(c => {
+    Object.assign(c.proposto, ids);
+    c.reajuste = { pct, canal, em: hojeLocal(), ids };
+  });
+  if (!ok) return;
+  toast(`${r.itens.length} preços propostos criados (${_pcPct(pct)}).`, 'ok');
+  _pcRender();
+  _pcReajPainel();
+}
+
+async function pcDesfazerReaj() {
+  const ult = _pc.cfg.reajuste;
+  if (!ult?.ids) return;
+  const ainda = Object.entries(ult.ids).filter(([id, v]) => Number(_pc.cfg.proposto[id]) === Number(v)).length;
+  if (!confirm(`Desfazer o reajuste de ${_pcPct(ult.pct)}?\n\n${ainda} preços propostos voltam ao preço do PDV. Os que você mudou à mão depois ficam.`)) return;
+  const ok = await _pcSalvar(c => {
+    const u = c.reajuste;
+    if (u?.ids) Object.entries(u.ids).forEach(([id, v]) => { if (Number(c.proposto[id]) === Number(v)) delete c.proposto[id]; });
+    delete c.reajuste;
+  });
+  if (!ok) return;
+  toast('Reajuste desfeito.', 'ok');
+  _pcRender();
+  _pcReajPainel();
 }
 
 // ── composição (parâmetros do markup) ───────────────────────────────────────

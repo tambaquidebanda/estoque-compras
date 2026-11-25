@@ -966,9 +966,11 @@
             </select>
           </div>
           <div class="plan-barra-dir">
+            <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" id="pc-reaj-btn" aria-expanded="false" aria-controls="pc-reaj" onclick="pcToggleReaj()"><i class="bi bi-graph-up-arrow"></i> Reajuste geral</button>
             <button type="button" class="plan-param-chip" id="pc-comp-chip" aria-expanded="false" aria-controls="pc-comp" onclick="pcToggleComp()"></button>
           </div>
         </div>
+        <div class="plan-painel d-none" id="pc-reaj"></div>
         <div class="plan-painel d-none" id="pc-comp"></div>
         <div class="plan-cats" id="pc-grupos" role="group" aria-label="Filtrar por grupo"></div>
         <div class="pc-cards" id="pc-cards"></div>
