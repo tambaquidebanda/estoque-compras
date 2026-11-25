@@ -788,3 +788,4 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
   border-radius: 10px; padding: 10px 12px; display: flex; gap: 8px; align-items: flex-start; }
 .pc-ficha-btn { background: var(--pl-teal); color: #fff; font-weight: 700; }
 .pc-ficha-btn:hover, .pc-ficha-btn:focus-visible { background: #0b5653; color: #fff; }
+#pg-precificacao .pc-desp-luc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 8px; background: var(--pl-teal-claro); }

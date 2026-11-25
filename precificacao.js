@@ -988,8 +988,8 @@ async function _pcRenderDespesas() {
       <div class="pc-kpi"><div class="rot">Faturamento médio / mês</div><div class="val">${r0(r.fatMes)}</div><div class="sub">${esc(r.u)} · ${periodo}</div></div>
       <div class="pc-kpi"><div class="rot">Pedidos / mês · ticket</div><div class="val">${Math.round(r.ped / r.n).toLocaleString('pt-BR')}</div><div class="sub">ticket médio ${r.ticket ? brl(r.ticket) : '—'}</div></div>
       <div class="pc-kpi"><div class="rot">Custos da operação</div><div class="val">${_pcPct(['imposto_venda', 'taxa_cartao', 'antecipacao_cartao', 'comissao_venda', 'variavel', 'fixo', ...(canal === 'deliv' ? ['delivery_comissao', 'delivery_entrega', 'delivery_campanha'] : [])].reduce((s, g) => s + (r.pct(g) || 0), 0))}</div><div class="sub">do faturamento, sem CMV</div></div>
-      <div class="pc-kpi${fora != null && lucro < fora ? ' alerta' : ''}"><div class="rot">Fora da operação × lucro</div><div class="val">${_pcPct(fora)}</div>
-        <div class="sub">parcelamento, empréstimos, distribuição. Lucro alvo hoje: ${_pcPct(lucro)}${fora != null && lucro < fora ? ' (não cobre)' : ''}</div></div>
+      <div class="pc-kpi${lucFora != null && lucro + 0.05 < lucFora ? ' alerta' : ''}"><div class="rot">Fora da operação × lucro</div><div class="val">${_pcPct(fora)}</div>
+        <div class="sub">parcelamento, empréstimos, distribuição. Lucro alvo hoje: ${_pcPct(lucro)}${lucFora != null && lucro + 0.05 < lucFora ? ' (não cobre)' : ''}</div></div>
     </div>
     <div class="row g-3">
       <div class="col-xl-8">
@@ -1003,6 +1003,14 @@ async function _pcRenderDespesas() {
         <div class="plan-painel">
           <span class="plan-painel-rot">Composição do ${nome}: hoje × Financeiro</span>
           <table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">Hoje</th><th class="text-end">Financeiro</th></tr></thead><tbody>${comp}</tbody></table>
+          <div class="pc-desp-luc mb-2">
+            <label for="pc-desp-luc" class="fw-bold">Lucro alvo do ${nome}</label>
+            <span class="input-group input-group-sm" style="width:110px">
+              <input type="text" inputmode="decimal" class="form-control text-end fw-bold" id="pc-desp-luc" value="${_pcNum(lucro, 1)}" onchange="pcDespLucro(this.value)">
+              <span class="input-group-text">%</span></span>
+            ${fora != null && lucFora > lucro + 0.05 ? `<button type="button" class="btn btn-sm btn-outline-secondary pc-mini" onclick="pcDespLucro('${_pcNum(lucFora, 1)}')">Usar ${_pcPct(lucFora)}</button>` : ''}
+            <div class="small text-muted w-100">É seu: o Financeiro não manda nesse número. Grava ao sair do campo.</div>
+          </div>
           ${imp ? `<div class="small mb-2">Se usar: preço mínimo médio ${brl(imp.antes.minMedio)} → <b>${brl(imp.depois.minMedio)}</b>; abaixo do mínimo ${imp.antes.abaixo} → <b>${imp.depois.abaixo}</b> produtos.${impFora
               ? `<br>Com lucro de ${_pcPct(lucFora)} (o que está fora da operação): mínimo médio <b>${brl(impFora.depois.minMedio)}</b>, abaixo do mínimo <b>${impFora.depois.abaixo}</b>.` : ''}</div>
             <button type="button" class="btn btn-sm btn-primary" onclick="pcUsarDespesas()">Usar estes números no ${nome}</button>`
@@ -1015,6 +1023,17 @@ async function _pcRenderDespesas() {
         </div>
       </div>
     </div>`;
+}
+
+async function pcDespLucro(txt) {
+  const v = _pcLerNum(txt), canal = _pc.canal;
+  if (!isFinite(v) || v < 0 || v >= 90) { toast('Lucro precisa ser um % entre 0 e 90.', 'erro'); _pcRenderDespesas(); return; }
+  const luc = Math.round(v * 10) / 10;
+  if (await _pcSalvar(c => { c[canal].luc = luc; })) {
+    document.getElementById('pc-comp').dataset.canal = '';
+    toast(`Lucro alvo do ${_PC_NOME_CANAL[canal]}: ${_pcPct(luc)}.`, 'ok');
+  }
+  _pcRenderDespesas();
 }
 
 async function pcUsarDespesas() {
