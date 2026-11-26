@@ -983,7 +983,96 @@ async function _pcLerDespesas() {
     if (r.origem) (m.origem[r.unidade] = m.origem[r.unidade] || {})[r.grupo] = r.origem;
     meses.set(mes, m);
   });
-  _pc.fat = { meses: [...meses.values()].sort((x, y) => x.mes.localeCompare(y.mes)) };
+  _pc.fat = { meses: [...meses.values()].sort((x, y) => x.mes.localeCompare(y.mes)), conta: null, contaErro: null, aberto: new Set() };
+  try { _pc.fat.conta = await _pcLerDespesasConta(_pc.fat.meses.filter(m => m.fechado).map(m => m.mes + '-01')); }
+  catch (e) { _pc.fat.contaErro = _msgErroBanco(e); }   // sem o detalhe a tela continua, só não abre os grupos
+}
+
+// Detalhe por conta do plano (vw_precificacao_conta, SQL_PRECIFICACAO_DETALHE.sql), mesmas regras
+// da view do Financeiro. Devolve Map `mes|unidade|grupo` -> [{ subgrupo, conta, valor }].
+async function _pcLerDespesasConta(meses) {
+  const porChave = new Map();
+  if (!meses.length) return porChave;
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await sb.from('vw_precificacao_conta').select('mes,unidade,grupo,subgrupo,conta,valor')
+      .in('mes', meses).order('mes').order('unidade').order('grupo').order('subgrupo').order('conta').range(de, de + 999);
+    if (error) throw error;
+    (data || []).forEach(r => {
+      const k = `${String(r.mes).slice(0, 7)}|${r.unidade}|${r.grupo}`;
+      (porChave.get(k) || porChave.set(k, []).get(k)).push({ subgrupo: r.subgrupo || 'Sem grupo', conta: r.conta || 'Sem conta', valor: Number(r.valor) || 0 });
+    });
+    if (!data || data.length < 1000) break;
+  }
+  return porChave;
+}
+
+// Como o Financeiro calcula os grupos que não têm conta no plano (texto do detalhe).
+const _PC_DESP_CALCULO = {
+  taxa_cartao: 'Valor que a Getnet cobrou em cada venda (arquivo EDI), dividido entre Centro e P10 pela venda no cartão de cada loja. Conferido com o contrato: débito 0,72%, crédito Visa/Master 1,42%, Elo 2,17%, Amex 2,92%.',
+  antecipacao_cartao: 'Cessão dos recebíveis ao Santander: 1,45% ao mês sobre o crédito vendido no mês. É estimativa pela taxa do contrato, conferida com o que caiu no banco; o banco de dados ainda não guarda o desconto de cada cessão.',
+  delivery_comissao: '21,38% sobre a venda do iFood: diferença entre a venda bruta no PDV e o repasse que caiu no banco (média de ago a out). Junta comissão, entrega do app e campanha.',
+};
+
+// Abre/fecha um grupo (ou um subgrupo, chave `grupo|subgrupo`) na tabela de Despesas.
+function pcDespAbrir(chave) {
+  const s = _pc.fat?.aberto;
+  if (!s) return;
+  s.has(chave) ? s.delete(chave) : s.add(chave);
+  _pcRenderDespesas();
+}
+function _pcDespClique(ev) {
+  if (ev.type === 'keydown' && ev.key !== 'Enter' && ev.key !== ' ') return;
+  const tr = ev.target.closest('tr[data-desp]');
+  if (!tr) return;
+  ev.preventDefault();
+  const k = tr.dataset.desp;
+  pcDespAbrir(k);
+  document.querySelector(`#pc-view-despesas tr[data-desp="${CSS.escape(k)}"]`)?.focus();
+}
+
+// Linhas de detalhe de um grupo: subgrupos do plano de contas, e as contas dentro de cada um.
+// Soma dos meses fechados ÷ faturamento dos mesmos meses, igual à linha do grupo.
+function _pcDespDetalhe(g, r, ncol) {
+  const r0 = v => 'R$ ' + Math.round(v || 0).toLocaleString('pt-BR');
+  const nota = txt => `<tr class="pc-desp-det"><td colspan="${ncol}" class="small text-muted ps-4">${txt}</td></tr>`;
+  if (_PC_DESP_CALCULO[g]) return nota(esc(_PC_DESP_CALCULO[g]));
+  if (_pc.fat.contaErro) return nota(`Detalhe por conta ainda não disponível (falta rodar o SQL_PRECIFICACAO_DETALHE.sql): ${esc(_pc.fat.contaErro)}`);
+  // junta mês a mês: subgrupo -> conta -> [valor por mês]
+  const n = r.fech.length, subs = new Map();
+  const add = (sg, ct, i, v) => {
+    const s = subs.get(sg) || subs.set(sg, new Map()).get(sg);
+    (s.get(ct) || s.set(ct, Array(n).fill(0)).get(ct))[i] += v;
+  };
+  r.fech.forEach((m, i) => {
+    const itens = _pc.fat.conta.get(`${m.mes}|${r.u}|${g}`) || [];
+    itens.forEach(x => add(x.subgrupo, x.conta, i, x.valor));
+    const dif = (m.porUni[r.u][g] || 0) - itens.reduce((s, x) => s + x.valor, 0);
+    if (Math.abs(dif) >= 1) add('Sem detalhe', 'Diferença com o total do Financeiro', i, dif);
+  });
+  if (!subs.size) return nota('Nenhum lançamento nos meses fechados.');
+  const fats = r.fech.map(m => m.porUni[r.u].faturamento);
+  const linha = (cls, rot, vals, extra = '') => {
+    const tot = vals.reduce((s, v) => s + v, 0);
+    return `<tr class="${cls}"${extra}><td>${rot}</td>
+      ${vals.map((v, i) => `<td class="text-end">${_pcPct(fats[i] > 0 ? v / fats[i] * 100 : null)}</td>`).join('')}
+      <td class="text-end">${_pcPct(r.fat > 0 ? tot / r.fat * 100 : null)}</td>
+      <td class="text-end text-nowrap">${r0(tot / n)}</td><td></td></tr>`;
+  };
+  const somaVet = arrs => arrs.reduce((a, v) => a.map((x, i) => x + v[i]), Array(n).fill(0));
+  const total = v => v.reduce((s, x) => s + x, 0);
+  const lista = [...subs.entries()].map(([sg, contas]) => ({ sg, contas: [...contas.entries()].sort((a, b) => total(b[1]) - total(a[1])), vals: somaVet([...contas.values()]) }))
+    .sort((a, b) => total(b.vals) - total(a.vals));
+  const contaHTML = (ct, vals, nivel) => linha(`pc-desp-det pc-desp-n${nivel}`, esc(ct), vals);
+  // um subgrupo só (ou subgrupo = a própria conta): mostra as contas direto
+  if (lista.length === 1) return lista[0].contas.map(([ct, v]) => contaHTML(ct, v, 1)).join('');
+  return lista.map(({ sg, contas, vals }) => {
+    if (contas.length === 1) return contaHTML(contas[0][0], vals, 1);   // subgrupo de uma conta só: não precisa abrir
+    const k = g + '|' + sg, ab = _pc.fat.aberto.has(k);
+    return linha(`pc-desp-det pc-desp-n1 pc-desp-abre${ab ? ' aberto' : ''}`,
+        `<span class="pc-desp-seta" aria-hidden="true"></span>${esc(sg)} <span class="small text-muted">· ${contas.length} contas</span>`, vals,
+        ` role="button" tabindex="0" aria-expanded="${ab}" data-desp="${esc(k)}"`)
+      + (ab ? contas.map(([ct, v]) => contaHTML(ct, v, 2)).join('') : '');
+  }).join('');
 }
 
 // Soma dos meses fechados ÷ faturamento dos mesmos meses (média ponderada, não média de %).
@@ -1077,12 +1166,14 @@ async function _pcRenderDespesas() {
     const orig = g === 'antecipacao_cartao' ? 'estimado' : r.fech.map(m => m.origem[r.u]?.[g]).find(Boolean);
     const dest = destino[g], nota = notaGrupo[g] || (dest ? '→ ' + rotCampo[dest] : '');
     const ref = g === 'cmv' || g === 'fora';
-    return `<tr${ref ? ' class="text-muted"' : ''}>
-      <td>${rot}${orig && origemTxt[orig] ? `<div class="small text-muted">${origemTxt[orig]}</div>` : ''}</td>
+    const abre = Math.abs(tot) >= 1, ab = abre && _pc.fat.aberto.has(g);   // grupo zerado não tem o que abrir
+    const cls = [ref ? 'text-muted' : '', abre ? 'pc-desp-abre' : '', ab ? 'aberto' : ''].filter(Boolean).join(' ');
+    return `<tr${cls ? ` class="${cls}"` : ''}${abre ? ` role="button" tabindex="0" aria-expanded="${ab}" data-desp="${g}"` : ''}>
+      <td>${abre ? '<span class="pc-desp-seta" aria-hidden="true"></span>' : ''}${rot}${orig && origemTxt[orig] ? `<div class="small text-muted">${origemTxt[orig]}</div>` : ''}</td>
       ${meses.map(v => `<td class="text-end">${_pcPct(v)}</td>`).join('')}
       <td class="text-end fw-bold">${_pcPct(r.pct(g))}</td>
       <td class="text-end text-nowrap">${r0(tot / r.n)}</td>
-      <td class="small">${esc(nota)}</td></tr>`;
+      <td class="small">${esc(nota)}</td></tr>${ab ? _pcDespDetalhe(g, r, r.fech.length + 4) : ''}`;
   }).join('');
 
   // comparação campo a campo com o que está na composição hoje
@@ -1119,9 +1210,9 @@ async function _pcRenderDespesas() {
       <div class="col-xl-8">
         <div class="plan-lista" style="overflow-x:auto"><table class="table plan-tabela mb-0">
           <thead><tr><th>% do faturamento · ${esc(r.u)}</th>${r.fech.map(m => `<th class="text-end">${_pcMesNome(m.mes)}</th>`).join('')}<th class="text-end">Média</th><th class="text-end">R$ / mês</th><th>Na composição</th></tr></thead>
-          <tbody>${linhas}</tbody>
+          <tbody onclick="_pcDespClique(event)" onkeydown="_pcDespClique(event)">${linhas}</tbody>
         </table></div>
-        <div class="small text-muted mt-2">Só meses fechados pelo Financeiro${abertos.length ? ` (fora: ${abertos.join(', ')}, ainda aberto ou com faturamento sem unidade)` : ''}. Média = soma dos meses ÷ faturamento dos mesmos meses.</div>
+        <div class="small text-muted mt-2">Clique num grupo para ver as contas que formam o número. Só meses fechados pelo Financeiro${abertos.length ? ` (fora: ${abertos.join(', ')}, ainda aberto ou com faturamento sem unidade)` : ''}. Média = soma dos meses ÷ faturamento dos mesmos meses.</div>
       </div>
       <div class="col-xl-4">
         <div class="plan-painel">

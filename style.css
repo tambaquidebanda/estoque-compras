@@ -792,3 +792,16 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 #pg-precificacao .pc-comp-tit { font-weight: 700; margin-right: 6px; }
 #pg-precificacao .pc-comp-acao { font-weight: 600; text-decoration: underline; }
 #pg-precificacao tr.pc-desp-conta td { background: var(--pl-teal-claro); font-weight: 700; color: var(--pl-teal); }
+/* Despesas: grupo que abre nas contas do plano */
+#pg-precificacao tr.pc-desp-abre { cursor: pointer; }
+#pg-precificacao tr.pc-desp-abre:hover td { background: #f3f8f7; }
+#pg-precificacao tr.pc-desp-abre:focus-visible { outline: 2px solid var(--pl-teal); outline-offset: -2px; }
+#pg-precificacao .pc-desp-seta { display: inline-block; width: 0; height: 0; margin: 0 8px 1px 0; vertical-align: middle;
+  border-left: 5px solid var(--pl-teal); border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .15s; }
+#pg-precificacao tr.aberto > td > .pc-desp-seta { transform: rotate(90deg); }
+#pg-precificacao tr.pc-desp-abre.aberto:not(.pc-desp-det) td { background: var(--pl-teal-claro); }
+#pg-precificacao tr.pc-desp-det td { background: #fafcfb; font-size: .8rem; color: var(--pl-tinta); padding-top: 5px; padding-bottom: 5px; }
+#pg-precificacao tr.pc-desp-n1 td:first-child { padding-left: 28px; }
+#pg-precificacao tr.pc-desp-n2 td:first-child { padding-left: 50px; color: var(--pl-cinza); }
+#pg-precificacao tr.pc-desp-n2 td { background: #fff; }
+@media (prefers-reduced-motion: reduce) { #pg-precificacao .pc-desp-seta { transition: none; } }
