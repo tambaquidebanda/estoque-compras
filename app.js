@@ -756,13 +756,15 @@ function _biISOWeek(dateStr) {
   return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+// grade do gráfico segue o tema (função: o Chart.js relê a cada update, então a troca de tema pega na hora)
+const _biGrade = () => _temaAtual() === 'escuro' ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.07)';
 function _biChartOpts(extra = {}) {
   return {
     responsive: true,
     plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.y ?? ctx.parsed.x ?? ctx.raw) } } },
     scales: {
-      x: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#64748b', font: { size: 9 } } },
-      y: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#64748b', font: { size: 9 }, callback: v => v >= 1000 ? (v / 1000).toFixed(0) + 'K' : v } },
+      x: { grid: { color: _biGrade }, ticks: { color: '#64748b', font: { size: 9 } } },
+      y: { grid: { color: _biGrade }, ticks: { color: '#64748b', font: { size: 9 }, callback: v => v >= 1000 ? (v / 1000).toFixed(0) + 'K' : v } },
     },
     ...extra,
   };
@@ -874,7 +876,7 @@ async function carregarBI() {
         { label: 'Compras',    data: allWeeks.map(w => byWeek[w]    || 0), borderColor: purple, backgroundColor: 'rgba(168,85,247,.1)',  fill: true, tension: .4, pointRadius: 2, pointBackgroundColor: purple },
       ],
     },
-    options: { ..._biChartOpts(), plugins: { legend: { display: true, labels: { color: '#94a3b8', font: { size: 9 }, boxWidth: 10 } }, tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${brl(ctx.parsed.y)}` } } } },
+    options: { ..._biChartOpts(), plugins: { legend: { display: true, labels: { color: '#7c8796', font: { size: 9 }, boxWidth: 10 } }, tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${brl(ctx.parsed.y)}` } } } },
   });
 
   // ── Fornecedores ──
