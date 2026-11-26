@@ -20,9 +20,13 @@
 //
 // A conta (a "alma" das planilhas do salão e do delivery):
 //   Salão     mínimo = custo × markup,  markup = 1 ÷ (1 − variáveis − fixo − lucro)
-//   Delivery  mínimo = custo ÷ (1 − fixo − cartão/imposto − lucro)
-//             iFood  = (próprio + próprio × coef) ÷ (1 − comissão)
+//   Delivery  mínimo próprio = custo ÷ (1 − fixo − cartão/imposto − lucro)
+//             iFood  = (próprio + próprio × coef) ÷ (1 − comissão) = próprio × multiplicador
 //             coef   = (entrega grátis + Campanha Inteligente) ÷ ticket médio
+//             O preço do PDV no delivery É o preço do iFood (26/11: 3.572 pedidos iFood x 53 do
+//             Cardápio Web em 30 dias, um preço só por produto no iComanda). Então o card compara
+//             o PDV com o MÍNIMO DO iFOOD (mínimo próprio × multiplicador). Produto marcado como
+//             "app próprio" (Cliente Fiel: sem comissão do iFood) compara com o mínimo próprio.
 //   Revenda   mínimo = custo ÷ CMV alvo (0,40 → markup 2,5), nos dois canais
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -69,6 +73,7 @@ function _pcPadrao() {
     conhecidos: [],                     // produto_id já revisados; fora daqui = novo = oculto
     ocultos: { salao: [], deliv: [] },  // produto_id escondidos de propósito, por canal
     isca: { salao: [], deliv: [] },     // abaixo do mínimo de propósito, por canal
+    appProprio: null,                   // produto_id vendidos no app próprio (delivery sem iFood); null = nunca marcado
     proposto: {},                       // produto_id -> preço em estudo (um preço por produto, igual ao PDV)
     secoes: _pcSecoesPadrao(),          // canal -> [{ id, nome, grupos: [nome do grupo do cadastro] }]
     iniciado: false,
@@ -91,6 +96,7 @@ function _pcMesclar(v) {
     conhecidos: [...(v.conhecidos || [])],
     ocultos: porCanal(v.ocultos, p.ocultos),
     isca: porCanal(v.isca, p.isca),
+    appProprio: Array.isArray(v.appProprio) ? [...v.appProprio] : null,
     proposto: { ...(v.proposto || {}) },
     secoes: _pcMesclarSecoes(v.secoes),
   };
@@ -142,12 +148,15 @@ function _pcAplicarInicio(c) {
   c.avisoInicial = true;
 }
 
+// Sugestão até alguém marcar à mão: o Cliente Fiel é o app próprio (26/11, Wagner).
+const _pcAppPadrao = () => _pc.prods.filter(p => /cliente fiel/.test(norm(p.nome))).map(p => p.id);
 function _pcIndexar() {
   const c = _pc.cfg;
   _pc.sets = {
     conhecidos: new Set(c.conhecidos),
     ocultos: { salao: new Set(c.ocultos.salao), deliv: new Set(c.ocultos.deliv) },
     isca: { salao: new Set(c.isca.salao), deliv: new Set(c.isca.deliv) },
+    appProprio: new Set(c.appProprio ?? _pcAppPadrao()),
   };
 }
 
@@ -303,10 +312,15 @@ function _pcPreco(p) {
 }
 function _pcTemProposta(p) { return _pcPreco(p) !== p.preco_venda; }
 
+// Preço do iFood = próprio × este número (null se a comissão for 100% ou mais).
+function _pcMultApp(d) {
+  const coef = d.tk > 0 ? (d.eg + d.fg) / d.tk : 0;
+  return d.com < 100 ? (1 + coef) / (1 - d.com / 100) : null;
+}
 function _pcCalc(p, preco, canal = _pc.canal) {
   const c = _pc.cfg, custo = p._custo, P = preco;
   const rcmv = c.revcmv / 100;
-  let minimo, mc = null, ifood = null, eg = null, ci = null;
+  let minimo, mc = null, eg = null, ci = null, com$ = null, outro = null, app = false, minProprio = null;
   if (canal === 'salao') {
     const s = c.salao, varTot = s.imp + s.com + s.tax + s.var;
     const base = (varTot + s.fix + s.luc) / 100;
@@ -315,18 +329,29 @@ function _pcCalc(p, preco, canal = _pc.canal) {
     if (P > 0) mc = (1 - varTot / 100 - custo / P) * 100;
   } else {
     const d = c.deliv, div = 1 - (d.fix + d.var + d.ci + d.luc) / 100;
-    minimo = p._rev ? (rcmv > 0 ? custo / rcmv : Infinity) : (div > 0 ? custo / div : Infinity);
-    const coef = d.tk > 0 ? (d.eg + d.fg) / d.tk : 0, com = d.com / 100;
-    if (P > 0) {
-      ifood = com < 1 ? (P + P * coef) / (1 - com) : null;
-      eg = d.tk > 0 ? P * d.eg / d.tk : 0;
-      ci = d.tk > 0 ? P * d.fg / d.tk : 0;
+    minProprio = p._rev ? (rcmv > 0 ? custo / rcmv : Infinity) : (div > 0 ? custo / div : Infinity);
+    const mult = _pcMultApp(d);
+    app = !!_pc.sets?.appProprio?.has(p.id);
+    if (app) {
+      // app próprio (Cliente Fiel): sem comissão, entrega e campanha do iFood
+      minimo = minProprio;
+      if (P > 0 && mult) outro = P * mult;                    // quanto seria no iFood
+    } else {
+      // preço do PDV = preço do iFood
+      minimo = mult ? minProprio * mult : Infinity;
+      if (P > 0 && mult) {
+        const pp = P / mult;                                  // próprio equivalente
+        outro = pp;
+        eg = d.tk > 0 ? pp * d.eg / d.tk : 0;
+        ci = d.tk > 0 ? pp * d.fg / d.tk : 0;
+        com$ = P * d.com / 100;
+      }
     }
   }
   const semCusto = !(custo > 0), semPreco = !(P > 0);
   const cmv = !semCusto && !semPreco ? custo / P * 100 : null;
   const adic = !semCusto && !semPreco && isFinite(minimo) ? (P - minimo) / P * 100 : null;
-  return { custo, preco: P, minimo, cmv, adic, mc, ifood, eg, ci, semCusto, semPreco };
+  return { custo, preco: P, minimo, minProprio, cmv, adic, mc, eg, ci, com: com$, outro, app, semCusto, semPreco };
 }
 
 function _pcStatus(p, k, canal = _pc.canal) {
@@ -495,11 +520,11 @@ function _pcKpis(base) {
     `<div class="pc-kpi${alerta ? ' alerta' : ''}"><div class="rot">${rot}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   const mPreco = media(x => x.k.preco);
   const terceiro = deliv
-    ? kpi('iFood médio sugerido', ok.length ? brl(media(x => x.k.ifood || 0)) : '—', 'comissão + entrega grátis + CI')
+    ? kpi('CMV médio', _pcPct(media(x => x.k.cmv)), 'sobre o preço cobrado (iFood ou app)')
     : kpi('CMV médio', _pcPct(media(x => x.k.cmv)), `alvo ${_pcPct(_pcCmvAlvoSalao())}`);
   document.getElementById('pc-kpis').innerHTML =
     kpi('Produtos', base.length, semCalc ? `${semCalc} sem custo ou sem preço` : 'com custo e preço') +
-    kpi(deliv ? 'Preço médio próprio' : 'Preço médio', mPreco == null ? '—' : brl(mPreco), _pcTemPropostaNaLista(base) ? 'inclui preços propostos' : 'preço de tabela do PDV') +
+    kpi('Preço médio', mPreco == null ? '—' : brl(mPreco), _pcTemPropostaNaLista(base) ? 'inclui preços propostos' : 'preço de tabela do PDV') +
     terceiro +
     kpi('Precisam de aumento', aumento, aumento ? 'abaixo do mínimo, fora as iscas' : 'nenhum abaixo do mínimo', aumento > 0);
 }
@@ -611,7 +636,7 @@ function _pcCardHTML(p) {
           onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){pcVoltarPreco(this);this.blur();}"></div>
       </div>`;
   const precos = deliv
-    ? `<div class="pc-precos2">${caixa}<div class="pc-preco ifood" title="Preço sugerido para iFood/99Food (logística própria)"><div class="rot"><span>iFood/99Food</span></div><div class="v" data-k="ifood">—</div></div></div>`
+    ? `<div class="pc-precos2">${caixa}<div class="pc-preco ifood" data-k="outroBox"><div class="rot"><span data-k="rotOutro"></span></div><div class="v" data-k="outro">—</div></div></div>`
     : caixa;
   const rev = p._rev ? ` · revenda ÷${_pcNum(_pc.cfg.revcmv / 100)}` : '';
   return `
@@ -624,14 +649,17 @@ function _pcCardHTML(p) {
       <div data-k="prop"></div>
       <div class="pc-linhas">
         <div class="l"><span class="k">${p._ficha ? 'Custo da ficha' : 'Custo (cadastro)'}</span><span class="v">${p._custo > 0 ? brl(p._custo) : '—'}</span></div>
-        <div class="l"><span class="k">Preço mínimo${deliv ? ' (próprio)' : ''}${rev}</span><span class="v min" data-k="min"></span></div>
-        ${deliv ? `<div class="l"><span class="k">Entrega embutida</span><span class="v" data-k="eg"></span></div>
-        <div class="l"><span class="k">Campanha embutida</span><span class="v" data-k="ci"></span></div>` : ''}
-        <div class="l"><span class="k">CMV${deliv ? ' (sobre o próprio)' : ''}</span><span class="v" data-k="cmv"></span></div>
+        <div class="l"><span class="k">Preço mínimo<span data-k="rotMin"></span>${rev}</span><span class="v min" data-k="min"></span></div>
+        ${deliv ? `<div class="l" data-k="lMinP"><span class="k">Mínimo próprio × ${_pcNum(_pcMultApp(_pc.cfg.deliv) || 0, 3)}</span><span class="v" data-k="minP"></span></div>
+        <div class="l" data-k="lCom"><span class="k">Comissão do iFood</span><span class="v" data-k="com"></span></div>
+        <div class="l" data-k="lEg"><span class="k">Entrega embutida</span><span class="v" data-k="eg"></span></div>
+        <div class="l" data-k="lCi"><span class="k">Campanha embutida</span><span class="v" data-k="ci"></span></div>` : ''}
+        <div class="l"><span class="k">CMV${deliv ? ' (sobre o preço cobrado)' : ''}</span><span class="v" data-k="cmv"></span></div>
         ${deliv ? '' : '<div class="l"><span class="k">Margem de contribuição</span><span class="v" data-k="mc"></span></div>'}
       </div>
       <div class="pc-dica" data-k="dica"></div>
       <div data-k="abaixo"></div>
+      ${deliv ? `<label class="pc-app"><input type="checkbox" data-k="app" onchange="pcAppProprio('${p.id}', this.checked)"> Vendido no app próprio (Cliente Fiel): sem comissão do iFood</label>` : ''}
       <div class="pc-pe"><button type="button" class="btn btn-outline-secondary btn-sm" onclick="pcVerFicha('${p.id}')">
         <i class="bi bi-${p._ficha ? 'diagram-3' : 'box-seam'}"></i> ${p._ficha ? 'Ver ficha técnica' : 'Abrir cadastro'}</button></div>
     </div>
@@ -651,9 +679,18 @@ function _pcPintar(card, p, digitado = null) {
   $k('min').textContent = k.semCusto || !isFinite(k.minimo) ? '—' : brl(k.minimo);
   $k('cmv').textContent = _pcPct(k.cmv);
   if (deliv) {
-    $k('ifood').textContent = k.ifood == null ? '—' : brl(k.ifood);
+    $k('rotMin').textContent = k.app ? ' (app próprio)' : ' (iFood)';
+    $k('rotOutro').textContent = k.app ? 'No iFood seria' : 'Próprio equivalente';
+    $k('outroBox').title = k.app
+      ? 'O mesmo resultado no iFood: este preço × multiplicador do app (comissão + entrega grátis + campanha)'
+      : 'Preço no app próprio que deixa o mesmo resultado: iFood ÷ multiplicador (sem comissão, entrega e campanha do iFood)';
+    $k('outro').textContent = k.outro == null ? '—' : brl(k.outro);
+    $k('minP').textContent = k.semCusto || !isFinite(k.minProprio) ? '—' : brl(k.minProprio);
+    $k('com').textContent = k.com == null ? '—' : brl(k.com);
     $k('eg').textContent = k.eg == null ? '—' : brl(k.eg);
     $k('ci').textContent = k.ci == null ? '—' : brl(k.ci);
+    ['lMinP', 'lCom', 'lEg', 'lCi'].forEach(x => $k(x).classList.toggle('d-none', k.app));
+    $k('app').checked = k.app;
   } else {
     $k('mc').textContent = _pcPct(k.mc);
   }
@@ -661,7 +698,8 @@ function _pcPintar(card, p, digitado = null) {
   // Caixa do preço: tabela do PDV × proposto.
   const difPdv = Math.abs(preco - p.preco_venda) >= 0.005 && preco > 0;
   $k('box').classList.toggle('proposto', difPdv);
-  $k('rotPreco').textContent = difPdv ? (deliv ? 'Próprio · proposto' : 'Preço proposto') : (deliv ? 'Próprio · PDV' : 'Preço · PDV');
+  const rotCanal = deliv ? (k.app ? 'App próprio' : 'iFood/99Food') : 'Preço';
+  $k('rotPreco').textContent = rotCanal + (difPdv ? ' · proposto' : ' · PDV');
   $k('dePdv').textContent = difPdv ? `PDV: ${p.preco_venda > 0 ? brl(p.preco_venda) : 'sem preço'}` : '';
   if (digitado == null) {
     $k('prop').innerHTML = _pcTemProposta(p)
@@ -676,7 +714,7 @@ function _pcPintar(card, p, digitado = null) {
     dica.textContent = k.semCusto ? 'Sem custo no cadastro: não dá para calcular o mínimo.' : 'Digite um preço para ver CMV e margem.';
   } else {
     const lado = k.adic >= 0 ? `<b>${_pcPct(k.adic)}</b> acima do mínimo` : `<b style="color:var(--pl-vermelho)">${_pcPct(-k.adic)}</b> abaixo do mínimo`;
-    dica.innerHTML = deliv && k.ifood != null ? `${lado} · iFood <b>${_pcPct((k.ifood / preco - 1) * 100)}</b> acima do próprio` : lado;
+    dica.innerHTML = lado;
   }
 
   const ab = $k('abaixo');
@@ -754,6 +792,15 @@ async function pcIsca(id, on) {
     if (on) c.isca[canal].push(id);
   })) _pcRepintar(id);
   else _pcRepintar(id);   // não gravou: volta o check ao estado salvo
+}
+
+async function pcAppProprio(id, on) {
+  await _pcSalvar(c => {
+    c.appProprio = (c.appProprio ?? _pcAppPadrao()).filter(x => x !== id);
+    if (on) c.appProprio.push(id);
+  });
+  _pcIndexar();
+  _pcRenderPrecos();   // muda o mínimo e a situação: recalcula chips e lista
 }
 
 async function pcDescartar(id) {
@@ -1028,7 +1075,7 @@ function _pcCompResumo() {
       <dt>%MNT</dt><dd>${_pcPct(d.fix + d.var + d.ci)} (fixo + variável + cartão/imposto).</dd>
       <dt>Próprio</dt><dd>mínimo = custo ÷ (1 − (%MNT ${_pcPct(d.fix + d.var + d.ci)} + lucro ${_pcPct(d.luc)})) = custo ÷ ${_pcNum(1 - (d.fix + d.var + d.ci + d.luc) / 100, 3)} → markup <b>${(1 - (d.fix + d.var + d.ci + d.luc) / 100) > 0 ? _pcNum(1 / (1 - (d.fix + d.var + d.ci + d.luc) / 100)) : '—'}</b></dd>
       <dt>Coeficiente</dt><dd>${_pcPct(d.tk > 0 ? (d.eg + d.fg) / d.tk * 100 : null)} = (entrega por pedido + campanha por pedido) ÷ ticket médio.</dd>
-      <dt>App</dt><dd>(próprio + próprio × coeficiente) ÷ (1 − comissão ${_pcPct(d.com)}) = próprio × <b>${d.com < 100 ? _pcNum((1 + (d.tk > 0 ? (d.eg + d.fg) / d.tk : 0)) / (1 - d.com / 100)) : '—'}</b></dd>
+      <dt>iFood</dt><dd>(próprio + próprio × coeficiente) ÷ (1 − comissão ${_pcPct(d.com)}) = próprio × <b>${_pcMultApp(d) ? _pcNum(_pcMultApp(d)) : '—'}</b>. O preço do PDV no delivery é o do iFood, então o mínimo do card = mínimo próprio × esse número. Produto marcado como app próprio (Cliente Fiel) usa o mínimo próprio.</dd>
       ${revTxt}</dl>`;
   }
 }
@@ -1087,9 +1134,8 @@ function _pcPdfDados(canal) {
   if (sem.length) blocos.push({ nome: blocos.length ? 'Outros' : 'Cardápio', grupos: sem });
   const item = p => {
     const novo = _pcPreco(p), muda = _pcTemProposta(p);
-    const k = canal === 'deliv' ? _pcCalc(p, novo, 'deliv') : null;
     return { p, atual: p.preco_venda, novo, muda, ids: (_pc.pdvIds?.get(p.id) || []),
-             ifood: k && k.ifood ? _pcSnap90(k.ifood) : null, secao: _pcSecaoDe(p._grupo, canal)?.nome || '' };
+             app: canal === 'deliv' && _pc.sets.appProprio.has(p.id), secao: _pcSecaoDe(p._grupo, canal)?.nome || '' };
   };
   const secoes = blocos.map(b => ({ nome: b.nome, grupos: b.grupos.map(g => ({ nome: g, itens: porGrupo.get(g).slice().sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(item) })) }));
   const todos = secoes.flatMap(s => s.grupos.flatMap(g => g.itens));
@@ -1111,16 +1157,15 @@ function _pcPdfHTML(canais, semIds) {
     const somaDe = d.mudam.reduce((s, x) => s + x.atual, 0), somaPara = d.mudam.reduce((s, x) => s + x.novo, 0);
     const medio = somaDe > 0 ? (somaPara / somaDe - 1) * 100 : null;
     const ondeImpresso = deliv ? 'App' : 'Cardápio';
-    const colPreco = deliv ? ['Próprio hoje', 'Próprio novo', 'iFood sugerido'] : ['Preço hoje', 'Preço novo'];
+    const colPreco = ['Preço hoje', 'Preço novo'];   // delivery: o preço do PDV já é o do iFood (ou do app próprio)
     const ncol = 3 + colPreco.length;
 
     const linha = (x, i) => `<tr class="${x.muda ? 'muda' : (i % 2 ? 'par' : '')}">
         <td class="c-chk">${box}</td>
         <td class="c-id">${ids(x)}</td>
-        <td class="c-nome">${esc(x.p.nome)}${x.p._rev ? '<span class="tag">revenda</span>' : ''}</td>
+        <td class="c-nome">${esc(x.p.nome)}${x.p._rev ? '<span class="tag">revenda</span>' : ''}${x.app ? '<span class="tag">app próprio</span>' : ''}</td>
         <td class="c-num ${x.muda ? 'antigo' : ''}">${r$(x.atual)}</td>
         <td class="c-num novo">${x.muda ? `<span class="pill">${r$(x.novo)}</span>${seta(x)}` : `<span class="igual">${r$(x.novo)}</span>`}</td>
-        ${deliv ? `<td class="c-num ifood">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}
       </tr>`;
 
     const resumo = d.mudam.length ? `
@@ -1131,14 +1176,14 @@ function _pcPdfHTML(canais, semIds) {
         </div>
         <table class="t-resumo"><thead><tr>
           <th class="c-chk2">iComanda</th><th class="c-chk2">${ondeImpresso}</th><th class="c-id">ID iComanda</th><th>Produto</th>
-          <th class="c-num">Hoje</th><th class="c-num">Novo</th>${deliv ? '<th class="c-num">iFood sugerido</th>' : ''}</tr></thead>
+          <th class="c-num">Hoje</th><th class="c-num">Novo</th></tr></thead>
         <tbody>${d.mudam.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, 'pt-BR')).map(x => `<tr>
           <td class="c-chk2">${box}</td><td class="c-chk2">${box}</td>
           <td class="c-id">${ids(x)}</td>
           <td class="c-nome">${esc(x.p.nome)}<div class="c-grupo">${esc([x.secao, x.p._grupo].filter(Boolean).join(' › '))}</div></td>
           <td class="c-num antigo">${r$(x.atual)}</td>
           <td class="c-num novo"><span class="pill">${r$(x.novo)}</span>${seta(x)}</td>
-          ${deliv ? `<td class="c-num ifood">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table>
+          </tr>`).join('')}</tbody></table>
         <div class="assina">
           <div><span>Mudado no iComanda por</span><i></i><span>em</span><i class="curta"></i></div>
           <div><span>${deliv ? 'Mudado no app por' : 'Cardápio impresso por'}</span><i></i><span>em</span><i class="curta"></i></div>
@@ -1173,7 +1218,7 @@ function _pcPdfHTML(canais, semIds) {
       <div class="legenda">
         <span><span class="amostra"></span> preço novo, ainda a mudar</span>
         <span>${box} marque ao conferir</span>
-        ${deliv ? '<span>iFood sugerido = preço do app pela composição do delivery, arredondado para ,90</span>' : ''}
+        ${deliv ? '<span>Delivery: o preço é o do iFood/99Food; “app próprio” = Cliente Fiel</span>' : ''}
       </div>
       ${semIds ? '<div class="alerta">Os ids do iComanda não puderam ser lidos agora: a coluna ID saiu vazia. Gere de novo em instantes.</div>' : ''}
       ${resumo}
