@@ -1062,117 +1062,191 @@ function _pcPdfDados(canal) {
 }
 
 function _pcPdfHTML(canais, semIds) {
-  const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const agora = new Date();
+  const hoje = agora.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
   const r$ = v => v > 0 ? 'R$ ' + _pcNum(v) : '—';
   const varPct = x => x.atual > 0 ? (x.novo / x.atual - 1) * 100 : null;
   const seta = x => { const v = varPct(x); if (v == null) return '<span class="var">novo</span>'; return `<span class="var ${v >= 0 ? 'sobe' : 'desce'}">${v >= 0 ? '▲' : '▼'} ${_pcNum(Math.abs(v), 1)}%</span>`; };
   const ids = x => x.ids.length ? x.ids.join(' · ') : '<span class="semid">sem id</span>';
+  const box = '<span class="box" aria-hidden="true"></span>';
 
   const paginas = canais.map((canal, ci) => {
     const deliv = canal === 'deliv', d = _pcPdfDados(canal), nome = _PC_NOME_CANAL[canal];
     const sobe = d.mudam.filter(x => x.novo > x.atual).length, desce = d.mudam.filter(x => x.novo < x.atual).length;
     const somaDe = d.mudam.reduce((s, x) => s + x.atual, 0), somaPara = d.mudam.reduce((s, x) => s + x.novo, 0);
     const medio = somaDe > 0 ? (somaPara / somaDe - 1) * 100 : null;
+    const ondeImpresso = deliv ? 'App' : 'Cardápio';
     const colPreco = deliv ? ['Próprio hoje', 'Próprio novo', 'iFood sugerido'] : ['Preço hoje', 'Preço novo'];
-    const cab = `<tr><th class="c-id">ID iComanda</th><th>Produto</th>${colPreco.map(t => `<th class="c-num">${t}</th>`).join('')}</tr>`;
-    const linha = x => `<tr class="${x.muda ? 'muda' : ''}">
+    const ncol = 3 + colPreco.length;
+
+    const linha = (x, i) => `<tr class="${x.muda ? 'muda' : (i % 2 ? 'par' : '')}">
+        <td class="c-chk">${box}</td>
         <td class="c-id">${ids(x)}</td>
         <td class="c-nome">${esc(x.p.nome)}${x.p._rev ? '<span class="tag">revenda</span>' : ''}</td>
         <td class="c-num ${x.muda ? 'antigo' : ''}">${r$(x.atual)}</td>
-        <td class="c-num novo">${x.muda ? `<b>${r$(x.novo)}</b>${seta(x)}` : `<span class="igual">${r$(x.novo)}</span>`}</td>
-        ${deliv ? `<td class="c-num">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}
+        <td class="c-num novo">${x.muda ? `<span class="pill">${r$(x.novo)}</span>${seta(x)}` : `<span class="igual">${r$(x.novo)}</span>`}</td>
+        ${deliv ? `<td class="c-num ifood">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}
       </tr>`;
+
     const resumo = d.mudam.length ? `
       <section class="resumo">
-        <h2>O que muda <span>${d.mudam.length} produto${d.mudam.length === 1 ? '' : 's'}</span></h2>
-        <p class="nota">Lista para atualizar no iComanda${deliv ? ' (preço próprio) e no app (iFood sugerido)' : ''}. Depois de mudar no PDV, confirme em "Já mudei no PDV" na Precificação.</p>
-        <table><thead><tr><th class="c-id">ID iComanda</th><th>Produto</th><th>Seção · grupo</th><th class="c-num">Hoje</th><th class="c-num">Novo</th>${deliv ? '<th class="c-num">iFood sugerido</th>' : ''}</tr></thead>
-        <tbody>${d.mudam.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, 'pt-BR')).map(x => `<tr class="muda">
-          <td class="c-id">${ids(x)}</td><td class="c-nome">${esc(x.p.nome)}</td><td class="c-grupo">${esc([x.secao, x.p._grupo].filter(Boolean).join(' · '))}</td>
-          <td class="c-num antigo">${r$(x.atual)}</td><td class="c-num novo"><b>${r$(x.novo)}</b>${seta(x)}</td>${deliv ? `<td class="c-num">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table>
-      </section>` : `<section class="resumo vazio"><h2>Nenhum preço muda no ${nome}</h2><p class="nota">Não há preço proposto: o cardápio abaixo é a tabela atual do PDV.</p></section>`;
-    const cardapio = d.secoes.map(s => `
-      <section class="secao">
-        <h2>${esc(s.nome)}</h2>
-        ${s.grupos.map(g => `<table class="grupo"><caption>${esc(g.nome)} <span>${g.itens.length}</span></caption><thead>${cab}</thead><tbody>${g.itens.map(linha).join('')}</tbody></table>`).join('')}
-      </section>`).join('');
-    return `<div class="pagina${ci ? ' quebra' : ''}">
-      <header class="topo">
-        <div class="marca">Tambaqui de Banda</div>
-        <h1>Tabela de preços · ${nome}</h1>
-        <div class="data">${hoje}</div>
-        <div class="kpis">
-          <div><b>${d.todos.length}</b><span>itens no cardápio</span></div>
-          <div class="${d.mudam.length ? 'destaque' : ''}"><b>${d.mudam.length}</b><span>preços mudam${d.mudam.length ? ` (${sobe} sobem${desce ? `, ${desce} descem` : ''})` : ''}</span></div>
-          ${medio != null ? `<div><b>${medio >= 0 ? '+' : ''}${_pcNum(medio, 1)}%</b><span>variação média do que muda</span></div>` : ''}
+        <div class="resumo-cab">
+          <div><h2>O que muda</h2><p>Atualize no iComanda${deliv ? ', no app' : ' e no cardápio impresso'} e marque cada item. Depois confirme em “Já mudei no PDV” na Precificação.</p></div>
+          <div class="resumo-n"><b>${d.mudam.length}</b><span>produto${d.mudam.length === 1 ? '' : 's'}</span></div>
         </div>
-        <div class="legenda"><span class="amostra"></span> linha destacada = preço novo, que ainda precisa ser mudado no iComanda${deliv ? ' e no app' : ''}${deliv ? ' · iFood sugerido = preço do app calculado pela composição do delivery, arredondado para ,90' : ''}</div>
-        ${semIds ? '<div class="alerta">Os ids do iComanda não puderam ser lidos agora: a coluna ID saiu vazia. Gere de novo em instantes.</div>' : ''}
+        <table class="t-resumo"><thead><tr>
+          <th class="c-chk2">iComanda</th><th class="c-chk2">${ondeImpresso}</th><th class="c-id">ID iComanda</th><th>Produto</th>
+          <th class="c-num">Hoje</th><th class="c-num">Novo</th>${deliv ? '<th class="c-num">iFood sugerido</th>' : ''}</tr></thead>
+        <tbody>${d.mudam.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, 'pt-BR')).map(x => `<tr>
+          <td class="c-chk2">${box}</td><td class="c-chk2">${box}</td>
+          <td class="c-id">${ids(x)}</td>
+          <td class="c-nome">${esc(x.p.nome)}<div class="c-grupo">${esc([x.secao, x.p._grupo].filter(Boolean).join(' › '))}</div></td>
+          <td class="c-num antigo">${r$(x.atual)}</td>
+          <td class="c-num novo"><span class="pill">${r$(x.novo)}</span>${seta(x)}</td>
+          ${deliv ? `<td class="c-num ifood">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table>
+        <div class="assina">
+          <div><span>Mudado no iComanda por</span><i></i><span>em</span><i class="curta"></i></div>
+          <div><span>${deliv ? 'Mudado no app por' : 'Cardápio impresso por'}</span><i></i><span>em</span><i class="curta"></i></div>
+        </div>
+      </section>` : `<section class="resumo vazio"><div class="resumo-cab"><div><h2>Nenhum preço muda no ${nome}</h2><p>Não há preço proposto: o cardápio abaixo é a tabela atual do PDV.</p></div></div></section>`;
+
+    const indice = d.secoes.map(s => `<span>${esc(s.nome)} <b>${s.grupos.reduce((n, g) => n + g.itens.length, 0)}</b></span>`).join('');
+    const cardapio = d.secoes.map(s => {
+      const n = s.grupos.reduce((t, g) => t + g.itens.length, 0), m = s.grupos.reduce((t, g) => t + g.itens.filter(x => x.muda).length, 0);
+      return `<section class="secao">
+        <div class="secao-cab"><h2>${esc(s.nome)}</h2><span>${n} ite${n === 1 ? 'm' : 'ns'}${m ? ` · <b>${m} muda${m === 1 ? '' : 'm'}</b>` : ''}</span></div>
+        <table class="t-card"><thead><tr><th class="c-chk">✓</th><th class="c-id">ID iComanda</th><th>Produto</th>${colPreco.map(t => `<th class="c-num">${t}</th>`).join('')}</tr></thead>
+        ${s.grupos.map(g => `<tbody class="grupo"><tr class="g-cab"><td colspan="${ncol}">${esc(g.nome)}<span>${g.itens.length}</span></td></tr>${g.itens.map(linha).join('')}</tbody>`).join('')}
+        </table>
+      </section>`;
+    }).join('');
+
+    return `<div class="pagina${ci ? ' quebra' : ''}">
+      <header class="capa">
+        <div class="capa-esq">
+          <div class="marca">Tambaqui de Banda</div>
+          <h1>Tabela de preços</h1>
+          <div class="canal">${nome}</div>
+        </div>
+        <div class="capa-dir"><div class="data">${hoje}</div><div class="hora">gerado às ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div></div>
       </header>
+      <div class="kpis">
+        <div><b>${d.todos.length}</b><span>itens no cardápio</span></div>
+        <div class="${d.mudam.length ? 'destaque' : ''}"><b>${d.mudam.length}</b><span>preços mudam${d.mudam.length ? ` · ${sobe} sobem${desce ? `, ${desce} descem` : ''}` : ''}</span></div>
+        <div><b>${medio != null ? (medio >= 0 ? '+' : '') + _pcNum(medio, 1) + '%' : '—'}</b><span>variação média do que muda</span></div>
+      </div>
+      <div class="legenda">
+        <span><span class="amostra"></span> preço novo, ainda a mudar</span>
+        <span>${box} marque ao conferir</span>
+        ${deliv ? '<span>iFood sugerido = preço do app pela composição do delivery, arredondado para ,90</span>' : ''}
+      </div>
+      ${semIds ? '<div class="alerta">Os ids do iComanda não puderam ser lidos agora: a coluna ID saiu vazia. Gere de novo em instantes.</div>' : ''}
       ${resumo}
-      <h2 class="titulo-cardapio">Cardápio completo · ${nome}</h2>
+      <div class="titulo-cardapio"><h2>Cardápio completo</h2><div class="indice">${indice}</div></div>
       ${cardapio || '<p class="nota">Nenhum produto ligado neste canal.</p>'}
+      <footer class="rodape">Tambaqui de Banda · Tabela de preços ${nome} · ${agora.toLocaleDateString('pt-BR')} · preço novo = proposto na Precificação, ainda não gravado no PDV</footer>
     </div>`;
   }).join('');
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tabela de preços · ${canais.map(c => _PC_NOME_CANAL[c]).join(' e ')} · ${new Date().toLocaleDateString('pt-BR')}</title>
+<title>Tabela de preços · ${canais.map(c => _PC_NOME_CANAL[c]).join(' e ')} · ${agora.toLocaleDateString('pt-BR')}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
 <style>
-  :root { --teal:#0e6b68; --teal-claro:#e6f1ef; --tinta:#18201d; --cinza:#5f6d69; --linha:#e3e9e7; --ambar:#8a5a00; --ambar-claro:#fff3dc; --ambar-forte:#e0a23a; --verde:#1d7a46; --vermelho:#b42318; }
+  :root { --teal:#0e6b68; --teal-esc:#0a4f4d; --teal-claro:#e6f1ef; --teal-meio:#c9e2dd; --tinta:#18201d; --cinza:#5f6d69; --linha:#e3e9e7; --zebra:#f7faf9;
+          --ambar:#8a5a00; --ambar-claro:#fff3dc; --ambar-forte:#e0a23a; --verde:#1d7a46; --vermelho:#b42318; --creme:#fbf7ee; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  @page { size: A4; margin: 13mm 12mm 14mm; }
-  body { margin: 0; background: #fff; color: var(--tinta); font: 10pt/1.4 Inter, system-ui, sans-serif; }
-  .barra { position: sticky; top: 0; display: flex; gap: 10px; align-items: center; padding: 10px 16px; background: var(--teal); color: #fff; font-size: 13px; z-index: 2; }
-  .barra button { font: inherit; font-weight: 700; border: 0; border-radius: 6px; padding: 7px 14px; background: #fff; color: var(--teal); cursor: pointer; }
-  .pagina { max-width: 186mm; margin: 0 auto; padding: 16px 0 24px; }
+  @page { size: A4; margin: 12mm 11mm 13mm; }
+  body { margin: 0; background: #eef2f1; color: var(--tinta); font: 9.6pt/1.4 Inter, system-ui, sans-serif; }
+  .barra { position: sticky; top: 0; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: var(--teal-esc); color: #fff; font-size: 13px; z-index: 2; }
+  .barra button { font: inherit; font-weight: 700; border: 0; border-radius: 6px; padding: 7px 14px; background: #fff; color: var(--teal-esc); cursor: pointer; }
+  .pagina { max-width: 190mm; margin: 18px auto; padding: 0 0 18px; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.08); }
+  .pagina > :not(.capa) { margin-left: 9mm; margin-right: 9mm; }
   .quebra { break-before: page; }
-  .topo { border-bottom: 3px solid var(--teal); padding-bottom: 12px; margin-bottom: 16px; }
-  .marca { font: 800 9pt/1 "Bricolage Grotesque", Inter, sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); }
-  h1 { font: 800 22pt/1.1 "Bricolage Grotesque", Inter, sans-serif; margin: 6px 0 2px; letter-spacing: -.01em; }
-  .data { color: var(--cinza); font-size: 9.5pt; }
-  .kpis { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-  .kpis div { flex: 1 1 0; min-width: 120px; background: var(--teal-claro); border-radius: 8px; padding: 8px 12px; }
-  .kpis div.destaque { background: var(--ambar-claro); }
-  .kpis b { display: block; font: 800 16pt/1.1 "Bricolage Grotesque", Inter, sans-serif; font-variant-numeric: tabular-nums; }
-  .kpis span { font-size: 8.5pt; color: var(--cinza); }
-  .legenda { margin-top: 10px; font-size: 8.5pt; color: var(--cinza); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+  .capa { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; background: var(--teal); color: #fff; padding: 9mm 9mm 7mm; position: relative; overflow: hidden; }
+  .capa::after { content: ""; position: absolute; right: -30mm; top: -30mm; width: 80mm; height: 80mm; border-radius: 50%; background: rgba(255,255,255,.07); }
+  .capa::before { content: ""; position: absolute; right: 18mm; bottom: -34mm; width: 60mm; height: 60mm; border-radius: 50%; background: rgba(255,255,255,.05); }
+  .marca { font: 800 8.5pt/1 "Bricolage Grotesque", Inter, sans-serif; letter-spacing: .2em; text-transform: uppercase; opacity: .85; }
+  h1 { font: 800 25pt/1.05 "Bricolage Grotesque", Inter, sans-serif; margin: 7px 0 6px; letter-spacing: -.01em; }
+  .canal { display: inline-block; font-weight: 700; font-size: 10pt; background: #fff; color: var(--teal); border-radius: 99px; padding: 3px 13px; }
+  .capa-dir { text-align: right; position: relative; z-index: 1; }
+  .data { font-weight: 700; font-size: 10.5pt; } .hora { font-size: 8.5pt; opacity: .8; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6mm; }
+  .kpis div { border: 1px solid var(--linha); border-radius: 9px; padding: 8px 12px; background: var(--zebra); }
+  .kpis div.destaque { background: var(--ambar-claro); border-color: #f0d49c; }
+  .kpis b { display: block; font: 800 17pt/1.1 "Bricolage Grotesque", Inter, sans-serif; font-variant-numeric: tabular-nums; }
+  .kpis span { font-size: 8.3pt; color: var(--cinza); }
+  .legenda { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 8.2pt; color: var(--cinza); }
+  .legenda > span { display: inline-flex; align-items: center; gap: 6px; }
   .amostra { display: inline-block; width: 22px; height: 11px; background: var(--ambar-claro); border-left: 3px solid var(--ambar-forte); border-radius: 2px; }
   .alerta { margin-top: 8px; font-size: 9pt; color: var(--vermelho); }
-  h2 { font: 700 13pt/1.2 "Bricolage Grotesque", Inter, sans-serif; margin: 0 0 6px; break-after: avoid; }
-  h2 span { font: 600 9pt Inter, sans-serif; color: var(--ambar); background: var(--ambar-claro); border-radius: 99px; padding: 2px 9px; margin-left: 6px; vertical-align: 2px; }
-  .nota { color: var(--cinza); font-size: 8.8pt; margin: 0 0 8px; }
-  .resumo { border: 1.5px solid var(--ambar-forte); border-radius: 10px; padding: 12px 14px; margin-bottom: 22px; background: #fffdf8; }
-  .resumo.vazio { border-color: var(--linha); background: #fff; }
-  .titulo-cardapio { font-size: 15pt; border-bottom: 1px solid var(--linha); padding-bottom: 4px; margin-top: 4px; }
-  .secao { margin-top: 14px; }
-  .secao > h2 { color: var(--teal); text-transform: uppercase; letter-spacing: .06em; font-size: 11pt; border-left: 4px solid var(--teal); padding-left: 8px; }
+  .nota { color: var(--cinza); font-size: 8.8pt; }
+
+  .box { display: inline-block; width: 11px; height: 11px; border: 1.4px solid #3b4744; border-radius: 2.5px; background: #fff; vertical-align: -1px; }
+
+  h2 { font: 700 13pt/1.2 "Bricolage Grotesque", Inter, sans-serif; margin: 0; }
+  .resumo { margin-top: 6mm; border: 1.5px solid var(--ambar-forte); border-radius: 11px; overflow: hidden; background: #fff; break-inside: auto; }
+  .resumo.vazio { border-color: var(--linha); }
+  .resumo-cab { display: flex; justify-content: space-between; gap: 12px; align-items: center; background: var(--creme); padding: 9px 13px; border-bottom: 1px solid #f0d49c; }
+  .resumo.vazio .resumo-cab { background: var(--zebra); border-bottom: 0; }
+  .resumo-cab p { margin: 3px 0 0; font-size: 8.5pt; color: var(--cinza); max-width: 120mm; }
+  .resumo-n { text-align: center; background: var(--ambar-forte); color: #fff; border-radius: 9px; padding: 4px 12px; }
+  .resumo-n b { display: block; font: 800 16pt/1 "Bricolage Grotesque", Inter, sans-serif; }
+  .resumo-n span { font-size: 7.5pt; font-weight: 600; }
+  .assina { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; padding: 10px 13px 12px; border-top: 1px solid var(--linha); font-size: 8.3pt; color: var(--cinza); }
+  .assina div { display: flex; align-items: flex-end; gap: 6px; }
+  .assina i { flex: 1; border-bottom: 1px solid #9aa8a4; height: 14px; } .assina i.curta { flex: 0 0 18mm; }
+
+  .titulo-cardapio { margin-top: 8mm; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 14px; border-bottom: 2px solid var(--tinta); padding-bottom: 5px; }
+  .titulo-cardapio h2 { font-size: 15pt; }
+  .indice { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 8.3pt; color: var(--cinza); }
+  .indice b { color: var(--tinta); }
+  .secao { margin-top: 5mm; }
+  .secao-cab { display: flex; justify-content: space-between; align-items: center; background: var(--teal); color: #fff; border-radius: 7px 7px 0 0; padding: 6px 11px; break-after: avoid; }
+  .secao-cab h2 { font-size: 11.5pt; text-transform: uppercase; letter-spacing: .07em; }
+  .secao-cab span { font-size: 8.3pt; opacity: .92; } .secao-cab b { background: var(--ambar-forte); color: #fff; border-radius: 99px; padding: 1px 8px; }
+
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  table.grupo { margin: 4px 0 12px; }
-  caption { text-align: left; font-weight: 700; font-size: 9.5pt; padding: 4px 0; caption-side: top; break-after: avoid; }
-  caption span { color: var(--cinza); font-weight: 500; margin-left: 4px; }
+  table.t-card, table.t-resumo { table-layout: fixed; }
+  .c-nome { overflow-wrap: anywhere; }
   thead { display: table-header-group; }
-  th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .05em; color: var(--cinza); text-align: left; font-weight: 700; padding: 4px 6px; border-bottom: 1px solid var(--tinta); }
-  td { padding: 4.5px 6px; border-bottom: 1px solid var(--linha); vertical-align: top; }
+  th { font-size: 7.2pt; text-transform: uppercase; letter-spacing: .06em; color: var(--cinza); text-align: left; font-weight: 700; padding: 5px 6px; border-bottom: 1px solid var(--tinta); background: #fff; }
+  .t-resumo th { background: #fff; }
+  td { padding: 4.6px 6px; border-bottom: 1px solid var(--linha); vertical-align: middle; }
   tr { break-inside: avoid; }
-  .c-id { width: 22mm; color: var(--cinza); font-size: 8.5pt; white-space: nowrap; }
+  tr.par td { background: var(--zebra); }
+  tr.g-cab td { background: var(--teal-claro); color: var(--teal-esc); font-weight: 700; font-size: 8.8pt; padding: 5px 8px; border-bottom: 1px solid var(--teal-meio); break-after: avoid; }
+  tr.g-cab span { font-weight: 500; color: var(--cinza); margin-left: 6px; font-size: 8pt; }
+  th.c-id, th.c-num { white-space: normal; line-height: 1.15; vertical-align: bottom; }
+  .c-chk { width: 7mm; text-align: center; } .c-chk2 { width: 15mm; text-align: center; }
+  th.c-chk, th.c-chk2 { text-align: center; }
+  .c-id { width: 22mm; color: var(--cinza); font-size: 8.2pt; white-space: nowrap; }
   .c-num { text-align: right; white-space: nowrap; width: 25mm; }
-  .c-grupo { color: var(--cinza); font-size: 8.5pt; }
   .c-nome { font-weight: 500; }
+  .c-grupo { color: var(--cinza); font-size: 7.8pt; font-weight: 400; margin-top: 1px; }
   tr.muda td { background: var(--ambar-claro); }
   tr.muda td:first-child { box-shadow: inset 3px 0 0 var(--ambar-forte); }
   tr.muda .c-nome { font-weight: 700; }
-  .antigo { color: var(--cinza); text-decoration: line-through; text-decoration-color: rgba(95,109,105,.6); }
-  .novo b { font-size: 10.5pt; }
+  .antigo { color: var(--cinza); text-decoration: line-through; text-decoration-color: rgba(95,109,105,.55); }
+  .pill { display: inline-block; font-weight: 800; font-size: 10pt; color: var(--tinta); background: #fff; border: 1.4px solid var(--ambar-forte); border-radius: 6px; padding: 0 6px; }
   .igual { color: var(--cinza); }
-  .var { display: block; font-size: 7.5pt; font-weight: 700; }
+  .ifood { color: var(--teal-esc); font-weight: 600; }
+  .var { display: block; font-size: 7.3pt; font-weight: 700; margin-top: 1px; }
   .var.sobe { color: var(--ambar); } .var.desce { color: var(--verde); }
   .semid { color: var(--vermelho); font-style: italic; }
-  .tag { font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #1e40af; background: #e0e7ff; border-radius: 99px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
-  @media print { .barra { display: none; } .pagina { padding-top: 0; max-width: none; } }
+  .tag { font-size: 6.8pt; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #1e40af; background: #e0e7ff; border-radius: 99px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+  .rodape { margin-top: 8mm; padding-top: 6px; border-top: 1px solid var(--linha); font-size: 7.6pt; color: var(--cinza); }
+  @media print {
+    body { background: #fff; }
+    .barra { display: none; }
+    .pagina { margin: 0; max-width: none; box-shadow: none; padding-bottom: 0; }
+    .pagina > :not(.capa) { margin-left: 0; margin-right: 0; }
+    .capa { border-radius: 10px; }
+  }
 </style></head><body>
-<div class="barra"><button type="button" onclick="window.print()">Imprimir / Salvar como PDF</button><span>No destino da impressão, escolha "Salvar como PDF".</span></div>
+<div class="barra"><button type="button" onclick="window.print()">Imprimir / Salvar como PDF</button><span>No destino da impressão, escolha “Salvar como PDF”. Ative “Gráficos de fundo” se as cores não aparecerem.</span></div>
 ${paginas}
 <script>(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(function () { setTimeout(function () { window.print(); }, 350); });<\/script>
 </body></html>`;
