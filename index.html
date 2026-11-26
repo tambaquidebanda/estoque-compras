@@ -966,13 +966,22 @@
             </select>
           </div>
           <div class="plan-barra-dir">
+            <div class="dropdown">
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-file-earmark-pdf"></i> PDF de preços</button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><h6 class="dropdown-header">Cardápio inteiro, com destaque no que muda</h6></li>
+                <li><button type="button" class="dropdown-item" onclick="pcExportarPdf('salao')">Salão</button></li>
+                <li><button type="button" class="dropdown-item" onclick="pcExportarPdf('deliv')">Delivery</button></li>
+                <li><button type="button" class="dropdown-item" onclick="pcExportarPdf('ambos')">Salão e Delivery</button></li>
+              </ul>
+            </div>
             <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" id="pc-reaj-btn" aria-expanded="false" aria-controls="pc-reaj" onclick="pcToggleReaj()"><i class="bi bi-graph-up-arrow"></i> Reajuste geral</button>
             <button type="button" class="plan-param-chip" id="pc-comp-chip" aria-expanded="false" aria-controls="pc-comp" onclick="pcToggleComp()"></button>
           </div>
         </div>
         <div class="plan-painel d-none" id="pc-reaj"></div>
         <div class="plan-painel d-none" id="pc-comp"></div>
-        <div class="plan-cats" id="pc-grupos" role="group" aria-label="Filtrar por grupo"></div>
+        <div id="pc-grupos"></div>
         <div class="pc-cards" id="pc-cards"></div>
       </div>
 

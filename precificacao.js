@@ -46,7 +46,10 @@ const _pc = {
   busca: '',
   sit: 'todos',
   ordem: 'nome',
-  filtroGrupos: new Set(),
+  filtroSecao: null,     // chips da aba Preços: uma seção (id ou '__sem') e, dentro dela, um grupo
+  filtroGrupo: null,
+  cfgSel: null,          // Configuração › seções: grupo escolhido para mover com clique (sem arrastar)
+  pdvIds: null,          // produto_id -> ids do iComanda (pdv_map mapeado), lido ao exportar o PDF
   compAberta: _pcCompPref(),
   abertosCfg: new Set(),
   fat: null,
@@ -67,6 +70,7 @@ function _pcPadrao() {
     ocultos: { salao: [], deliv: [] },  // produto_id escondidos de propósito, por canal
     isca: { salao: [], deliv: [] },     // abaixo do mínimo de propósito, por canal
     proposto: {},                       // produto_id -> preço em estudo (um preço por produto, igual ao PDV)
+    secoes: _pcSecoesPadrao(),          // canal -> [{ id, nome, grupos: [nome do grupo do cadastro] }]
     iniciado: false,
     avisoInicial: false,
   };
@@ -88,8 +92,35 @@ function _pcMesclar(v) {
     ocultos: porCanal(v.ocultos, p.ocultos),
     isca: porCanal(v.isca, p.isca),
     proposto: { ...(v.proposto || {}) },
+    secoes: _pcMesclarSecoes(v.secoes),
   };
 }
+
+// Seções do cardápio (o "grupo de cima"): cada canal tem as suas, e cada grupo do cadastro
+// fica em no máximo uma seção por canal. Grupo fora de seção aparece em "Sem seção".
+const _PC_SECOES_PADRAO = {
+  salao: ['Entradas', 'Guarnições', 'Pratos', 'Bebidas', 'Sobremesas', 'Happy Hour'],
+  deliv: ['Pratos', 'Bebidas', 'Guarnições', 'Sobremesas'],
+};
+function _pcSecoesPadrao() {
+  const r = {};
+  _PC_CANAIS.forEach(ch => { r[ch] = _PC_SECOES_PADRAO[ch].map((nome, i) => ({ id: ch[0] + (i + 1), nome, grupos: [] })); });
+  return r;
+}
+function _pcMesclarSecoes(v) {
+  const p = _pcSecoesPadrao(), r = {};
+  _PC_CANAIS.forEach(ch => {
+    const lista = Array.isArray(v?.[ch]) ? v[ch] : p[ch];
+    const vistos = new Set();
+    r[ch] = lista.filter(x => x && x.id && x.nome).map(x => ({
+      id: String(x.id), nome: String(x.nome),
+      grupos: (Array.isArray(x.grupos) ? x.grupos : []).filter(g => !vistos.has(g) && vistos.add(g)),
+    }));
+  });
+  return r;
+}
+function _pcSecaoDe(g, canal = _pc.canal) { return _pc.cfg.secoes[canal].find(x => x.grupos.includes(g)) || null; }
+
 
 // Sugestão do primeiro acesso, pelos nomes reais dos grupos (revisável na Configuração).
 function _pcPadraoGrupo(nome) {
@@ -251,8 +282,8 @@ async function carregarPrecificacao() {
 
 function pcLimpar() {
   Object.assign(_pc, { cfg: null, sets: null, prods: [], porId: new Map(), grupos: [], chips: [], fat: null, erro: null,
-                       busca: '', sit: 'todos', ordem: 'nome', compAberta: _pcCompPref() });
-  _pc.filtroGrupos.clear();
+                       busca: '', sit: 'todos', ordem: 'nome', compAberta: _pcCompPref(),
+                       filtroSecao: null, filtroGrupo: null, cfgSel: null, pdvIds: null });
   _pc.abertosCfg.clear();
   _pcReaj.aberto = false;
   document.getElementById('pc-reaj')?.classList.add('d-none');
@@ -310,7 +341,7 @@ function _pcStatus(p, k, canal = _pc.canal) {
 function _pcLista() {
   const q = norm(_pc.busca);
   let L = _pc.prods.filter(p => _pcNoCanal(p));
-  if (_pc.filtroGrupos.size) L = L.filter(p => _pc.filtroGrupos.has(p._grupo));
+  L = L.filter(_pcPassaFiltro);
   if (q) L = L.filter(p => norm(p.nome).includes(q));
   const base = L.map(p => { const k = _pcCalc(p, _pcPreco(p)); return { p, k, st: _pcStatus(p, k) }; });
   let lista = base;
@@ -388,7 +419,7 @@ function _pcSubs() {
 function pcCanal(canal) {
   if (!_PC_CANAIS.includes(canal) || _pc.canal === canal) return;
   _pc.canal = canal;
-  _pc.filtroGrupos.clear();
+  _pc.filtroSecao = null; _pc.filtroGrupo = null; _pc.cfgSel = null;
   document.getElementById('pc-comp').dataset.canal = '';
   if (_pc.cfg) _pcRender();
 }
@@ -464,28 +495,58 @@ function _pcSitSeg(base) {
     b('todos', 'Todos') + b('aumento', 'Precisam de aumento') + b('meta', 'Na meta') + b('isca', 'Isca') + b('proposto', 'Propostos');
 }
 
+// Filtro da aba Preços: uma seção por vez e, dentro dela, um grupo por vez.
+// Sem nenhuma seção montada na Configuração, a linha de cima mostra os grupos direto.
+function _pcPassaFiltro(p) {
+  if (_pc.filtroGrupo != null) return p._grupo === _pc.filtroGrupo;
+  if (_pc.filtroSecao == null) return true;
+  const sec = _pcSecaoDe(p._grupo);
+  return _pc.filtroSecao === '__sem' ? !sec : sec?.id === _pc.filtroSecao;
+}
+function _pcFiltroRotulo() {
+  if (_pc.filtroGrupo != null) return _pc.filtroGrupo;
+  if (_pc.filtroSecao === '__sem') return 'Sem seção';
+  return _pc.cfg.secoes[_pc.canal].find(x => x.id === _pc.filtroSecao)?.nome || null;
+}
+
 function _pcChips() {
   const cont = {};
   _pc.prods.forEach(p => { if (_pcNoCanal(p)) cont[p._grupo] = (cont[p._grupo] || 0) + 1; });
-  _pc.chips = Object.keys(cont).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  [..._pc.filtroGrupos].forEach(g => { if (!cont[g]) _pc.filtroGrupos.delete(g); });
   const total = Object.values(cont).reduce((s, n) => s + n, 0);
+  const secoes = _pc.cfg.secoes[_pc.canal].map(x => ({ id: x.id, nome: x.nome, grupos: x.grupos.filter(g => cont[g]) })).filter(x => x.grupos.length);
+  const semSecao = Object.keys(cont).filter(g => !_pcSecaoDe(g)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const soma = gs => gs.reduce((s, g) => s + cont[g], 0);
+  // filtro que deixou de existir (grupo desligado, seção apagada) volta para Todos
+  if (_pc.filtroGrupo != null && !cont[_pc.filtroGrupo]) _pc.filtroGrupo = null;
+  if (_pc.filtroSecao != null && _pc.filtroSecao !== '__sem' && !secoes.some(x => x.id === _pc.filtroSecao)) { _pc.filtroSecao = null; _pc.filtroGrupo = null; }
+  if (_pc.filtroSecao === '__sem' && !semSecao.length) _pc.filtroSecao = null;
+  const chip = (on, rot, n, js) => `<button type="button" class="plan-cat${on ? ' ativo' : ''}" aria-pressed="${on}" onclick="${js}">${esc(rot)}<span class="n">${n}</span></button>`;
   const el = document.getElementById('pc-grupos');
-  el.innerHTML = _pc.chips.length < 2 ? '' :
-    `<button type="button" class="plan-cat${_pc.filtroGrupos.size ? '' : ' ativo'}" aria-pressed="${!_pc.filtroGrupos.size}" onclick="pcChip(-1)">Todos os grupos<span class="n">${total}</span></button>` +
-    _pc.chips.map((g, i) => {
-      const on = _pc.filtroGrupos.has(g);
-      return `<button type="button" class="plan-cat${on ? ' ativo' : ''}" aria-pressed="${on}" onclick="pcChip(${i})">${esc(g)}<span class="n">${cont[g]}</span></button>`;
-    }).join('');
+  if (Object.keys(cont).length < 2) { el.innerHTML = ''; return; }
+  _pc.chips = [];   // índice -> grupo (nomes podem ter aspas: o onclick leva só o índice)
+  const gChip = (g, on) => { _pc.chips.push(g); return chip(on, g, cont[g], `pcChip('g',${_pc.chips.length - 1})`); };
+  let html;
+  if (!secoes.length) {
+    // nada montado ainda: um grupo por vez, como antes das seções
+    html = `<div class="plan-cats" role="group" aria-label="Filtrar por grupo">${chip(_pc.filtroGrupo == null, 'Todos os grupos', total, "pcChip('todos')")}${semSecao.map(g => gChip(g, _pc.filtroGrupo === g)).join('')}</div>`;
+  } else {
+    const secAtual = _pc.filtroSecao;
+    html = `<div class="plan-cats" role="group" aria-label="Filtrar por seção">${chip(secAtual == null, 'Todas as seções', total, "pcChip('todos')")}`
+      + secoes.map(x => chip(secAtual === x.id, x.nome, soma(x.grupos), `pcChip('s','${x.id}')`)).join('')
+      + (semSecao.length ? chip(secAtual === '__sem', 'Sem seção', soma(semSecao), "pcChip('s','__sem')") : '') + '</div>';
+    const gs = secAtual === '__sem' ? semSecao : secoes.find(x => x.id === secAtual)?.grupos;
+    if (gs && gs.length > 1)
+      html += `<div class="plan-cats pc-subcats" role="group" aria-label="Filtrar por grupo da seção">${chip(_pc.filtroGrupo == null, 'Todos', soma(gs), "pcChip('sg')")}${gs.map(g => gChip(g, _pc.filtroGrupo === g)).join('')}</div>`;
+  }
+  el.innerHTML = html;
 }
 
-function pcChip(i) {
-  if (i < 0) _pc.filtroGrupos.clear();
-  else {
-    const g = _pc.chips[i];
-    if (g == null) return;
-    _pc.filtroGrupos.has(g) ? _pc.filtroGrupos.delete(g) : _pc.filtroGrupos.add(g);
-  }
+// Um filtro por vez: clicar em outro troca; clicar no mesmo de novo volta para Todos.
+function pcChip(tipo, v) {
+  if (tipo === 'todos') { _pc.filtroSecao = null; _pc.filtroGrupo = null; }
+  else if (tipo === 's') { const mesmo = _pc.filtroSecao === v && _pc.filtroGrupo == null; _pc.filtroSecao = mesmo ? null : v; _pc.filtroGrupo = null; }
+  else if (tipo === 'sg') _pc.filtroGrupo = null;
+  else if (tipo === 'g') { const g = _pc.chips[v]; if (g == null) return; _pc.filtroGrupo = _pc.filtroGrupo === g ? null : g; }
   _pcRenderPrecos();
 }
 
@@ -771,8 +832,7 @@ function pcToggleReaj() {
 }
 
 function _pcReajAlvo() {
-  const grupos = _pc.filtroGrupos;
-  return _pc.prods.filter(p => _pcNoCanal(p) && p.preco_venda > 0 && (!grupos.size || grupos.has(p._grupo)));
+  return _pc.prods.filter(p => _pcNoCanal(p) && p.preco_venda > 0 && _pcPassaFiltro(p));
 }
 
 function _pcReajCalc() {
@@ -792,7 +852,7 @@ function _pcReajPainel() {
   const el = document.getElementById('pc-reaj');
   if (!el || !_pcReaj.aberto) return;
   const r = _pcReajCalc(), ult = _pc.cfg.reajuste;
-  const grupos = _pc.filtroGrupos.size ? [..._pc.filtroGrupos].join(', ') : null;
+  const grupos = _pcFiltroRotulo();
   const ex = [...r.itens].sort((a, b) => b.de - a.de).slice(0, 4)
     .map(x => `<li>${esc(x.p.nome)}: ${brl(x.de)} → <b>${brl(x.para)}</b></li>`).join('');
   const ultTxt = ult && ult.ids && Object.keys(ult.ids).length
@@ -810,7 +870,7 @@ function _pcReajPainel() {
       ${r.comProposta.length ? `<div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="pc-reaj-ref" ${_pcReaj.refazer ? 'checked' : ''} onchange="pcReajCampo('refazer', this.checked)">
         <label class="form-check-label" for="pc-reaj-ref">Refazer também ${r.comProposta.length === 1 ? 'o 1 que já tem' : `os ${r.comProposta.length} que já têm`} preço proposto</label></div>` : ''}
     </div>
-    <div class="small mt-2">Vale para <b>${r.itens.length}</b> produtos do ${_PC_NOME_CANAL[_pc.canal]}${grupos ? ` nos grupos <b>${esc(grupos)}</b>` : ' (todos os grupos visíveis)'}, a partir do preço do PDV.
+    <div class="small mt-2">Vale para <b>${r.itens.length}</b> produtos do ${_PC_NOME_CANAL[_pc.canal]}${grupos ? ` em <b>${esc(grupos)}</b> (filtro de cima)` : ' (todos os grupos visíveis)'}, a partir do preço do PDV.
       ${r.comProposta.length && !_pcReaj.refazer ? (r.comProposta.length === 1 ? ' O 1 que já tem preço proposto fica como está.' : ` Os ${r.comProposta.length} que já têm preço proposto ficam como estão.`) : ''}
       ${r.efetivo != null ? ` Aumento real médio: <b>${_pcPct(r.efetivo)}</b>${_pcReaj.noventa ? ' (o arredondamento para ,90 puxa para cima, mais nos preços baixos)' : ''}.` : ''}</div>
     ${ex ? `<ul class="small mb-2 mt-1">${ex}</ul>` : ''}
@@ -948,6 +1008,174 @@ async function pcComp(grupo, k, txt, salvar) {
   const { base, lista } = _pcLista();
   _pcKpis(base); _pcSitSeg(base); _pcRenderCards(lista);
   if (salvar) await _pcSalvar(c => { if (grupo === 'rev') c.revcmv = v; else c[grupo][k] = v; });
+}
+
+// ── PDF de preços ───────────────────────────────────────────────────────────
+// Para quem muda o preço no iComanda e para quem atualiza o cardápio impresso: o cardápio
+// inteiro do canal, por seção e grupo, com o id do iComanda, o preço de hoje (PDV) e o
+// preço novo (proposto). O que muda vem com destaque e também numa lista no começo.
+// Abre numa janela pronta para imprimir ("Salvar como PDF"), igual aos outros relatórios.
+async function _pcLerPdvIds() {
+  const linhas = await _pcPaginado('pdv_map', 'icomanda_produto_id,produto_id',
+    q => q.eq('status', 'mapeado').not('produto_id', 'is', null).order('icomanda_produto_id'));
+  const m = new Map();
+  linhas.forEach(r => { (m.get(r.produto_id) || m.set(r.produto_id, []).get(r.produto_id)).push(r.icomanda_produto_id); });
+  return m;
+}
+
+async function pcExportarPdf(qual) {
+  if (!_pc.cfg) return;
+  const w = window.open('', '_blank');      // abre já no clique, senão o navegador bloqueia
+  if (!w) { toast('O navegador bloqueou a janela do PDF. Libere as janelas (pop-ups) deste site e tente de novo.', 'erro'); return; }
+  w.document.write('<p style="font-family:system-ui,sans-serif;padding:24px;color:#5f6d69">Montando o PDF de preços…</p>');
+  let semIds = false;
+  if (!_pc.pdvIds) {
+    try { _pc.pdvIds = await _pcLerPdvIds(); }
+    catch (e) { semIds = true; console.error('pdv_map:', e); }
+  }
+  const canais = qual === 'ambos' ? _PC_CANAIS : [qual];
+  w.document.open();
+  w.document.write(_pcPdfHTML(canais.filter(ch => _PC_CANAIS.includes(ch)), semIds));
+  w.document.close();
+}
+
+function _pcPdfDados(canal) {
+  const prods = _pc.prods.filter(p => _pcNoCanal(p, canal));
+  const porGrupo = new Map();
+  prods.forEach(p => (porGrupo.get(p._grupo) || porGrupo.set(p._grupo, []).get(p._grupo)).push(p));
+  const blocos = [];
+  _pc.cfg.secoes[canal].forEach(x => {
+    const gs = x.grupos.filter(g => porGrupo.has(g));
+    if (gs.length) blocos.push({ nome: x.nome, grupos: gs });
+  });
+  const sem = [...porGrupo.keys()].filter(g => !_pcSecaoDe(g, canal)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (sem.length) blocos.push({ nome: blocos.length ? 'Outros' : 'Cardápio', grupos: sem });
+  const item = p => {
+    const novo = _pcPreco(p), muda = _pcTemProposta(p);
+    const k = canal === 'deliv' ? _pcCalc(p, novo, 'deliv') : null;
+    return { p, atual: p.preco_venda, novo, muda, ids: (_pc.pdvIds?.get(p.id) || []),
+             ifood: k && k.ifood ? _pcSnap90(k.ifood) : null, secao: _pcSecaoDe(p._grupo, canal)?.nome || '' };
+  };
+  const secoes = blocos.map(b => ({ nome: b.nome, grupos: b.grupos.map(g => ({ nome: g, itens: porGrupo.get(g).slice().sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(item) })) }));
+  const todos = secoes.flatMap(s => s.grupos.flatMap(g => g.itens));
+  return { secoes, todos, mudam: todos.filter(x => x.muda) };
+}
+
+function _pcPdfHTML(canais, semIds) {
+  const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const r$ = v => v > 0 ? 'R$ ' + _pcNum(v) : '—';
+  const varPct = x => x.atual > 0 ? (x.novo / x.atual - 1) * 100 : null;
+  const seta = x => { const v = varPct(x); if (v == null) return '<span class="var">novo</span>'; return `<span class="var ${v >= 0 ? 'sobe' : 'desce'}">${v >= 0 ? '▲' : '▼'} ${_pcNum(Math.abs(v), 1)}%</span>`; };
+  const ids = x => x.ids.length ? x.ids.join(' · ') : '<span class="semid">sem id</span>';
+
+  const paginas = canais.map((canal, ci) => {
+    const deliv = canal === 'deliv', d = _pcPdfDados(canal), nome = _PC_NOME_CANAL[canal];
+    const sobe = d.mudam.filter(x => x.novo > x.atual).length, desce = d.mudam.filter(x => x.novo < x.atual).length;
+    const somaDe = d.mudam.reduce((s, x) => s + x.atual, 0), somaPara = d.mudam.reduce((s, x) => s + x.novo, 0);
+    const medio = somaDe > 0 ? (somaPara / somaDe - 1) * 100 : null;
+    const colPreco = deliv ? ['Próprio hoje', 'Próprio novo', 'iFood sugerido'] : ['Preço hoje', 'Preço novo'];
+    const cab = `<tr><th class="c-id">ID iComanda</th><th>Produto</th>${colPreco.map(t => `<th class="c-num">${t}</th>`).join('')}</tr>`;
+    const linha = x => `<tr class="${x.muda ? 'muda' : ''}">
+        <td class="c-id">${ids(x)}</td>
+        <td class="c-nome">${esc(x.p.nome)}${x.p._rev ? '<span class="tag">revenda</span>' : ''}</td>
+        <td class="c-num ${x.muda ? 'antigo' : ''}">${r$(x.atual)}</td>
+        <td class="c-num novo">${x.muda ? `<b>${r$(x.novo)}</b>${seta(x)}` : `<span class="igual">${r$(x.novo)}</span>`}</td>
+        ${deliv ? `<td class="c-num">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}
+      </tr>`;
+    const resumo = d.mudam.length ? `
+      <section class="resumo">
+        <h2>O que muda <span>${d.mudam.length} produto${d.mudam.length === 1 ? '' : 's'}</span></h2>
+        <p class="nota">Lista para atualizar no iComanda${deliv ? ' (preço próprio) e no app (iFood sugerido)' : ''}. Depois de mudar no PDV, confirme em "Já mudei no PDV" na Precificação.</p>
+        <table><thead><tr><th class="c-id">ID iComanda</th><th>Produto</th><th>Seção · grupo</th><th class="c-num">Hoje</th><th class="c-num">Novo</th>${deliv ? '<th class="c-num">iFood sugerido</th>' : ''}</tr></thead>
+        <tbody>${d.mudam.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, 'pt-BR')).map(x => `<tr class="muda">
+          <td class="c-id">${ids(x)}</td><td class="c-nome">${esc(x.p.nome)}</td><td class="c-grupo">${esc([x.secao, x.p._grupo].filter(Boolean).join(' · '))}</td>
+          <td class="c-num antigo">${r$(x.atual)}</td><td class="c-num novo"><b>${r$(x.novo)}</b>${seta(x)}</td>${deliv ? `<td class="c-num">${x.ifood ? r$(x.ifood) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table>
+      </section>` : `<section class="resumo vazio"><h2>Nenhum preço muda no ${nome}</h2><p class="nota">Não há preço proposto: o cardápio abaixo é a tabela atual do PDV.</p></section>`;
+    const cardapio = d.secoes.map(s => `
+      <section class="secao">
+        <h2>${esc(s.nome)}</h2>
+        ${s.grupos.map(g => `<table class="grupo"><caption>${esc(g.nome)} <span>${g.itens.length}</span></caption><thead>${cab}</thead><tbody>${g.itens.map(linha).join('')}</tbody></table>`).join('')}
+      </section>`).join('');
+    return `<div class="pagina${ci ? ' quebra' : ''}">
+      <header class="topo">
+        <div class="marca">Tambaqui de Banda</div>
+        <h1>Tabela de preços · ${nome}</h1>
+        <div class="data">${hoje}</div>
+        <div class="kpis">
+          <div><b>${d.todos.length}</b><span>itens no cardápio</span></div>
+          <div class="${d.mudam.length ? 'destaque' : ''}"><b>${d.mudam.length}</b><span>preços mudam${d.mudam.length ? ` (${sobe} sobem${desce ? `, ${desce} descem` : ''})` : ''}</span></div>
+          ${medio != null ? `<div><b>${medio >= 0 ? '+' : ''}${_pcNum(medio, 1)}%</b><span>variação média do que muda</span></div>` : ''}
+        </div>
+        <div class="legenda"><span class="amostra"></span> linha destacada = preço novo, que ainda precisa ser mudado no iComanda${deliv ? ' e no app' : ''}${deliv ? ' · iFood sugerido = preço do app calculado pela composição do delivery, arredondado para ,90' : ''}</div>
+        ${semIds ? '<div class="alerta">Os ids do iComanda não puderam ser lidos agora: a coluna ID saiu vazia. Gere de novo em instantes.</div>' : ''}
+      </header>
+      ${resumo}
+      <h2 class="titulo-cardapio">Cardápio completo · ${nome}</h2>
+      ${cardapio || '<p class="nota">Nenhum produto ligado neste canal.</p>'}
+    </div>`;
+  }).join('');
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tabela de preços · ${canais.map(c => _PC_NOME_CANAL[c]).join(' e ')} · ${new Date().toLocaleDateString('pt-BR')}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root { --teal:#0e6b68; --teal-claro:#e6f1ef; --tinta:#18201d; --cinza:#5f6d69; --linha:#e3e9e7; --ambar:#8a5a00; --ambar-claro:#fff3dc; --ambar-forte:#e0a23a; --verde:#1d7a46; --vermelho:#b42318; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { size: A4; margin: 13mm 12mm 14mm; }
+  body { margin: 0; background: #fff; color: var(--tinta); font: 10pt/1.4 Inter, system-ui, sans-serif; }
+  .barra { position: sticky; top: 0; display: flex; gap: 10px; align-items: center; padding: 10px 16px; background: var(--teal); color: #fff; font-size: 13px; z-index: 2; }
+  .barra button { font: inherit; font-weight: 700; border: 0; border-radius: 6px; padding: 7px 14px; background: #fff; color: var(--teal); cursor: pointer; }
+  .pagina { max-width: 186mm; margin: 0 auto; padding: 16px 0 24px; }
+  .quebra { break-before: page; }
+  .topo { border-bottom: 3px solid var(--teal); padding-bottom: 12px; margin-bottom: 16px; }
+  .marca { font: 800 9pt/1 "Bricolage Grotesque", Inter, sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--teal); }
+  h1 { font: 800 22pt/1.1 "Bricolage Grotesque", Inter, sans-serif; margin: 6px 0 2px; letter-spacing: -.01em; }
+  .data { color: var(--cinza); font-size: 9.5pt; }
+  .kpis { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .kpis div { flex: 1 1 0; min-width: 120px; background: var(--teal-claro); border-radius: 8px; padding: 8px 12px; }
+  .kpis div.destaque { background: var(--ambar-claro); }
+  .kpis b { display: block; font: 800 16pt/1.1 "Bricolage Grotesque", Inter, sans-serif; font-variant-numeric: tabular-nums; }
+  .kpis span { font-size: 8.5pt; color: var(--cinza); }
+  .legenda { margin-top: 10px; font-size: 8.5pt; color: var(--cinza); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .amostra { display: inline-block; width: 22px; height: 11px; background: var(--ambar-claro); border-left: 3px solid var(--ambar-forte); border-radius: 2px; }
+  .alerta { margin-top: 8px; font-size: 9pt; color: var(--vermelho); }
+  h2 { font: 700 13pt/1.2 "Bricolage Grotesque", Inter, sans-serif; margin: 0 0 6px; break-after: avoid; }
+  h2 span { font: 600 9pt Inter, sans-serif; color: var(--ambar); background: var(--ambar-claro); border-radius: 99px; padding: 2px 9px; margin-left: 6px; vertical-align: 2px; }
+  .nota { color: var(--cinza); font-size: 8.8pt; margin: 0 0 8px; }
+  .resumo { border: 1.5px solid var(--ambar-forte); border-radius: 10px; padding: 12px 14px; margin-bottom: 22px; background: #fffdf8; }
+  .resumo.vazio { border-color: var(--linha); background: #fff; }
+  .titulo-cardapio { font-size: 15pt; border-bottom: 1px solid var(--linha); padding-bottom: 4px; margin-top: 4px; }
+  .secao { margin-top: 14px; }
+  .secao > h2 { color: var(--teal); text-transform: uppercase; letter-spacing: .06em; font-size: 11pt; border-left: 4px solid var(--teal); padding-left: 8px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.grupo { margin: 4px 0 12px; }
+  caption { text-align: left; font-weight: 700; font-size: 9.5pt; padding: 4px 0; caption-side: top; break-after: avoid; }
+  caption span { color: var(--cinza); font-weight: 500; margin-left: 4px; }
+  thead { display: table-header-group; }
+  th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .05em; color: var(--cinza); text-align: left; font-weight: 700; padding: 4px 6px; border-bottom: 1px solid var(--tinta); }
+  td { padding: 4.5px 6px; border-bottom: 1px solid var(--linha); vertical-align: top; }
+  tr { break-inside: avoid; }
+  .c-id { width: 22mm; color: var(--cinza); font-size: 8.5pt; white-space: nowrap; }
+  .c-num { text-align: right; white-space: nowrap; width: 25mm; }
+  .c-grupo { color: var(--cinza); font-size: 8.5pt; }
+  .c-nome { font-weight: 500; }
+  tr.muda td { background: var(--ambar-claro); }
+  tr.muda td:first-child { box-shadow: inset 3px 0 0 var(--ambar-forte); }
+  tr.muda .c-nome { font-weight: 700; }
+  .antigo { color: var(--cinza); text-decoration: line-through; text-decoration-color: rgba(95,109,105,.6); }
+  .novo b { font-size: 10.5pt; }
+  .igual { color: var(--cinza); }
+  .var { display: block; font-size: 7.5pt; font-weight: 700; }
+  .var.sobe { color: var(--ambar); } .var.desce { color: var(--verde); }
+  .semid { color: var(--vermelho); font-style: italic; }
+  .tag { font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #1e40af; background: #e0e7ff; border-radius: 99px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+  @media print { .barra { display: none; } .pagina { padding-top: 0; max-width: none; } }
+</style></head><body>
+<div class="barra"><button type="button" onclick="window.print()">Imprimir / Salvar como PDF</button><span>No destino da impressão, escolha "Salvar como PDF".</span></div>
+${paginas}
+<script>(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(function () { setTimeout(function () { window.print(); }, 350); });<\/script>
+</body></html>`;
 }
 
 // ── tela: Despesas ──────────────────────────────────────────────────────────
@@ -1309,11 +1537,160 @@ function _pcRenderConfig() {
   el.innerHTML = `
     ${nv.prods.length ? `<div class="pc-aviso">${nv.prods.length} produto(s) novo(s) no cadastro, ocultos até você ligar.
       <button type="button" class="link" onclick="pcRevisarNovos()">Marcar todos como revisados (continuam ocultos)</button></div>` : ''}
+    ${_pcSecoesHTML()}
     <p class="plan-aviso-meta">Ligue o grupo no canal e, dentro dele, esconda o que não está no cardápio. <b>Grupo novo entra desligado e produto novo entra oculto</b>: nada entra na precificação sem você decidir. Foto e “revenda” são do cadastro do produto.</p>
     <div class="plan-lista"><table class="table plan-tabela mb-0">
       <thead><tr><th>Grupo / produto</th><th class="text-center" style="width:120px">Salão</th><th class="text-center" style="width:120px">Delivery</th></tr></thead>
       <tbody>${corpo || '<tr><td colspan="3" class="text-muted">Nenhum produto de cardápio (tipo VENDA) ativo.</td></tr>'}</tbody>
     </table></div>`;
+  _pcSecoesLigar();
+}
+
+// ── Configuração › seções do cardápio ──────────────────────────────────────
+// Quadro do canal escolhido no topo: uma caixa por seção, com os grupos ligados no canal.
+// Mover grupo: arrastar e soltar, ou clicar no grupo e depois na seção (serve no celular).
+function _pcSecoesHTML() {
+  const canal = _pc.canal, nome = _PC_NOME_CANAL[canal];
+  const ligados = new Set(_pc.grupos.filter(g => _pcGrupoNoCanal(g, canal)));
+  const cont = {};
+  _pc.prods.forEach(p => { if (_pcNoCanal(p, canal)) cont[p._grupo] = (cont[p._grupo] || 0) + 1; });
+  if (_pc.cfgSel != null && !ligados.has(_pc.cfgSel)) _pc.cfgSel = null;
+  _pc.cfgIdx = [];
+  const chip = g => {
+    const i = _pc.cfgIdx.push(g) - 1, sel = _pc.cfgSel === g;
+    return `<button type="button" class="pc-sec-g${sel ? ' sel' : ''}" draggable="true" data-gi="${i}" aria-pressed="${sel}" title="Arraste para outra seção, ou clique e depois clique na seção">${esc(g)}<span class="n">${cont[g] || 0}</span></button>`;
+  };
+  const secs = _pc.cfg.secoes[canal];
+  const sem = _pc.grupos.filter(g => ligados.has(g) && !_pcSecaoDe(g, canal));
+  const vazio = '<span class="pc-sec-vazio">Arraste grupos para cá</span>';
+  const caixas = secs.map((x, i) => {
+    const gs = x.grupos.filter(g => ligados.has(g));
+    const fora = x.grupos.length - gs.length;
+    return `<div class="pc-sec" data-sec="${esc(x.id)}">
+      <div class="pc-sec-cab"><span class="pc-sec-nome">${esc(x.nome)}</span><span class="pc-sec-n">${gs.reduce((s, g) => s + (cont[g] || 0), 0)}</span>
+        <span class="pc-sec-acoes">
+          <button type="button" data-acao="esq" data-si="${i}" ${i ? '' : 'disabled'} aria-label="Mover ${esc(x.nome)} para a esquerda" title="Mover para a esquerda"><i class="bi bi-chevron-left"></i></button>
+          <button type="button" data-acao="dir" data-si="${i}" ${i < secs.length - 1 ? '' : 'disabled'} aria-label="Mover ${esc(x.nome)} para a direita" title="Mover para a direita"><i class="bi bi-chevron-right"></i></button>
+          <button type="button" data-acao="ren" data-si="${i}" aria-label="Renomear ${esc(x.nome)}" title="Renomear"><i class="bi bi-pencil"></i></button>
+          <button type="button" data-acao="del" data-si="${i}" aria-label="Apagar ${esc(x.nome)}" title="Apagar a seção (os grupos voltam para Sem seção)"><i class="bi bi-x-lg"></i></button>
+        </span></div>
+      <div class="pc-sec-corpo">${gs.map(chip).join('') || vazio}${fora ? `<span class="pc-sec-vazio">+ ${fora} grupo${fora === 1 ? '' : 's'} desligado${fora === 1 ? '' : 's'} no ${nome}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="plan-painel pc-secoes" id="pc-secoes">
+      <div class="pc-secoes-topo">
+        <div><span class="plan-painel-rot">Seções do cardápio · ${nome}</span>
+          <div class="small text-muted">O grupo de cima nos filtros da aba Preços e no PDF. Arraste cada grupo para a sua seção. O Salão e o Delivery têm seções separadas: troque o canal no topo da página.</div></div>
+        <div class="pc-secoes-btns">
+          ${sem.length ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-acao="sugerir">Sugerir pelos nomes</button>' : ''}
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-acao="nova"><i class="bi bi-plus-lg"></i> Nova seção</button>
+        </div>
+      </div>
+      ${_pc.cfgSel != null ? `<div class="pc-sec-dica">Agora clique na seção para onde <b>${esc(_pc.cfgSel)}</b> vai. <button type="button" class="link" data-acao="cancelar">Cancelar</button></div>` : ''}
+      <div class="pc-sec-quadro">
+        <div class="pc-sec sem${sem.length ? ' tem' : ''}" data-sec="__sem">
+          <div class="pc-sec-cab"><span class="pc-sec-nome">Sem seção</span><span class="pc-sec-n">${sem.length}</span></div>
+          <div class="pc-sec-corpo">${sem.map(chip).join('') || '<span class="pc-sec-vazio">Todos os grupos ligados estão numa seção.</span>'}</div>
+        </div>
+        ${caixas}
+      </div>
+    </div>`;
+}
+
+function _pcSecoesLigar() {
+  const box = document.getElementById('pc-secoes');
+  if (!box) return;
+  const grupoDe = el => _pc.cfgIdx[Number(el?.closest('[data-gi]')?.dataset.gi)];
+  box.addEventListener('dragstart', ev => {
+    const g = grupoDe(ev.target); if (g == null) return;
+    ev.dataTransfer.setData('text/plain', g); ev.dataTransfer.effectAllowed = 'move';
+    ev.target.classList.add('arrastando');
+  });
+  box.addEventListener('dragend', ev => { ev.target.classList?.remove('arrastando'); box.querySelectorAll('.pc-sec.sobre').forEach(x => x.classList.remove('sobre')); });
+  box.addEventListener('dragover', ev => {
+    const sec = ev.target.closest('.pc-sec'); if (!sec) return;
+    ev.preventDefault(); ev.dataTransfer.dropEffect = 'move';
+    box.querySelectorAll('.pc-sec.sobre').forEach(x => { if (x !== sec) x.classList.remove('sobre'); });
+    sec.classList.add('sobre');
+  });
+  box.addEventListener('drop', ev => {
+    const sec = ev.target.closest('.pc-sec'); if (!sec) return;
+    ev.preventDefault();
+    const g = ev.dataTransfer.getData('text/plain');
+    const antes = grupoDe(ev.target);           // soltou em cima de outro grupo: entra antes dele
+    if (g) pcSecMover(g, sec.dataset.sec, antes !== g ? antes : null);
+  });
+  box.addEventListener('click', ev => {
+    const btn = ev.target.closest('[data-acao]');
+    if (btn) { _pcSecAcao(btn.dataset.acao, Number(btn.dataset.si)); return; }
+    const g = grupoDe(ev.target);
+    if (g != null) { _pc.cfgSel = _pc.cfgSel === g ? null : g; _pcRenderConfig(); return; }
+    const sec = ev.target.closest('.pc-sec');
+    if (sec && _pc.cfgSel != null) { const sel = _pc.cfgSel; _pc.cfgSel = null; pcSecMover(sel, sec.dataset.sec, null); }
+  });
+}
+
+// Tira o grupo de onde estiver no canal e põe na seção `destino` ('__sem' = nenhuma), antes de `antes`.
+async function pcSecMover(g, destino, antes) {
+  const canal = _pc.canal;
+  const atual = _pcSecaoDe(g, canal);
+  if ((atual?.id || '__sem') === destino && !antes) { _pcRenderConfig(); return; }
+  await _pcSalvar(c => {
+    c.secoes[canal].forEach(x => { x.grupos = x.grupos.filter(y => y !== g); });
+    const alvo = c.secoes[canal].find(x => x.id === destino);
+    if (!alvo) return;
+    const i = antes ? alvo.grupos.indexOf(antes) : -1;
+    i >= 0 ? alvo.grupos.splice(i, 0, g) : alvo.grupos.push(g);
+  });
+  _pcRenderConfig();
+}
+
+// Palavra do nome do grupo -> palavra do nome da seção. Grupo que não casa fica em Sem seção.
+const _PC_SEC_SUGESTAO = [
+  [/happy hour/, 'happy'], [/sobremesa/, 'sobremesa'], [/guarni|acompanhamento/, 'guarni'], [/entrada/, 'entrada'],
+  [/bebida|chopp|cerveja|dose|drink|caipi|cafe|suco|soda|extras bar|vinho/, 'bebida'],
+  [/prato|assado|carne|frango|massa|peixe|salada|sopa|combo/, 'prato'],
+];
+
+async function _pcSecAcao(acao, i) {
+  const canal = _pc.canal, secs = _pc.cfg.secoes[canal], nomeCanal = _PC_NOME_CANAL[canal];
+  if (acao === 'cancelar') { _pc.cfgSel = null; _pcRenderConfig(); return; }
+  if (acao === 'nova') {
+    const nome = (prompt(`Nome da nova seção do ${nomeCanal}:`) || '').trim();
+    if (!nome) return;
+    if (secs.some(x => norm(x.nome) === norm(nome))) { toast(`Já existe a seção ${nome} no ${nomeCanal}.`, 'erro'); return; }
+    await _pcSalvar(c => { c.secoes[canal].push({ id: canal[0] + Date.now().toString(36), nome, grupos: [] }); });
+  } else if (acao === 'sugerir') {
+    const ligados = _pc.grupos.filter(g => _pcGrupoNoCanal(g, canal) && !_pcSecaoDe(g, canal));
+    const plano = [];
+    ligados.forEach(g => {
+      const r = _PC_SEC_SUGESTAO.find(([re]) => re.test(norm(g)));
+      const sec = r && secs.find(x => norm(x.nome).includes(r[1]));
+      if (sec) plano.push([g, sec.id]);
+    });
+    if (!plano.length) { toast('Nenhum grupo sem seção tem nome que indique a seção. Arraste à mão.', 'erro'); return; }
+    if (!confirm(`Pôr ${plano.length} grupo(s) numa seção pelo nome?
+Os ${ligados.length - plano.length} que não dá para adivinhar continuam em Sem seção. Os que já estão numa seção não mudam.`)) return;
+    await _pcSalvar(c => { plano.forEach(([g, id]) => { const x = c.secoes[canal].find(y => y.id === id); if (x && !c.secoes[canal].some(y => y.grupos.includes(g))) x.grupos.push(g); }); });
+  } else {
+    const x = secs[i]; if (!x) return;
+    if (acao === 'ren') {
+      const nome = (prompt('Novo nome da seção:', x.nome) || '').trim();
+      if (!nome || nome === x.nome) return;
+      await _pcSalvar(c => { const y = c.secoes[canal].find(z => z.id === x.id); if (y) y.nome = nome; });
+    } else if (acao === 'del') {
+      if (!confirm(`Apagar a seção ${x.nome} do ${nomeCanal}?
+Os grupos dela voltam para Sem seção. Os produtos não mudam.`)) return;
+      await _pcSalvar(c => { c.secoes[canal] = c.secoes[canal].filter(z => z.id !== x.id); });
+    } else if (acao === 'esq' || acao === 'dir') {
+      const passo = acao === 'esq' ? -1 : 1;
+      await _pcSalvar(c => {
+        const L = c.secoes[canal], a = L.findIndex(z => z.id === x.id), b = a + passo;
+        if (a >= 0 && b >= 0 && b < L.length) [L[a], L[b]] = [L[b], L[a]];
+      });
+    }
+  }
+  _pcRenderConfig();
 }
 
 function pcCfgAbrir(i) {
