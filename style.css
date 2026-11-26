@@ -827,6 +827,8 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 .pc-pe { margin-top: auto; }
 .pc-pe .btn { font-size: .76rem; width: 100%; }
 .pc-vazio { grid-column: 1 / -1; text-align: center; color: var(--pl-cinza); padding: 40px 12px; }
+.pc-filtro-aviso { grid-column: 1 / -1; font-size: .82rem; background: #e6f4f1; color: #0b5c50; border-radius: 8px; padding: 8px 12px; }
+.pc-filtro-aviso button.link { color: inherit; font-weight: 700; background: none; border: 0; padding: 0; margin-left: 4px; text-decoration: underline; }
 .pc-sw { position: relative; display: inline-block; width: 38px; height: 22px; vertical-align: middle; margin: 0; flex: none; }
 .pc-sw input { opacity: 0; width: 0; height: 0; position: absolute; }
 .pc-sw span { position: absolute; inset: 0; background: #cfd8d5; border-radius: 99px; cursor: pointer; transition: .15s; }
@@ -943,6 +945,7 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 :root[data-tema="escuro"] .meta-falta-fds { color: #ff8f80; } :root[data-tema="escuro"] .meta-falta-fds .badge { background: #3b1f1c; color: #ff8f80; }
 :root[data-tema="escuro"] .plan-teste, :root[data-tema="escuro"] .pc-aviso { background: #33270f; color: #f0c674; }
 :root[data-tema="escuro"] .pc-aviso :is(a, button.link) { color: #f0c674; }
+:root[data-tema="escuro"] .pc-filtro-aviso { background: #12332e; color: #7fd8c8; }
 :root[data-tema="escuro"] .plan-modos, :root[data-tema="escuro"] .meta-guia { border-color: var(--linha); }
 :root[data-tema="escuro"] .plan-como { color: #c3cdca; }
 :root[data-tema="escuro"] .plan-tabela td { border-color: #2a3332; }

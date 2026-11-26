@@ -447,6 +447,29 @@ function _pcRenderPrecos() {
   if (_pc.compAberta && painel.dataset.canal !== _pc.canal) _pcCompPainel();
   _pcReajPainel();
   _pcRenderCards(lista);
+  _pcAvisoFiltro(lista.length);
+}
+
+// Quando a situação ou a busca esconde produtos do grupo escolhido, diz quantos e oferece ver todos.
+function _pcAvisoFiltro(nVis) {
+  const sitLigada = _pc.sit !== 'todos', busca = (_pc.busca || '').trim();
+  if (!sitLigada && !busca) return;
+  const nGrupo = _pc.prods.filter(p => _pcNoCanal(p) && _pcPassaFiltro(p)).length;
+  if (nVis >= nGrupo) return;
+  const ROT = { aumento: 'Precisam de aumento', meta: 'Na meta', isca: 'Isca', proposto: 'Propostos' };
+  const porque = [sitLigada ? `pela situação <b>${ROT[_pc.sit] || esc(_pc.sit)}</b>` : '', busca ? `pela busca <b>“${esc(busca)}”</b>` : ''].filter(Boolean).join(' e ');
+  const onde = _pcFiltroRotulo();
+  const div = document.createElement('div');
+  div.className = 'pc-filtro-aviso';
+  div.innerHTML = `Mostrando <b>${nVis}</b> de <b>${nGrupo}</b>${onde ? ` em ${esc(onde)}` : ''}. Os outros ${nGrupo - nVis} estão escondidos ${porque}.
+    <button type="button" class="link" onclick="pcVerTodos()">Mostrar todos</button>`;
+  document.getElementById('pc-cards').prepend(div);
+}
+
+function pcVerTodos() {
+  _pc.sit = 'todos'; _pc.busca = '';
+  const b = document.getElementById('pc-busca'); if (b) b.value = '';
+  _pcRenderPrecos();
 }
 
 function _pcRenderCards(lista) {
@@ -509,13 +532,25 @@ function _pcFiltroRotulo() {
   return _pc.cfg.secoes[_pc.canal].find(x => x.id === _pc.filtroSecao)?.nome || null;
 }
 
+// Situação (Precisam de aumento, Na meta…) e busca: o que os chips contam é o que vai aparecer.
+function _pcPassaSitBusca(p, q = norm(_pc.busca)) {
+  if (q && !norm(p.nome).includes(q)) return false;
+  if (_pc.sit === 'todos') return true;
+  if (_pc.sit === 'proposto') return _pcTemProposta(p);
+  return _pcStatus(p, _pcCalc(p, _pcPreco(p))).grupo === _pc.sit;
+}
+
 function _pcChips() {
-  const cont = {};
-  _pc.prods.forEach(p => { if (_pcNoCanal(p)) cont[p._grupo] = (cont[p._grupo] || 0) + 1; });
-  const total = Object.values(cont).reduce((s, n) => s + n, 0);
+  const cont = {}, vis = {}, q = norm(_pc.busca);
+  _pc.prods.forEach(p => {
+    if (!_pcNoCanal(p)) return;
+    cont[p._grupo] = (cont[p._grupo] || 0) + 1;
+    if (_pcPassaSitBusca(p, q)) vis[p._grupo] = (vis[p._grupo] || 0) + 1;
+  });
+  const total = Object.values(vis).reduce((s, n) => s + n, 0);
   const secoes = _pc.cfg.secoes[_pc.canal].map(x => ({ id: x.id, nome: x.nome, grupos: x.grupos.filter(g => cont[g]) })).filter(x => x.grupos.length);
   const semSecao = Object.keys(cont).filter(g => !_pcSecaoDe(g)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  const soma = gs => gs.reduce((s, g) => s + cont[g], 0);
+  const soma = gs => gs.reduce((s, g) => s + (vis[g] || 0), 0);
   // filtro que deixou de existir (grupo desligado, seção apagada) volta para Todos
   if (_pc.filtroGrupo != null && !cont[_pc.filtroGrupo]) _pc.filtroGrupo = null;
   if (_pc.filtroSecao != null && _pc.filtroSecao !== '__sem' && !secoes.some(x => x.id === _pc.filtroSecao)) { _pc.filtroSecao = null; _pc.filtroGrupo = null; }
@@ -524,7 +559,7 @@ function _pcChips() {
   const el = document.getElementById('pc-grupos');
   if (Object.keys(cont).length < 2) { el.innerHTML = ''; return; }
   _pc.chips = [];   // índice -> grupo (nomes podem ter aspas: o onclick leva só o índice)
-  const gChip = (g, on) => { _pc.chips.push(g); return chip(on, g, cont[g], `pcChip('g',${_pc.chips.length - 1})`); };
+  const gChip = (g, on) => { _pc.chips.push(g); return chip(on, g, vis[g] || 0, `pcChip('g',${_pc.chips.length - 1})`); };
   let html;
   if (!secoes.length) {
     // nada montado ainda: um grupo por vez, como antes das seções
