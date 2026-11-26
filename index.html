@@ -2,6 +2,15 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
+  <script>
+    // Tema claro/escuro escolhido pelo operador (fica neste aparelho). Roda antes de pintar a tela.
+    (function () {
+      var t = 'claro';
+      try { t = localStorage.getItem('tema') === 'escuro' ? 'escuro' : 'claro'; } catch (e) {}
+      document.documentElement.setAttribute('data-tema', t);
+      document.documentElement.setAttribute('data-bs-theme', t === 'escuro' ? 'dark' : 'light');
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Gestão de Compras — Tambaqui de Banda</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -68,7 +77,8 @@
   <!-- ─── SIDEBAR ─── -->
   <div id="sidebar">
     <div class="sb-brand">
-      <img src="logo.png" alt="Tambaqui de Banda" style="max-width:100%;max-height:72px;object-fit:contain;display:block;margin:0 auto">
+      <img src="logo.png" alt="Tambaqui de Banda" class="sb-logo-img sb-logo-escuro">
+      <img src="logo-claro.png" alt="Tambaqui de Banda" class="sb-logo-img sb-logo-claro">
     </div>
 
     <nav class="nav-sb">
@@ -204,6 +214,10 @@
     </nav>
 
     <div class="sb-footer">
+      <div class="sb-tema" role="group" aria-label="Tema do sistema">
+        <button type="button" data-tema-btn="claro" onclick="trocarTema('claro')"><i class="bi bi-sun"></i> Claro</button>
+        <button type="button" data-tema-btn="escuro" onclick="trocarTema('escuro')"><i class="bi bi-moon-stars"></i> Escuro</button>
+      </div>
       <div id="sb-usuario" class="sb-usuario"></div>
       <button class="btn-sair" onclick="sair()">
         <i class="bi bi-box-arrow-right"></i> Sair

@@ -169,6 +169,35 @@ function _temAcessoPrecif() {
   return user?.user_metadata?.precificacao === true;
 }
 
+// ── Tema claro / escuro (25/11/2026) ──────────────────────────────────────
+// A escolha fica no aparelho (localStorage 'tema'); o <head> do index.html aplica antes de
+// pintar. data-tema liga as cores do style.css; data-bs-theme liga o modo escuro do Bootstrap.
+// Os relatórios que abrem em janela própria (impressão) continuam claros.
+function _temaAtual() { return document.documentElement.getAttribute('data-tema') === 'escuro' ? 'escuro' : 'claro'; }
+function _aplicarTemaGraficos() {
+  if (typeof Chart === 'undefined') return;
+  const escuro = _temaAtual() === 'escuro';
+  Chart.defaults.color = escuro ? '#aeb6bd' : '#666';
+  Chart.defaults.borderColor = escuro ? 'rgba(255,255,255,.09)' : 'rgba(0,0,0,.1)';
+  Object.values(Chart.instances || {}).forEach(c => { try { c.update('none'); } catch (e) {} });
+}
+function _pintarBotoesTema() {
+  const t = _temaAtual();
+  document.querySelectorAll('[data-tema-btn]').forEach(b => {
+    const on = b.dataset.temaBtn === t;
+    b.classList.toggle('ativo', on); b.setAttribute('aria-pressed', String(on));
+  });
+}
+function trocarTema(t) {
+  t = t === 'escuro' ? 'escuro' : 'claro';
+  document.documentElement.setAttribute('data-tema', t);
+  document.documentElement.setAttribute('data-bs-theme', t === 'escuro' ? 'dark' : 'light');
+  try { localStorage.setItem('tema', t); } catch (e) {}
+  _pintarBotoesTema();
+  _aplicarTemaGraficos();
+}
+document.addEventListener('DOMContentLoaded', () => { _pintarBotoesTema(); _aplicarTemaGraficos(); });
+
 async function sair() {
   await sb.auth.signOut();
   user = null;
