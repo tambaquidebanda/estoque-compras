@@ -1006,7 +1006,7 @@ body:has(#barra-teste) .plan-rodape { bottom: 56px; }
 :root[data-tema="escuro"] [style*="background: #fff"], :root[data-tema="escuro"] [style*="background-color:#fff"], :root[data-tema="escuro"] [style*="background-color: #fff"],
 :root[data-tema="escuro"] [style*="background:white"], :root[data-tema="escuro"] [style*="background: white"],
 :root[data-tema="escuro"] [style*="background:#f8f9fa"], :root[data-tema="escuro"] [style*="background: #f8f9fa"], :root[data-tema="escuro"] [style*="background:#f1f5f9"], :root[data-tema="escuro"] [style*="background:#f0f0f0"],
-:root[data-tema="escuro"] [style*="background:#f1f3f5"], :root[data-tema="escuro"] [style*="background:#f2f2f2"], :root[data-tema="escuro"] [style*="background:#f3f4f6"], :root[data-tema="escuro"] [style*="background:#fafafa"],
+:root[data-tema="escuro"] [style*="background:#f1f3f5"], :root[data-tema="escuro"] [style*="background:#f2f2f2"], :root[data-tema="escuro"] [style*="background:#f3f4f6"], :root[data-tema="escuro"] [style*="background:#fafafa"], :root[data-tema="escuro"] [style*="background:#f8fffe"],
 :root[data-tema="escuro"] [style*="background:#e9ecef"], :root[data-tema="escuro"] [style*="background:#eef2f1"], :root[data-tema="escuro"] [style*="background:#e8f4f8"], :root[data-tema="escuro"] [style*="background:#eff6ff"], :root[data-tema="escuro"] [style*="background:#eef2ff"] {
   background-color: var(--superficie-2) !important;
 }
