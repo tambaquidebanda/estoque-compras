@@ -11011,11 +11011,12 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
   // aberta ha horas gravava a estrutura velha por cima do que mudou depois.
   {
     const { data } = await sb.from('inv_configuracoes').select('chave,valor')
-      .in('chave', ['estrutura', 'adicoes', 'mapeamentos']);
+      .in('chave', ['estrutura', 'adicoes', 'mapeamentos', 'padroes']);
     (data || []).forEach(row => {
       if (row.chave === 'estrutura')   { _todasEstruturas = row.valor || {}; _estruturaSnap = JSON.stringify(_todasEstruturas); }
       if (row.chave === 'adicoes')     _invAdicoes      = row.valor || {};
       if (row.chave === 'mapeamentos') _invMapeamentos  = row.valor || {};
+      if (row.chave === 'padroes')     _invPadroes      = row.valor || {};
     });
   }
   // Trava de segurança: sem estrutura carregada, não mexe em nada (evita gravar vazio).
@@ -11049,7 +11050,26 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
     if (norm(_invMapeamentos[k]) === norm(nomeAntigo)) { _invMapeamentos[k] = nomeNovo; mudouMapea = true; }
   });
 
+  // Pedido padrão: a chave é "SETOR|GRUPO|NOME" (com "UNIDADE>" na frente fora do Centro).
+  // Antes o nome novo ia para a lista e o padrão ficava preso no nome velho: o produto
+  // aparecia na contagem com padrão zero e o pedido do setor parava de pedir, sem aviso.
+  // Se já existir padrão no nome novo, o dele fica (não sobrescreve).
+  let mudouPadrao = false;
+  const nomeNovoChave = String(nomeNovo).trim().toUpperCase();
+  Object.keys(_invPadroes || {}).forEach(k => {
+    const corte = k.lastIndexOf('|');
+    if (corte < 0 || !casa(k.slice(corte + 1).trim())) return;
+    const novaChave = k.slice(0, corte + 1) + nomeNovoChave;
+    if (novaChave === k) return;
+    if (!(novaChave in _invPadroes)) _invPadroes[novaChave] = _invPadroes[k];
+    delete _invPadroes[k];
+    mudouPadrao = true;
+  });
+
   const upserts = [];
+  if (mudouPadrao) upserts.push(
+    sb.from('inv_configuracoes').upsert({ chave: 'padroes', valor: _invPadroes }),
+  );
   if (mudouEstrutura) upserts.push(
     sb.from('inv_configuracoes').upsert({ chave: 'estrutura', valor: _todasEstruturas }),
     sb.from('inv_configuracoes').upsert({ chave: 'adicoes',   valor: _invAdicoes }),
@@ -11063,7 +11083,7 @@ async function _renomearProdutoNaEstrutura(nomeAntigo, nomeNovo) {
   // Re-aplica estrutura na tela atual
   if (mudouEstrutura) _aplicarEstruturaLocal(_invLocal || 'Centro');
 
-  return mudouEstrutura || mudouMapea;
+  return mudouEstrutura || mudouMapea || mudouPadrao;
 }
 
 async function recalcularFichasDoIngrediente(ingredienteId, _visitados = null, _silent = false) {
