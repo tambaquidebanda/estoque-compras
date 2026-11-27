@@ -536,6 +536,11 @@
                 <option>MT</option><option>DZ</option>
               </select>
             </div>
+            <div class="col-md-4 d-none" id="c-marca-box">
+              <label class="form-label" for="c-marca">🏷️ Marca <span class="text-danger">*</span></label>
+              <select class="form-select" id="c-marca" onchange="_marcaPedidoMudou()"></select>
+              <div class="form-text small" id="c-marca-hint"></div>
+            </div>
             <input type="hidden" id="c-tipo" value="Loja">
 
             <!-- Bloco estoque mínimo -->
@@ -1152,6 +1157,18 @@
                   <div class="small text-muted" id="prod-foto-hint">Salva na hora. Aparece no card da Precificação.</div>
                 </div>
               </div>
+            </div>
+            <div class="col-12" id="prod-marcas-box">
+              <label class="form-label fw-semibold" for="prod-marca-nome">Marcas autorizadas</label>
+              <div class="d-flex flex-wrap gap-2 mb-2" id="prod-marcas-lista"></div>
+              <div class="d-flex flex-wrap gap-2 align-items-start" id="prod-marcas-form">
+                <input type="text" class="form-control" id="prod-marca-nome" placeholder="Marca (ex.: Brazuka)" style="max-width:240px"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();adicionarMarcaProduto()}">
+                <input type="text" inputmode="decimal" class="form-control" id="prod-marca-fator" placeholder="Tamanho (ex.: 0,965)" style="max-width:170px"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();adicionarMarcaProduto()}">
+                <button type="button" class="btn btn-outline-secondary" id="prod-marca-btn" onclick="adicionarMarcaProduto()"><i class="bi bi-plus-lg"></i> Adicionar</button>
+              </div>
+              <div class="small text-muted mt-1" id="prod-marcas-hint">Salva na hora. Com marcas cadastradas, o pedido de compra pede a marca. Tamanho na unidade de uso; vazio = a conversão do produto.</div>
             </div>
           </div>
           <div class="mt-4 d-flex gap-2 flex-wrap">

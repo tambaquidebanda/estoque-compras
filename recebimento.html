@@ -867,13 +867,21 @@ function esc(s) {
 async function abrirPedido(pedido_num) {
   const { data: itens, error } = await sb
     .from('cmp_compras')
-    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo,bonificado,forma_pagamento,parcelas,setor')
+    .select('id,pedido_num,fornecedor_nome,fornecedor_id,comprador,produto,produto_id,categoria,unidade_med,quantidade,custo_unit,plano_conta,unidade_uso,status_receb,acrescimo,bonificado,forma_pagamento,parcelas,setor')
     .eq('pedido_num', pedido_num)
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")')
     .order('id');
 
   if (error || !itens?.length) { toast('Pedido não encontrado.', 'err'); return; }
 
+  // Marca da compra (SQL_MARCAS.sql): tolerante, antes do SQL a coluna não existe.
+  try {
+    const { data: _mk, error: _eMk } = await sb.from('cmp_compras').select('id,marca,fator_marca').in('id', itens.map(i => i.id));
+    if (!_eMk) {
+      const _m = new Map((_mk || []).map(r => [r.id, r]));
+      itens.forEach(i => { const x = _m.get(i.id); if (x?.marca) { i.marca = x.marca; i.fator_marca = x.fator_marca; } });
+    }
+  } catch (e) { console.warn('marca da compra:', e); }
   _pedidoAtual = { pedido_num, itens };
 
   // Parcelas combinadas no pedido — o estoquista confirma aqui
@@ -924,6 +932,7 @@ async function abrirPedido(pedido_num) {
       <div class="item-header">
         <div class="item-header-left">
           <div class="item-nome">${esc(it.produto)}${dispBadge}</div>
+          ${it.marca ? `<div class="item-cat">🏷️ ${esc(it.marca)}</div>` : ''}
           <div class="item-cat">${esc(it.categoria || '')}</div>
           ${_multiUni ? _badgeUni(it.unidade_uso) : ''}
           <div class="conf-status" id="cs-${sid}"></div>
@@ -1553,6 +1562,7 @@ async function confirmarRecebimento() {
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
       total_recebido: totalItem, bonificado: bonif,
       divergencia: diverg, obs_divergencia: obs,
+      ...(it.marca ? { marca: it.marca, fator_marca: it.fator_marca } : {}),
     };
   });
 
@@ -1796,9 +1806,11 @@ async function _recebimentoAtualizaCustos(itensReceb) {
   try {
     // Preço pago por nome de produto (normalizado)
     const precoPorNome = {};
+    const fatorMarcaPorNome = {};   // marca em outro tamanho: custo vai para o tamanho padrão
     for (const it of itensReceb) {
       if (!it.qtd_recebida || !(it.valor_unitario > 0) || !it.produto) continue;
       precoPorNome[_normNome(it.produto)] = +it.valor_unitario;
+      fatorMarcaPorNome[_normNome(it.produto)] = Number(it.fator_marca) > 0 ? Number(it.fator_marca) : null;
     }
     if (!Object.keys(precoPorNome).length) return;
 
@@ -1816,8 +1828,10 @@ async function _recebimentoAtualizaCustos(itensReceb) {
 
     // 1) Aplica o último preço nos ingredientes SEM ficha própria (custo de ficha vem da receita)
     for (const p of prods) {
-      const preco = precoPorNome[_normNome(p.nome)];
+      let preco = precoPorNome[_normNome(p.nome)];
       if (preco === undefined || comFicha.has(p.id)) continue;
+      const fm = fatorMarcaPorNome[_normNome(p.nome)];
+      if (fm) preco = preco * (Number(p.fator_conversao) || 1) / fm;
       prodMap.get(p.id).custo_comp = preco;
     }
 
@@ -1921,16 +1935,17 @@ async function _recebimentoAtualizaSaldo(itensReceb, local) {
     }
 
     // Casa por produto_id (vínculo por código); nome só como fallback.
-    const deltaPorId = {};
-    const custoPorId = {};
+    // Cada item guarda o fator da MARCA comprada, quando houver (Ypioca 965 ml num
+    // cadastro de 700 ml): a conversão é por item, antes de somar.
+    const linhas = [];
     for (const it of itensReceb) {
       if (!it.qtd_recebida) continue;
       const pid = it.produto_id || idPorNome[_normNome(it.produto || '')];
       if (!pid) continue;
-      deltaPorId[pid] = (deltaPorId[pid] || 0) + Number(it.qtd_recebida);
-      if (Number(it.valor_unitario) > 0) custoPorId[pid] = Number(it.valor_unitario);
+      linhas.push({ pid, qtd: Number(it.qtd_recebida), vlr: Number(it.valor_unitario) || 0,
+                    fm: Number(it.fator_marca) > 0 ? Number(it.fator_marca) : null });
     }
-    const ids = Object.keys(deltaPorId);
+    const ids = [...new Set(linhas.map(l => l.pid))];
     if (!ids.length) return;
 
     // CONVERSÃO COMPRA → USO. A nota vem na unidade de compra (ex.: 20 pacotes de 50 espetos)
@@ -1944,11 +1959,12 @@ async function _recebimentoAtualizaSaldo(itensReceb, local) {
         .select('id,fator_conversao').in('id', faltaFator);
       (fats || []).forEach(p => { fatorPorId[p.id] = Number(p.fator_conversao) || 1; });
     }
-    ids.forEach(pid => {
-      const f = fatorPorId[pid] || 1;
-      if (f === 1) return;
-      deltaPorId[pid] = deltaPorId[pid] * f;
-      if (custoPorId[pid] != null) custoPorId[pid] = custoPorId[pid] / f;
+    const deltaPorId = {};
+    const custoPorId = {};
+    linhas.forEach(l => {
+      const f = l.fm || fatorPorId[l.pid] || 1;
+      deltaPorId[l.pid] = (deltaPorId[l.pid] || 0) + l.qtd * f;
+      if (l.vlr > 0) custoPorId[l.pid] = l.vlr / f;
     });
 
     const { data: saldos } = await sb.from('est_saldo_local')

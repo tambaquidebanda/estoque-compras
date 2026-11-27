@@ -1198,6 +1198,42 @@ function selecionarProd(nome, un, cat) {
   } else if (blocoEl) {
     blocoEl.style.display = 'none';
   }
+  _mostrarMarcasPedido(prodCat);
+}
+
+// Marca no pedido: só aparece para produto com marcas autorizadas no cadastro.
+async function _mostrarMarcasPedido(prodCat) {
+  const box = document.getElementById('c-marca-box');
+  const sel = document.getElementById('c-marca');
+  box.classList.add('d-none'); sel.innerHTML = ''; box.dataset.prod = '';
+  document.getElementById('c-marca-hint').textContent = '';
+  if (!prodCat) return;
+  const mapa = await _lerMarcasProdutos();
+  const marcas = mapa ? mapa.get(prodCat.id) : null;
+  if (!marcas?.length || document.getElementById('c-prod').value.trim() !== prodCat.nome.trim()) return;
+  const un = prodCat.unidade_uso || '';
+  sel.innerHTML = '<option value="">— Escolha a marca —</option>'
+    + marcas.map((m, i) => `<option value="${i}">${esc(_rotuloMarca(m, un))}</option>`).join('');
+  box.dataset.prod = prodCat.id;
+  box.classList.remove('d-none');
+}
+
+// Marca escolhida: avisa a conversão e, se o tamanho for outro, ajusta o custo sugerido
+// (o custo do cadastro é o da embalagem padrão).
+async function _marcaPedidoMudou() {
+  const box = document.getElementById('c-marca-box');
+  const hint = document.getElementById('c-marca-hint');
+  const p = prodFT(box.dataset.prod);
+  const m = (await _lerMarcasProdutos())?.get?.(box.dataset.prod)?.[document.getElementById('c-marca').value];
+  if (!p || !m) { hint.textContent = ''; return; }
+  const fp = Number(p.fator_conversao) || 1, fm = Number(m.fator) || fp;
+  const un = p.unidade_comp || 'UN';
+  hint.textContent = `1 ${un} = ${String(fm).replace('.', ',')} ${p.unidade_uso || ''} no estoque`;
+  if (p.custo_comp > 0) {
+    const sug = p.custo_comp * fm / fp;
+    document.getElementById('c-custo').value = sug.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    calcTot();
+  }
 }
 
 function calcSugestao() {
@@ -1276,7 +1312,7 @@ function calcTot() {
 }
 
 // Adiciona um item à lista temporária do pedido
-function adicionarItemPedido(e) {
+async function adicionarItemPedido(e) {
   e.preventDefault();
 
   const data     = document.getElementById('c-data').value;
@@ -1310,6 +1346,22 @@ function adicionarItemPedido(e) {
     return;
   }
 
+  // Produto com marcas autorizadas: a marca é obrigatória (e tem de ser deste produto).
+  const _marcas = (await _lerMarcasProdutos())?.get?.(prodCad.id);
+  let marca = null, fatorMarca = null;
+  if (_marcas?.length) {
+    const box = document.getElementById('c-marca-box');
+    const m = box.dataset.prod === prodCad.id ? _marcas[document.getElementById('c-marca').value] : null;
+    if (!m) {
+      if (box.dataset.prod !== prodCad.id) await _mostrarMarcasPedido(prodCad);
+      toast(`Escolha a marca de ${prodCad.nome}.`, 'erro');
+      document.getElementById('c-marca').focus();
+      return;
+    }
+    marca = m.nome;
+    fatorMarca = Number(m.fator) || Number(prodCad.fator_conversao) || 1;
+  }
+
   const catObj     = cCat.find(c => c.nome === cat);
   const planoConta = catObj ? (catObj.plano_conta || '') : '';
 
@@ -1319,6 +1371,7 @@ function adicionarItemPedido(e) {
     uso: usoNome, unidadeId: usoId,
     total: custo * qtd,
     bonificado: false,
+    marca, fatorMarca,
   });
 
   // Limpa apenas os campos de item
@@ -1327,6 +1380,7 @@ function adicionarItemPedido(e) {
   document.getElementById('c-qtd').value   = '1';
   document.getElementById('c-total-show').textContent = 'R$ 0,00';
   document.getElementById('bloco-estoque').style.display = 'none';
+  _mostrarMarcasPedido(null);
   const unEl = document.getElementById('c-un');
   if (unEl) { unEl.style.pointerEvents = ''; unEl.style.opacity = ''; unEl.title = ''; }
   document.getElementById('c-prod').focus();
@@ -1371,7 +1425,7 @@ function _renderItensPedido() {
 
   tbody.innerHTML = _pedidoItens.map((it, idx) => `
     <tr id="item-row-${idx}">
-      <td><strong>${esc(it.prod)}</strong></td>
+      <td><strong>${esc(it.prod)}</strong>${it.marca ? `<br><small class="text-muted">🏷️ ${esc(it.marca)}</small>` : ''}</td>
       <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
       <td class="text-center">${it.qtd.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td>
       <td class="text-center">${esc(it.un)}</td>
@@ -1434,13 +1488,20 @@ function removerItemPedido(idx) {
   _renderItensPedido();
 }
 
-function editarItemPedido(idx) {
+async function editarItemPedido(idx) {
   const it  = _pedidoItens[idx];
   const row = document.getElementById(`item-row-${idx}`);
   if (!row) return;
   const custoFmt = it.custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  const marcas = (await _lerMarcasProdutos())?.get?.(it.produtoId) || [];
+  const un = prodFT(it.produtoId)?.unidade_uso || '';
+  const selMarca = marcas.length
+    ? `<select class="form-select form-select-sm mt-1" id="edit-marca-${idx}">
+         <option value="">— Escolha a marca —</option>
+         ${marcas.map((m, i) => `<option value="${i}" ${norm(m.nome) === norm(it.marca || '') ? 'selected' : ''}>${esc(_rotuloMarca(m, un))}</option>`).join('')}
+       </select>` : '';
   row.innerHTML = `
-    <td><strong>${esc(it.prod)}</strong></td>
+    <td><strong>${esc(it.prod)}</strong>${selMarca}</td>
     <td><small>${esc(it.cat)}</small>${it.planoConta ? `<br><small class="text-muted">${esc(it.planoConta)}</small>` : ''}</td>
     <td class="text-center" style="min-width:80px">
       <input type="number" class="form-control form-control-sm text-center p-1" id="edit-qtd-${idx}"
@@ -1475,6 +1536,14 @@ function confirmarEdicaoItem(idx) {
   const custo = parseMoeda(`edit-custo-${idx}`);
   if (!qtd || qtd <= 0) { toast('Quantidade inválida.', 'erro'); return; }
   if (custo <= 0)        { toast('Custo inválido.', 'erro'); return; }
+  const selM = document.getElementById(`edit-marca-${idx}`);
+  if (selM) {
+    const it = _pedidoItens[idx];
+    const m = (_marcasProd && _marcasProd.get(it.produtoId) || [])[selM.value];
+    if (!m) { toast('Escolha a marca.', 'erro'); selM.focus(); return; }
+    it.marca = m.nome;
+    it.fatorMarca = Number(m.fator) || Number(prodFT(it.produtoId)?.fator_conversao) || 1;
+  }
   _pedidoItens[idx].qtd   = qtd;
   _pedidoItens[idx].custo = custo;
   _pedidoItens[idx].total = qtd * custo;
@@ -1483,6 +1552,13 @@ function confirmarEdicaoItem(idx) {
 
 async function finalizarPedido() {
   if (!_pedidoItens.length) { toast('Adicione pelo menos um item ao pedido.', 'erro'); return; }
+  // Produto com marcas autorizadas sem marca escolhida (ex.: item que veio do Planejamento)
+  const _mapaM = await _lerMarcasProdutos();
+  const _semMarca = _mapaM ? _pedidoItens.filter(it => !it.marca && _mapaM.get(it.produtoId)?.length) : [];
+  if (_semMarca.length) {
+    toast(`Escolha a marca de: ${_semMarca.map(it => it.prod).join(', ')} (lápis do item).`, 'erro');
+    return;
+  }
 
   const btn = document.getElementById('btn-finalizar-pedido');
   btn.disabled = true;
@@ -1565,6 +1641,7 @@ async function finalizarPedido() {
     bonificado:      !!it.bonificado,
     status_receb:    'pendente',
     criado_por:      user.id,
+    ...(it.marca ? { marca: it.marca, fator_marca: it.fatorMarca } : {}),
   }));
 
   if (_pedidoEditando) {
@@ -5411,12 +5488,48 @@ async function movimentar(mov) {
 // quantidade e custo_unit mudam JUNTOS: est_movimentacoes.valor_total é calculado pelo banco
 // como quantidade × custo_unit, então multiplicar um e dividir o outro converte só a unidade
 // e deixa o valor financeiro exatamente igual.
-async function _emUnidadeDeUso(produto_id, quantidade, valor_unitario) {
+// fatorMarca: tamanho da marca comprada (cmp_compras/cmp_recebimento_itens.fator_marca).
+// Ypioca 965 ml num cadastro de 700 ml converte por 0,965, não pelo 0,7 do produto.
+async function _emUnidadeDeUso(produto_id, quantidade, valor_unitario, fatorMarca) {
   if (!cProdutosFT.length) await carregarProdutosFT();
-  const fator = prodFT(produto_id)?.fator_conversao || 1;
+  const fator = Number(fatorMarca) > 0 ? Number(fatorMarca) : (prodFT(produto_id)?.fator_conversao || 1);
   const vlr   = Number(valor_unitario) || 0;
   return { quantidade: Number(quantidade) * fator, custo_unit: vlr ? vlr / fator : null };
 }
+
+// ── MARCAS AUTORIZADAS (SQL_MARCAS.sql) ──────────────────────────────────────────
+// est_produtos.marcas = [{ nome, fator }] (fator null = o do produto). O pedido grava
+// marca + fator_marca; recebimento, estorno e devolução convertem com esse fator.
+// Tudo tolerante: antes do SQL as colunas não existem e o sistema segue como antes.
+const _fatorMarca = row => (Number(row?.fator_marca) > 0 ? Number(row.fator_marca) : null);
+
+// Preço pago na embalagem da marca -> preço no tamanho padrão do cadastro (custo_comp).
+// R$ 30,09 a Ypioca 965 ml num cadastro de 700 ml = R$ 21,83.
+function _precoNoPadrao(produto_id, preco, fatorMarca) {
+  const fp = Number(prodFT(produto_id)?.fator_conversao) || 1;
+  return Number(fatorMarca) > 0 ? preco * fp / Number(fatorMarca) : preco;
+}
+
+// Completa linhas de cmp_compras lidas com select de colunas fixas.
+async function _juntarMarcas(rows) {
+  const ids = (rows || []).map(r => r.id).filter(Boolean);
+  if (!ids.length) return rows;
+  const { data, error } = await sb.from('cmp_compras').select('id,marca,fator_marca').in('id', ids);
+  if (error) return rows;                        // coluna ainda não existe
+  const m = new Map((data || []).map(r => [r.id, r]));
+  rows.forEach(r => { const x = m.get(r.id); if (x?.marca) { r.marca = x.marca; r.fator_marca = x.fator_marca; } });
+  return rows;
+}
+
+let _marcasProd = null;   // Map produto_id -> [{ nome, fator }]; null = não lido; false = sem coluna
+async function _lerMarcasProdutos(forcar) {
+  if (_marcasProd !== null && !forcar) return _marcasProd;
+  const { data, error } = await sb.from('est_produtos').select('id,marcas').not('marcas', 'is', null);
+  _marcasProd = error ? false : new Map((data || [])
+    .filter(p => Array.isArray(p.marcas) && p.marcas.length).map(p => [p.id, p.marcas]));
+  return _marcasProd;
+}
+const _rotuloMarca = (m, un) => m.fator ? `${m.nome} · ${String(m.fator).replace('.', ',')} ${un || ''}`.trim() : m.nome;
 
 // Custo unitário efetivo (por unidade de USO) — mesma fórmula da valorização
 // do Saldo: custo_comp ÷ conversão ÷ (1 − perda%).
@@ -8589,6 +8702,7 @@ async function abrirModalReceber(pedido_num) {
     .not('status_receb', 'in', '("recebido","dispensado","cancelado")');
 
   if (!itens?.length) { toast('Itens não encontrados.', 'erro'); return; }
+  await _juntarMarcas(itens);
   _recebItensAbertos = itens;
 
   document.getElementById('receb-pedido-num-hidden').value = pedido_num;
@@ -8613,7 +8727,7 @@ async function abrirModalReceber(pedido_num) {
   const _multiUni = new Set(itens.map(x => norm(x.unidade_uso || ''))).size > 1;
   document.getElementById('tb-receber-itens').innerHTML = itens.map(x => `
     <tr id="row-rec-${x.id}">
-      <td><strong>${esc(x.produto)}</strong>${_multiUni ? `<div class="mt-1 small">Para ${_badgeUnidadePedido(x.unidade_uso)}</div>` : ''}</td>
+      <td><strong>${esc(x.produto)}</strong>${x.marca ? `<div class="small text-muted">🏷️ ${esc(x.marca)}</div>` : ''}${_multiUni ? `<div class="mt-1 small">Para ${_badgeUnidadePedido(x.unidade_uso)}</div>` : ''}</td>
       <td><small class="text-muted">${esc(x.categoria||'—')}</small></td>
       <td class="text-center">${(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${esc(x.unidade_med||'')}</td>
       <td class="text-center">
@@ -9092,6 +9206,7 @@ async function confirmarRecebimento() {
       qtd_recebida: qtdRec, valor_unitario: vlrEfetivo,
       total_recebido: totalItem, bonificado: bonif,
       divergencia: diverg, obs_divergencia: obs,
+      ...(x.marca ? { marca: x.marca, fator_marca: x.fator_marca } : {}),
     };
   });
 
@@ -9290,7 +9405,7 @@ async function confirmarRecebimento() {
     const pid = it.produto_id
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) return;
-    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
+    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario, _fatorMarca(it));
     const _l   = _localItem(it);
     await movimentar({ produto_id: pid, local: _l, tipo: 'recebimento', quantidade: _uso.quantidade, custo_unit: _uso.custo_unit, origem: 'recebimento', motivo: `Recebimento ${pedido_num}${_l === 'ESTOQUE_LOJA' ? '' : ' · ' + _rotuloLocal(_l)}` });
   }));
@@ -9304,7 +9419,8 @@ async function confirmarRecebimento() {
     if (!it.qtd_recebida || !(it.valor_unitario > 0)) return;
     const pid = it.produto_id
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
-    if (pid) _precoPorProd.set(pid, +it.valor_unitario);
+    // Marca em outro tamanho: o custo do cadastro fica no tamanho padrão do produto.
+    if (pid) _precoPorProd.set(pid, _precoNoPadrao(pid, +it.valor_unitario, _fatorMarca(it)));
   });
   if (_precoPorProd.size) {
     const ids = [..._precoPorProd.keys()];
@@ -10615,7 +10731,7 @@ async function devolverPedidoAoEstoque(pedido_num) {
     const pid = it.produto_id
       || cProdutosFT.find(p => norm(p.nome.trim()) === norm((it.produto || '').trim()))?.id;
     if (!pid) continue;
-    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario);
+    const _uso = await _emUnidadeDeUso(pid, +it.qtd_recebida, it.valor_unitario, _fatorMarca(it));
     const _localEstorno = it.local || localDoReceb[it.recebimento_id] || 'ESTOQUE_LOJA';   // item do P10: ESTOQUE DELIVERY
     await movimentar({
       produto_id: pid, local: _localEstorno, tipo: 'recebimento',
@@ -10640,11 +10756,12 @@ async function editarPedido(pedido_num) {
   if (await _pedidoTemRecebimento(pedido_num, 'editar')) return;
   // Busca itens do pedido
   const { data: itens } = await sb.from('cmp_compras')
-    .select('data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,parcelas,bonificado')
+    .select('id,data,data_entrega,fornecedor_id,fornecedor_nome,comprador,produto,produto_id,categoria,plano_conta,unidade_med,custo_unit,quantidade,unidade_uso,acrescimo,setor,forma_pagamento,parcelas,bonificado')
     .eq('pedido_num', pedido_num)
     .order('id');
 
   if (!itens || !itens.length) { toast('Pedido não encontrado.', 'erro'); return; }
+  await _juntarMarcas(itens);
 
   // Garante caches carregados para o lookup de unidades
   await carregarCaches();
@@ -10672,6 +10789,8 @@ async function editarPedido(pedido_num) {
       parcelas:       it.parcelas || 1,
       bonificado:     !!it.bonificado,
       total:          (it.custo_unit || 0) * (it.quantidade || 0),
+      marca:          it.marca || null,
+      fatorMarca:     it.marca ? _fatorMarca(it) : null,
     };
   });
 
@@ -10780,6 +10899,7 @@ async function abrirProduto(prodId) {
   setUnSel('prod-un-uso',  p.unidade_uso  || 'UN');
   atualizarCustoEfetivo();
   _carregarCamposPrecif(p.id);
+  _carregarMarcasProduto(p.id);
 }
 
 // ── Campos da Precificação no cadastro: foto_url e is_revenda ─────────────────
@@ -10817,6 +10937,70 @@ async function _carregarCamposPrecif(prodId) {
   _prodPrecifId = prodId;
   document.getElementById('prod-foto-hint').textContent = 'Salva na hora. Aparece no card da Precificação.';
   _mostrarFotoProduto(data?.foto_url || null);
+}
+
+// Marcas autorizadas do produto: salvas na hora (como a foto), fora do "Salvar Dados".
+let _prodMarcas   = [];
+let _prodMarcasId = null;   // produto cujas marcas foram lidas (trava gravar no produto errado)
+async function _carregarMarcasProduto(prodId) {
+  _prodMarcasId = null; _prodMarcas = [];
+  const box = document.getElementById('prod-marcas-box');
+  _desenharMarcasProduto();
+  const { data, error } = await sb.from('est_produtos').select('marcas').eq('id', prodId).maybeSingle();
+  if (document.getElementById('prod-id').value !== prodId) return;   // trocou de produto no meio
+  if (error) {
+    document.getElementById('prod-marcas-form').classList.add('d-none');
+    document.getElementById('prod-marcas-hint').textContent = 'Indisponível até rodar o SQL_MARCAS.sql.';
+    return;
+  }
+  box.classList.remove('d-none');
+  document.getElementById('prod-marcas-form').classList.remove('d-none');
+  _prodMarcas = Array.isArray(data?.marcas) ? data.marcas : [];
+  _prodMarcasId = prodId;
+  _desenharMarcasProduto();
+}
+
+function _desenharMarcasProduto() {
+  const un = _prodAtual?.unidade_uso || '';
+  document.getElementById('prod-marcas-lista').innerHTML = _prodMarcas.length
+    ? _prodMarcas.map((m, i) => `<span class="badge rounded-pill text-bg-light border d-inline-flex align-items-center gap-1" style="font-size:.85rem;font-weight:500">
+        ${esc(_rotuloMarca(m, un))}
+        <button type="button" class="btn-close" style="font-size:.55rem" aria-label="Remover ${esc(m.nome)}" onclick="removerMarcaProduto(${i})"></button></span>`).join('')
+    : '<span class="small text-muted">Nenhuma marca: o pedido não pede marca para este produto.</span>';
+}
+
+async function _gravarMarcasProduto(nova) {
+  const id = document.getElementById('prod-id').value;
+  if (!id || _prodMarcasId !== id) return false;
+  const { error } = await sb.from('est_produtos').update({ marcas: nova.length ? nova : null }).eq('id', id);
+  if (error) { toast('Erro ao salvar as marcas: ' + error.message, 'erro'); return false; }
+  _prodMarcas = nova;
+  _marcasProd = null;   // o pedido relê
+  _desenharMarcasProduto();
+  return true;
+}
+
+async function adicionarMarcaProduto() {
+  const nomeEl = document.getElementById('prod-marca-nome');
+  const fatEl  = document.getElementById('prod-marca-fator');
+  const nome   = nomeEl.value.trim().replace(/\s+/g, ' ');
+  const txt    = fatEl.value.trim().replace(',', '.');
+  const fator  = txt ? Number(txt) : null;
+  if (!nome) { toast('Escreva o nome da marca.', 'erro'); nomeEl.focus(); return; }
+  if (txt && !(fator > 0)) { toast('Tamanho inválido. Use número, ex.: 0,965.', 'erro'); fatEl.focus(); return; }
+  if (_prodMarcas.some(m => norm(m.nome) === norm(nome))) { toast(`${nome} já está na lista.`, 'erro'); return; }
+  const fp = Number(_prodAtual?.fator_conversao) || 1;
+  if (fator && fator > fp * 10 && !confirm(`Tamanho ${txt} é mais de 10 vezes a conversão do produto (${fp}). Está certo?`)) return;
+  if (await _gravarMarcasProduto([..._prodMarcas, { nome, fator }])) {
+    nomeEl.value = ''; fatEl.value = ''; nomeEl.focus();
+    toast(`Marca ${nome} adicionada.`, 'ok');
+  }
+}
+
+async function removerMarcaProduto(i) {
+  const m = _prodMarcas[i];
+  if (!m || !confirm(`Tirar a marca ${m.nome} da lista? Pedidos antigos continuam com a marca deles.`)) return;
+  if (await _gravarMarcasProduto(_prodMarcas.filter((_, j) => j !== i))) toast(`Marca ${m.nome} removida.`, 'ok');
 }
 
 function _mostrarFotoProduto(url) {
@@ -13613,6 +13797,7 @@ async function salvarDevolucao() {
     local: x.it.local || local,   // item que entrou no Estoque Delivery volta de la
     unidade: x.it.unidade || null, quantidade: x.qtd,
     valor_unitario: Number(x.it.valor_unitario) || 0, recebimento_item_id: x.it.id,
+    ...(_fatorMarca(x.it) ? { fator_marca: _fatorMarca(x.it) } : {}),
   }));
   const { data: itensSalvos, error: ei } = await sb.from('cmp_devolucao_itens').insert(itensRows).select();
   if (ei) { toast('Erro ao salvar itens: ' + ei.message, 'erro'); restaurarBtn(); return; }
@@ -13622,7 +13807,7 @@ async function salvarDevolucao() {
     if (!row.produto_id) continue;
     // cmp_devolucao_itens guarda a quantidade na unidade de COMPRA (copiada do recebimento);
     // o saldo vive na unidade de USO. Devolver 5 pacotes tem de baixar 250 espetos.
-    const _uso = await _emUnidadeDeUso(row.produto_id, Math.abs(Number(row.quantidade)), row.valor_unitario);
+    const _uso = await _emUnidadeDeUso(row.produto_id, Math.abs(Number(row.quantidade)), row.valor_unitario, _fatorMarca(row));
     await movimentar({
       produto_id: row.produto_id, local: row.local, tipo: 'devolucao',
       quantidade: -_uso.quantidade,
@@ -13728,7 +13913,7 @@ async function marcarSubstituido(id) {
     const hoje = new Date().toISOString().slice(0, 10);
     for (const it of (d.itens || [])) {
       if (!it.produto_id) continue;
-      const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario);
+      const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario, _fatorMarca(it));
       await movimentar({
         produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
         quantidade: _uso.quantidade, custo_unit: _uso.custo_unit || 0,
@@ -13749,7 +13934,7 @@ async function cancelarDevolucao(id) {
   const hoje = new Date().toISOString().slice(0, 10);
   for (const it of (d.itens || [])) {
     if (!it.produto_id) continue;
-    const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario);
+    const _uso = await _emUnidadeDeUso(it.produto_id, Math.abs(Number(it.quantidade)), it.valor_unitario, _fatorMarca(it));
     await movimentar({
       produto_id: it.produto_id, local: it.local, tipo: 'ajuste',
       quantidade: _uso.quantidade, custo_unit: _uso.custo_unit || 0,
